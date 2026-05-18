@@ -5,6 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
+@TableName("call_logs")
 public class CallLog {
     @TableId(type = IdType.AUTO)
     private Long id;

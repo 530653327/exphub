@@ -1,7 +1,7 @@
 server:
   port: 3099
   servlet:
-    context-path: /
+    context-path: /exphub
 
 spring:
   application:
@@ -38,27 +38,10 @@ spring:
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml
-  type-aliases-package: com.exphub.entity
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
-  global-config:
-    db-config:
-      id-type: auto
-      logic-delete-field: deleted
-      logic-delete-value: 1
-      logic-not-delete-value: 0
 
 logging:
   level:
+    org.springframework.security: DEBUG
     com.exphub: DEBUG
-    com.baomidou.mybatisplus: DEBUG
-
-# ExpHub 自定义配置
-exphub:
-  # 管理员默认密码（首次启动后请修改）
-  admin:
-    default-password: changeme
-  # API Key 配置
-  api-key:
-    length: 32

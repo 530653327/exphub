@@ -5,6 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
+@TableName("ai_assistants")
 public class AiAssistant {
     @TableId(type = IdType.AUTO)
     private Long id;

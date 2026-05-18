@@ -5,6 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
+@TableName("doc_versions")
 public class DocVersion {
     @TableId(type = IdType.AUTO)
     private Long id;

@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
+@TableName("docs")
 public class Doc {
     @TableId(type = IdType.AUTO)
     private Long id;

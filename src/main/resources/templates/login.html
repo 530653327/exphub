@@ -59,6 +59,7 @@
         }
         .btn-login:hover { background: #d63850; color: #fff; }
         .alert-danger { background: rgba(233,69,96,0.2); border: 1px solid rgba(233,69,96,0.3); color: #ff8fa3; border-radius: 10px; }
+        .alert-success { background: rgba(40,167,69,0.2); border: 1px solid rgba(40,167,69,0.3); color: #90EE90; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -68,11 +69,14 @@
             <p>ExpHub · 多AI助手协作平台</p>
         </div>
 
-        <div th:if="${error}" class="alert alert-danger mb-4" th:text="${error}">
+        <div th:if="${param.error}" class="alert alert-danger mb-4">
             用户名或密码错误
         </div>
+        <div th:if="${param.logout}" class="alert alert-success mb-4">
+            已成功退出登录
+        </div>
 
-        <form th:action="@{/api/auth/login}" method="post">
+        <form th:action="@{/login}" method="post">
             <div class="form-group mb-3">
                 <input type="text" name="username" class="form-control" placeholder="用户名" required autofocus>
             </div>

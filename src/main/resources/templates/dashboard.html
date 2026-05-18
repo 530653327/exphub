@@ -1,105 +1,159 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout/base :: layout(~{::section}, 'dashboard')}">
-<head><title>仪表盘</title></head>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仪表盘 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .stat-card { border-radius: 12px; padding: 20px; color: #fff; display: flex; align-items: center; }
+        .stat-card .icon { font-size: 2.5rem; margin-right: 15px; opacity: 0.8; }
+        .stat-card .number { font-size: 1.8rem; font-weight: bold; }
+        .stat-card .label { font-size: 0.85rem; opacity: 0.9; }
+        .bg-gradient-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .bg-gradient-success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .bg-gradient-danger { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+        .bg-gradient-warning { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
+        .badge-broken { background: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 20px; }
+        .badge-deprecated { background: #e2e3e5; color: #383d41; padding: 5px 10px; border-radius: 20px; }
+    </style>
+</head>
 <body>
-<section th:fragment="content">
-    <!-- 统计卡片 -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stat-card bg-gradient-primary">
-                <i class="fas fa-book-open icon"></i>
-                <div class="number" th:text="${totalDocs}">0</div>
-                <div class="label">经验文档</div>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a href="/exphub/dashboard" class="active"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a href="/exphub/docs"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a href="/exphub/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a href="/exphub/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a href="/exphub/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0">仪表盘</h4>
+            <span class="text-muted">欢迎回来，管理员</span>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-primary">
+                    <i class="fas fa-book-open icon"></i>
+                    <div>
+                        <div class="number" th:text="${totalDocs}">0</div>
+                        <div class="label">经验文档</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-success">
+                    <i class="fas fa-history icon"></i>
+                    <div>
+                        <div class="number" th:text="${totalCalls}">0</div>
+                        <div class="label">总调用次数</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-danger">
+                    <i class="fas fa-bolt icon"></i>
+                    <div>
+                        <div class="number" th:text="${todayCalls}">0</div>
+                        <div class="label">今日调用</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-warning">
+                    <i class="fas fa-robot icon"></i>
+                    <div>
+                        <div class="number" th:text="${totalAssistants}">0</div>
+                        <div class="label">AI助手</div>
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stat-card bg-gradient-success">
-                <i class="fas fa-history icon"></i>
-                <div class="number" th:text="${totalCalls}">0</div>
-                <div class="label">总调用次数</div>
+
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="stat-card" style="background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);">
+                    <i class="fas fa-chart-pie icon"></i>
+                    <div>
+                        <div class="number" th:text="${successRate} + '%'">0%</div>
+                        <div class="label">成功率</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card bg-gradient-danger">
+                    <i class="fas fa-exclamation-triangle icon"></i>
+                    <div>
+                        <div class="number" th:text="${problemDocs}">0</div>
+                        <div class="label">有问题文档</div>
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stat-card bg-gradient-danger">
-                <i class="fas fa-bolt icon"></i>
-                <div class="number" th:text="${todayCalls}">0</div>
-                <div class="label">今日调用</div>
+
+        <div class="card mt-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-fire text-danger mr-2"></i>热门经验 Top10</h5>
             </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stat-card bg-gradient-warning">
-                <i class="fas fa-robot icon"></i>
-                <div class="number" th:text="${totalAssistants}">0</div>
-                <div class="label">AI助手</div>
+            <div class="card-body p-0">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">#</th>
+                            <th>标题</th>
+                            <th>作者</th>
+                            <th>调用</th>
+                            <th>成功率</th>
+                            <th>评分</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="doc, stat : ${hotDocs}">
+                            <td th:text="${stat.count}">1</td>
+                            <td><a th:href="@{/exphub/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a></td>
+                            <td th:text="${doc.authorName}">-</td>
+                            <td th:text="${doc.callCount}">0</td>
+                            <td>
+                                <span th:if="${doc.callCount > 0}" th:text="${#numbers.formatDecimal(doc.successCount * 100.0 / doc.callCount, 1, 1)} + '%'">0%</span>
+                                <span th:if="${doc.callCount == 0}">-</span>
+                            </td>
+                            <td>
+                                <span th:if="${doc.ratingCount > 0}" th:text="${#numbers.formatDecimal(doc.rating, 1, 1)} + ' ⭐'">-</span>
+                                <span th:if="${doc.ratingCount == 0}" class="text-muted">-</span>
+                            </td>
+                            <td>
+                                <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
+                                <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
+                                <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 
-    <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="stat-card bg-gradient-primary" style="background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);">
-                <i class="fas fa-chart-pie icon"></i>
-                <div class="number" th:text="${successRate} + '%'">0%</div>
-                <div class="label">成功率</div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="stat-card bg-gradient-danger">
-                <i class="fas fa-exclamation-triangle icon"></i>
-                <div class="number" th:text="${problemDocs}">0</div>
-                <div class="label">有问题文档</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- 热门文档 -->
-    <div class="card mt-4">
-        <div class="card-header bg-white d-flex justify-content-between align-items-center">
-            <h5 class="mb-0"><i class="fas fa-fire text-danger mr-2"></i>热门经验 Top10</h5>
-        </div>
-        <div class="card-body p-0">
-            <table class="table mb-0">
-                <thead>
-                    <tr>
-                        <th style="width: 40px;">#</th>
-                        <th>标题</th>
-                        <th>作者</th>
-                        <th>调用</th>
-                        <th>成功</th>
-                        <th>评分</th>
-                        <th>状态</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr th:each="doc, stat : ${hotDocs}">
-                        <td th:text="${stat.count}">1</td>
-                        <td>
-                            <a th:href="@{/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a>
-                        </td>
-                        <td th:text="${doc.authorName}">-</td>
-                        <td th:text="${doc.callCount}">0</td>
-                        <td>
-                            <span th:if="${doc.callCount > 0}"
-                                  th:text="${#numbers.formatDecimal(doc.successCount * 100.0 / doc.callCount, 1, 1)} + '%'">
-                                0%
-                            </span>
-                            <span th:if="${doc.callCount == 0}">-</span>
-                        </td>
-                        <td>
-                            <span th:if="${doc.ratingCount > 0}"
-                                  th:text="${#numbers.formatDecimal(doc.rating, 1, 1)} + ' ⭐'">-</span>
-                            <span th:if="${doc.ratingCount == 0}" class="text-muted">-</span>
-                        </td>
-                        <td>
-                            <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
-                            <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
-                            <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</section>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
