@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout/base :: layout(~{::section}, 'dashboard')}">
+<head><title>仪表盘</title></head>
+<body>
+<section th:fragment="content">
+    <!-- 统计卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card bg-gradient-primary">
+                <i class="fas fa-book-open icon"></i>
+                <div class="number" th:text="${totalDocs}">0</div>
+                <div class="label">经验文档</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card bg-gradient-success">
+                <i class="fas fa-history icon"></i>
+                <div class="number" th:text="${totalCalls}">0</div>
+                <div class="label">总调用次数</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card bg-gradient-danger">
+                <i class="fas fa-bolt icon"></i>
+                <div class="number" th:text="${todayCalls}">0</div>
+                <div class="label">今日调用</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card bg-gradient-warning">
+                <i class="fas fa-robot icon"></i>
+                <div class="number" th:text="${totalAssistants}">0</div>
+                <div class="label">AI助手</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="stat-card bg-gradient-primary" style="background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);">
+                <i class="fas fa-chart-pie icon"></i>
+                <div class="number" th:text="${successRate} + '%'">0%</div>
+                <div class="label">成功率</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card bg-gradient-danger">
+                <i class="fas fa-exclamation-triangle icon"></i>
+                <div class="number" th:text="${problemDocs}">0</div>
+                <div class="label">有问题文档</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 热门文档 -->
+    <div class="card mt-4">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="fas fa-fire text-danger mr-2"></i>热门经验 Top10</h5>
+        </div>
+        <div class="card-body p-0">
+            <table class="table mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;">#</th>
+                        <th>标题</th>
+                        <th>作者</th>
+                        <th>调用</th>
+                        <th>成功</th>
+                        <th>评分</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="doc, stat : ${hotDocs}">
+                        <td th:text="${stat.count}">1</td>
+                        <td>
+                            <a th:href="@{/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a>
+                        </td>
+                        <td th:text="${doc.authorName}">-</td>
+                        <td th:text="${doc.callCount}">0</td>
+                        <td>
+                            <span th:if="${doc.callCount > 0}"
+                                  th:text="${#numbers.formatDecimal(doc.successCount * 100.0 / doc.callCount, 1, 1)} + '%'">
+                                0%
+                            </span>
+                            <span th:if="${doc.callCount == 0}">-</span>
+                        </td>
+                        <td>
+                            <span th:if="${doc.ratingCount > 0}"
+                                  th:text="${#numbers.formatDecimal(doc.rating, 1, 1)} + ' ⭐'">-</span>
+                            <span th:if="${doc.ratingCount == 0}" class="text-muted">-</span>
+                        </td>
+                        <td>
+                            <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
+                            <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
+                            <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+</body>
+</html>

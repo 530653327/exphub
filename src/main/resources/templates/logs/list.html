@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>调用日志 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .table thead th { border: none; background: #f8f9fa; color: #666; font-weight: 600; }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-fail { background: #f8d7da; color: #721c24; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a href="/docs"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a href="/logs" class="active"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a href="/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0">调用日志</h4>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 60px;">状态</th>
+                            <th>经验</th>
+                            <th>助手</th>
+                            <th>耗时</th>
+                            <th>时间</th>
+                            <th>反馈</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logTable">
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-4">
+                                <i class="fas fa-spinner fa-spin mr-2"></i>加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        async function loadLogs() {
+            try {
+                var resp = await fetch('/api/logs?page=1&size=50');
+                var result = await resp.json();
+                if (result.code === 0 && result.data.list.length > 0) {
+                    var html = '';
+                    result.data.list.forEach(function(log) {
+                        html += '<tr>' +
+                            '<td>' + (log.success ? '<span class="badge badge-success">成功</span>' : '<span class="badge badge-fail">失败</span>') + '</td>' +
+                            '<td><a href="/docs/' + log.docId + '">' + log.docTitle + '</a></td>' +
+                            '<td>' + log.assistantName + '</td>' +
+                            '<td>' + (log.executionTime || '-') + 'ms</td>' +
+                            '<td>' + new Date(log.createdAt).toLocaleString('zh-CN') + '</td>' +
+                            '<td>' + (log.feedback || '-') + '</td>' +
+                        '</tr>';
+                    });
+                    document.getElementById('logTable').innerHTML = html;
+                } else {
+                    document.getElementById('logTable').innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">暂无数据</td></tr>';
+                }
+            } catch (e) {
+                document.getElementById('logTable').innerHTML = '<tr><td colspan="6" class="text-center text-danger py-4">加载失败</td></tr>';
+            }
+        }
+        loadLogs();
+    </script>
+</body>
+</html>

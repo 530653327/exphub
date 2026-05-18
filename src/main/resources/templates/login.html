@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-card {
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 50px 40px;
+            width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .login-card .brand {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .login-card .brand h1 {
+            color: #fff;
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .login-card .brand h1 span { color: #e94560; }
+        .login-card .brand p { color: rgba(255,255,255,0.5); font-size: 0.9rem; }
+        .form-control {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #fff;
+            padding: 14px 16px;
+            border-radius: 10px;
+        }
+        .form-control:focus {
+            background: rgba(255,255,255,0.12);
+            border-color: #e94560;
+            box-shadow: none;
+            color: #fff;
+        }
+        .form-control::placeholder { color: rgba(255,255,255,0.4); }
+        .btn-login {
+            background: #e94560;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #fff;
+            width: 100%;
+        }
+        .btn-login:hover { background: #d63850; color: #fff; }
+        .alert-danger { background: rgba(233,69,96,0.2); border: 1px solid rgba(233,69,96,0.3); color: #ff8fa3; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="brand">
+            <h1>经验<span>阁</span></h1>
+            <p>ExpHub · 多AI助手协作平台</p>
+        </div>
+
+        <div th:if="${error}" class="alert alert-danger mb-4" th:text="${error}">
+            用户名或密码错误
+        </div>
+
+        <form th:action="@{/api/auth/login}" method="post">
+            <div class="form-group mb-3">
+                <input type="text" name="username" class="form-control" placeholder="用户名" required autofocus>
+            </div>
+            <div class="form-group mb-4">
+                <input type="password" name="password" class="form-control" placeholder="密码" required>
+            </div>
+            <button type="submit" class="btn btn-login">登 录</button>
+        </form>
+    </div>
+</body>
+</html>

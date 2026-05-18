@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新建经验 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .form-control:focus { border-color: #e94560; box-shadow: none; }
+        textarea { font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.9rem; }
+        .tip-box { background: #fff9e6; border: 1px solid #ffe58f; border-radius: 8px; padding: 12px 15px; font-size: 0.85rem; color: #7a6a3a; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a href="/docs" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0">新建经验</h4>
+            <div>
+                <a href="/docs" class="btn btn-outline-secondary btn-sm mr-2">取消</a>
+                <button class="btn btn-primary btn-sm" onclick="saveDoc()">
+                    <i class="fas fa-save mr-1"></i> 保存
+                </button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-4">
+                <div class="tip-box mb-4">
+                    <i class="fas fa-lightbulb mr-2"></i>
+                    <strong>写作提示：</strong>建议按「目标 → 前提条件 → 操作步骤 → 验证方式 → 注意事项」的顺序组织内容，方便 AI 理解执行。
+                    <br>在「别名/可能的表述」中列出常见关键词（如"不用密码登录"、"SSH配置"），帮助 AI 检索到这条经验。
+                </div>
+
+                <form id="docForm">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="form-group mb-3">
+                                <label>标题 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="title" required placeholder="如：SSH免密登录配置">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group mb-3">
+                                <label>分类</label>
+                                <input type="text" class="form-control" id="category" placeholder="如：服务器、部署、日常">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label>内容（Markdown）<span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="content" rows="18" required
+                            placeholder="## 目标
+说明要做什么
+
+## 前提条件
+需要什么环境和工具
+
+## 操作步骤
+### 步骤1：xxx
+### 步骤2：xxx
+
+## 验证方式
+如何确认操作成功
+
+## 注意事项
+可能会遇到的问题"></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label>别名 / 同义词</label>
+                                <input type="text" class="form-control" id="aliases" placeholder="用逗号分隔，如：免密登录,SSH配置,不用密码">
+                                <small class="form-text text-muted">AI 可能用这些词搜索此经验</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group mb-3">
+                                <label>标签</label>
+                                <input type="text" class="form-control" id="tags" placeholder="用逗号分隔，如：ssh,服务器,自动化">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label>一句话摘要</label>
+                        <input type="text" class="form-control" id="summary" placeholder="用一句话描述这个经验的核心要点">
+                        <small class="form-text text-muted">简洁的摘要有助于 AI 快速判断这条经验是否适用</small>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        async function saveDoc() {
+            var title = document.getElementById('title').value.trim();
+            var content = document.getElementById('content').value.trim();
+            if (!title || !content) {
+                alert('标题和内容不能为空');
+                return;
+            }
+            var data = {
+                title: title,
+                category: document.getElementById('category').value.trim(),
+                content: content,
+                aliases: document.getElementById('aliases').value.trim(),
+                tags: document.getElementById('tags').value.trim(),
+                summary: document.getElementById('summary').value.trim()
+            };
+            try {
+                var resp = await fetch('/api/docs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                var result = await resp.json();
+                if (result.code === 0) {
+                    alert('保存成功！');
+                    window.location.href = '/docs/' + result.data.id;
+                } else {
+                    alert('保存失败：' + result.message);
+                }
+            } catch (e) {
+                alert('保存失败：' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

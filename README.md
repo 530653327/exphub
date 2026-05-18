@@ -1,39 +1,47 @@
-# exphub
+# 2026-05-18
 
-#### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
+## ExpHub 项目启动
+- 项目名：ExpHub（经验阁）
+- 路径：C:\Users\shiyue\.qclaw\workspace\ExpHub\
+- 技术栈：Java 1.8 + Spring Boot 2.7.18 + MyBatis-Plus 3.5.3 + MySQL + Thymeleaf
+- 端口：3099
+- 管理员账号：admin / changeme（BCrypt加密，首次启动后修改）
+- 默认AI助手：openclaw-zhuque / API Key: exphub-zhuque-api-key-2024
 
-#### 软件架构
-软件架构说明
+## 数据库初始化（MySQL）
+1. 先在 MySQL 创建数据库：`CREATE DATABASE exphub DEFAULT CHARSET utf8mb4;`
+2. 如使用 ngram 分词：`CREATE FULLTEXT INDEX ft_content ON docs(title, content, aliases, summary, tags) WITH PARSER ngram;`
+3. 执行 sql/init.sql 初始化数据
 
+## 部署服务器
+- api-server（124.71.132.197）已配置 SSH 免密登录
+- 部署路径建议：/opt/exphub/
 
-#### 安装教程
+## 构建部署命令
+1. 本地 Maven 打包：`cd C:\Users\shiyue\.qclaw\workspace\ExpHub && mvn clean package`
+2. 上传到服务器：`scp target/exphub-1.0.0.jar root@124.71.132.197:/opt/exphub/`
+3. 启动：`java -jar exphub-1.0.0.jar`
+4. 或用 start.sh（需先 chmod +x start.sh）
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+## 访问地址
+- 后台管理：http://124.71.132.197:3099/login
+- API 基础地址：http://124.71.132.197:3099/api
 
-#### 使用说明
+## API Key 鉴权
+- 所有 /api/* 请求需在 Header 中添加 `X-API-Key: your-api-key`
+- Auth 接口（/api/auth/*）无需 Key
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
-
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+## 项目结构
+- src/main/java/com/exphub/
+  - controller/ — RestController（后台页面 + API）
+  - service/ — 业务逻辑
+  - mapper/ — MyBatis-Plus Mapper
+  - entity/ — 数据实体
+  - interceptor/ — API Key 拦截器
+  - config/ — WebMvc 配置
+  - common/ — 统一响应类 R.java
+- src/main/resources/
+  - mapper/ — XML Mapper（暂时不需要，MyBatis-Plus够用）
+  - templates/ — Thymeleaf 页面
+  - application.yml — 配置文件
+- sql/init.sql — 数据库初始化脚本

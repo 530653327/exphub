@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>经验管理 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .badge-status { padding: 5px 10px; border-radius: 20px; }
+        .badge-active { background: #d4edda; color: #155724; }
+        .badge-broken { background: #f8d7da; color: #721c24; }
+        .badge-deprecated { background: #fff3cd; color: #856404; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .search-box { border-radius: 30px; padding: 10px 20px; border: 1px solid #e0e0e0; width: 300px; }
+        .doc-item { padding: 20px 25px; border-bottom: 1px solid #f5f5f5; transition: all 0.2s; }
+        .doc-item:hover { background: #fafafa; }
+        .doc-item:last-child { border-bottom: none; }
+        .doc-title { font-size: 1.05rem; font-weight: 600; color: #333; }
+        .doc-title:hover { color: #e94560; }
+        .doc-meta { font-size: 0.85rem; color: #999; margin-top: 5px; }
+        .doc-tags .tag { display: inline-block; background: #f0f0f0; color: #666; padding: 2px 10px; border-radius: 15px; font-size: 0.8rem; margin-right: 5px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a href="/docs" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a href="/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0">经验管理</h4>
+            <div class="d-flex align-items-center">
+                <input type="text" class="form-control search-box" placeholder="搜索经验..." id="searchInput">
+                <a href="/docs/edit" class="btn btn-primary ml-3">
+                    <i class="fas fa-plus mr-1"></i> 新建经验
+                </a>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body p-0" id="docList">
+                <div class="doc-item" th:each="doc : ${docs}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <a class="doc-title" th:href="@{/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a>
+                            <div class="doc-meta">
+                                <i class="fas fa-user mr-1"></i><span th:text="${doc.authorName}">-</span>
+                                <i class="fas fa-folder ml-3 mr-1"></i><span th:text="${doc.category ?: '未分类'}">-</span>
+                                <i class="fas fa-clock ml-3 mr-1"></i><span th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}">-</span>
+                                <i class="fas fa-eye ml-3 mr-1"></i><span th:text="${doc.callCount}">0</span>次调用
+                            </div>
+                            <div class="doc-tags">
+                                <span class="tag" th:each="tag : (${#strings.listSplit(doc.tags, '', '')})" th:text="${tag}">标签</span>
+                            </div>
+                        </div>
+                        <div class="text-right ml-3">
+                            <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
+                            <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
+                            <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
+                        </div>
+                    </div>
+                </div>
+                <div th:if="${#lists.isEmpty(docs)}" class="text-center text-muted py-5">
+                    <i class="fas fa-inbox fa-3x mb-3"></i>
+                    <p>暂无经验文档，<a href="/docs/edit">创建一个</a>吧~</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('searchInput').addEventListener('keyup', function(e) {
+            if (e.key === 'Enter') {
+                var keyword = this.value;
+                window.location.href = '/docs?keyword=' + encodeURIComponent(keyword);
+            }
+        });
+    </script>
+</body>
+</html>

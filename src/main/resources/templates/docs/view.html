@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>经验详情 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.2.0/github-markdown.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .markdown-body { padding: 30px; font-size: 0.95rem; }
+        .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
+        .badge-broken { background: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 20px; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .stat-box { display: inline-block; background: #f8f9fa; padding: 8px 15px; border-radius: 8px; text-align: center; margin-right: 15px; }
+        .stat-box .number { font-size: 1.3rem; font-weight: bold; color: #333; }
+        .stat-box .label { font-size: 0.75rem; color: #999; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a href="/docs" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a href="/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0" th:text="${doc.title}">经验详情</h4>
+            <div>
+                <a th:href="@{/docs/edit?id={id}(id=${doc.id})}" class="btn btn-outline-secondary btn-sm mr-2">
+                    <i class="fas fa-edit mr-1"></i> 编辑
+                </a>
+                <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active mr-2">正常</span>
+                <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken mr-2">有问题</span>
+                <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated mr-2">已废弃</span>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="text-muted mr-3"><i class="fas fa-user mr-1"></i><span th:text="${doc.authorName}">-</span></span>
+                            <span class="text-muted mr-3"><i class="fas fa-folder mr-1"></i><span th:text="${doc.category ?: '未分类'}">-</span></span>
+                            <span class="text-muted"><i class="fas fa-clock mr-1"></i><span th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}">-</span></span>
+                        </div>
+                        <span class="text-muted">v<span th:text="${doc.version}">1</span></span>
+                    </div>
+                    <div class="markdown-body" th:utext="${doc.content}"></div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card mb-3">
+                    <div class="card-header"><h6 class="mb-0"><i class="fas fa-chart-bar mr-2"></i>使用统计</h6></div>
+                    <div class="card-body text-center">
+                        <div class="stat-box">
+                            <div class="number" th:text="${doc.callCount}">0</div>
+                            <div class="label">调用</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="number" th:text="${doc.successCount}">0</div>
+                            <div class="label">成功</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="number" th:text="${doc.failCount}">0</div>
+                            <div class="label">失败</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="number" th:text="${doc.ratingCount > 0 ? #numbers.formatDecimal(doc.rating, 1, 1) : '-'}">-</div>
+                            <div class="label">评分</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card mb-3" th:if="${doc.summary != null}">
+                    <div class="card-header"><h6 class="mb-0"><i class="fas fa-star mr-2"></i>摘要</h6></div>
+                    <div class="card-body" th:text="${doc.summary}">-</div>
+                </div>
+                <div class="card mb-3" th:if="${doc.tags != null}">
+                    <div class="card-header"><h6 class="mb-0"><i class="fas fa-tags mr-2"></i>标签</h6></div>
+                    <div class="card-body">
+                        <span th:each="tag : ${#strings.listSplit(doc.tags, ',')}" 
+                              class="badge badge-secondary mr-1 mb-1" th:text="${tag}">标签</span>
+                    </div>
+                </div>
+                <div class="card mb-3" th:if="${doc.aliases != null}">
+                    <div class="card-header"><h6 class="mb-0"><i class="fas fa-language mr-2"></i>别名</h6></div>
+                    <div class="card-body">
+                        <span th:each="a : ${#strings.listSplit(doc.aliases, ',')}" 
+                              class="badge badge-light mr-1 mb-1" th:text="${a}">别名</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@5.1.0/marked.min.js"></script>
+</body>
+</html>
