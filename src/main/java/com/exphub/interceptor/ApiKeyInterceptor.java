@@ -29,6 +29,11 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // 已登录用户（后台页面操作）跳过 API Key 验证
+        if (request.getSession().getAttribute("user") != null) {
+            return true;
+        }
+
         String apiKey = request.getHeader("X-API-Key");
         if (apiKey == null || apiKey.isEmpty()) {
             response.setStatus(401);

@@ -17,9 +17,13 @@ public class AiAssistantService {
     @Autowired
     private AiAssistantMapper assistantMapper;
 
-    // 创建助手（自动生成 API Key）
+    // 创建助手（自动生成 API Key 和 assistantId）
     @Transactional
     public AiAssistant create(AiAssistant assistant) {
+        // 自动生成 assistantId
+        if (assistant.getAssistantId() == null || assistant.getAssistantId().isEmpty()) {
+            assistant.setAssistantId("assistant-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
+        }
         assistant.setApiKey(generateApiKey());
         assistant.setApiKeySecret(UUID.randomUUID().toString().replace("-", "").substring(0, 32));
         assistant.setEnabled(true);
@@ -27,6 +31,16 @@ public class AiAssistantService {
         assistant.setSuccessCalls(0);
         assistant.setFailCalls(0);
         assistantMapper.insert(assistant);
+        return assistant;
+    }
+
+    // 切换启用/禁用状态
+    @Transactional
+    public AiAssistant toggleEnabled(Long id) {
+        AiAssistant assistant = assistantMapper.selectById(id);
+        if (assistant == null) return null;
+        assistant.setEnabled(!assistant.getEnabled());
+        assistantMapper.updateById(assistant);
         return assistant;
     }
 

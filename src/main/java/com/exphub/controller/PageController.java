@@ -12,6 +12,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import javax.servlet.http.HttpSession;
 import java.util.HashMap;
@@ -79,17 +80,29 @@ public class PageController {
 
     // 经验列表
     @GetMapping("/docs")
-    public String docs(HttpSession session, Model model) {
+    public String docs(HttpSession session,
+                       @RequestParam(required = false) String keyword,
+                       Model model) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
         model.addAttribute("active", "docs");
         model.addAttribute("pageTitle", "经验管理");
+        model.addAttribute("keyword", keyword != null ? keyword : "");
 
-        List<Doc> docs = docMapper.selectList(
-            new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
-                .orderByDesc("updated_at")
-        );
+        List<Doc> docs;
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            // 搜索模式
+            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Doc> result =
+                docService.search(keyword, 1, 100);
+            docs = result.getRecords();
+        } else {
+            // 普通列表
+            docs = docMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
+                    .orderByDesc("updated_at")
+            );
+        }
         model.addAttribute("docs", docs);
 
         return "docs/list";
@@ -97,12 +110,19 @@ public class PageController {
 
     // 新建/编辑经验
     @GetMapping("/docs/edit")
-    public String docEdit(HttpSession session, Model model) {
+    public String docEdit(HttpSession session, 
+                          @RequestParam(required = false) Long id,
+                          Model model) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
         model.addAttribute("active", "docs");
-        model.addAttribute("pageTitle", "新建经验");
+        if (id != null) {
+            model.addAttribute("pageTitle", "编辑经验");
+            model.addAttribute("doc", docMapper.selectById(id));
+        } else {
+            model.addAttribute("pageTitle", "新建经验");
+        }
         return "docs/edit";
     }
 
@@ -142,6 +162,22 @@ public class PageController {
         model.addAttribute("active", "assistants");
         model.addAttribute("pageTitle", "新建助手");
         return "assistants/add";
+    }
+
+    // 助手创建成功结果页
+    @GetMapping("/assistants/created")
+    public String assistantCreated(HttpSession session,
+                                   @RequestParam String apiKey,
+                                   @RequestParam String apiKeySecret,
+                                   Model model) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        model.addAttribute("active", "assistants");
+        model.addAttribute("pageTitle", "创建成功");
+        model.addAttribute("apiKey", apiKey);
+        model.addAttribute("apiKeySecret", apiKeySecret);
+        return "assistants/created";
     }
 
     // 调用日志

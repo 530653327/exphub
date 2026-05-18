@@ -7,8 +7,13 @@ import com.exphub.entity.Doc;
 import com.exphub.entity.DocVersion;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.DocVersionMapper;
+import com.exphub.entity.User;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import javax.servlet.http.HttpSession;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,8 +32,27 @@ public class DocService {
     @Transactional
     public Doc create(Doc doc) {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
-        doc.setAuthorId(assistant.getAssistantId());
-        doc.setAuthorName(assistant.getAssistantName());
+        if (assistant != null) {
+            doc.setAuthorId(assistant.getAssistantId());
+            doc.setAuthorName(assistant.getAssistantName());
+        } else {
+            // 后台页面操作，使用默认管理员
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                HttpSession session = attrs.getRequest().getSession(false);
+                User user = session != null ? (User) session.getAttribute("user") : null;
+                if (user != null) {
+                    doc.setAuthorId("user_" + user.getId());
+                    doc.setAuthorName(user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
+                } else {
+                    doc.setAuthorId("system");
+                    doc.setAuthorName("系统");
+                }
+            } else {
+                doc.setAuthorId("system");
+                doc.setAuthorName("系统");
+            }
+        }
         doc.setVersion(1);
         doc.setCallCount(0);
         doc.setSuccessCount(0);
@@ -44,9 +68,14 @@ public class DocService {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         if (keyword != null && !keyword.trim().isEmpty()) {
-            String sql = "MATCH(title, content, aliases, summary, tags) AGAINST('" + keyword.replace("'", "''") + "' IN NATURAL LANGUAGE MODE)";
-            wrapper.apply(sql);
-            wrapper.orderByDesc("call_count", "updated_at");
+            String kw = keyword.trim();
+            // 使用 LIKE 模糊搜索（兼容所有 MySQL 环境）
+            wrapper.and(w -> w.like("title", kw)
+                    .or().like("content", kw)
+                    .or().like("aliases", kw)
+                    .or().like("summary", kw)
+                    .or().like("tags", kw));
+            wrapper.orderByDesc("updated_at");
         } else {
             wrapper.orderByDesc("updated_at");
         }
@@ -87,8 +116,26 @@ public class DocService {
         v.setAliases(old.getAliases());
         v.setSummary(old.getSummary());
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
-        v.setUpdatedBy(assistant.getAssistantId());
-        v.setUpdatedName(assistant.getAssistantName());
+        if (assistant != null) {
+            v.setUpdatedBy(assistant.getAssistantId());
+            v.setUpdatedName(assistant.getAssistantName());
+        } else {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                HttpSession session = attrs.getRequest().getSession(false);
+                User user = session != null ? (User) session.getAttribute("user") : null;
+                if (user != null) {
+                    v.setUpdatedBy("user_" + user.getId());
+                    v.setUpdatedName(user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
+                } else {
+                    v.setUpdatedBy("system");
+                    v.setUpdatedName("系统");
+                }
+            } else {
+                v.setUpdatedBy("system");
+                v.setUpdatedName("系统");
+            }
+        }
         versionMapper.insert(v);
 
         // update doc

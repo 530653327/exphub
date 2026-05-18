@@ -27,17 +27,17 @@
 <body>
     <div class="sidebar">
         <div class="brand">经验<span>阁</span> ExpHub</div>
-        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
-        <a href="/docs" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
-        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
     </div>
 
     <div class="main-content">
         <div class="topbar">
-            <h4 class="mb-0">新建经验</h4>
+            <h4 class="mb-0" th:text="${pageTitle}">新建经验</h4>
             <div>
-                <a href="/docs" class="btn btn-outline-secondary btn-sm mr-2">取消</a>
+                <a th:href="@{/docs}" class="btn btn-outline-secondary btn-sm mr-2">取消</a>
                 <button class="btn btn-primary btn-sm" onclick="saveDoc()">
                     <i class="fas fa-save mr-1"></i> 保存
                 </button>
@@ -57,13 +57,13 @@
                         <div class="col-md-8">
                             <div class="form-group mb-3">
                                 <label>标题 <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="title" required placeholder="如：SSH免密登录配置">
+                                <input type="text" class="form-control" id="title" required placeholder="如：SSH免密登录配置" th:value="${doc?.title}">
                             </div>
                         </div>
                         <div class="col-md-4">
                             <div class="form-group mb-3">
                                 <label>分类</label>
-                                <input type="text" class="form-control" id="category" placeholder="如：服务器、部署、日常">
+                                <input type="text" class="form-control" id="category" placeholder="如：服务器、部署、日常" th:value="${doc?.category}">
                             </div>
                         </div>
                     </div>
@@ -85,28 +85,28 @@
 如何确认操作成功
 
 ## 注意事项
-可能会遇到的问题"></textarea>
+可能会遇到的问题" th:text="${doc?.content}"></textarea>
                     </div>
 
                     <div class="row">
                         <div class="col-md-6">
                             <div class="form-group mb-3">
                                 <label>别名 / 同义词</label>
-                                <input type="text" class="form-control" id="aliases" placeholder="用逗号分隔，如：免密登录,SSH配置,不用密码">
+                                <input type="text" class="form-control" id="aliases" placeholder="用逗号分隔，如：免密登录,SSH配置,不用密码" th:value="${doc?.aliases}">
                                 <small class="form-text text-muted">AI 可能用这些词搜索此经验</small>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="form-group mb-3">
                                 <label>标签</label>
-                                <input type="text" class="form-control" id="tags" placeholder="用逗号分隔，如：ssh,服务器,自动化">
+                                <input type="text" class="form-control" id="tags" placeholder="用逗号分隔，如：ssh,服务器,自动化" th:value="${doc?.tags}">
                             </div>
                         </div>
                     </div>
 
                     <div class="form-group mb-3">
                         <label>一句话摘要</label>
-                        <input type="text" class="form-control" id="summary" placeholder="用一句话描述这个经验的核心要点">
+                        <input type="text" class="form-control" id="summary" placeholder="用一句话描述这个经验的核心要点" th:value="${doc?.summary}">
                         <small class="form-text text-muted">简洁的摘要有助于 AI 快速判断这条经验是否适用</small>
                     </div>
                 </form>
@@ -116,7 +116,11 @@
 
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
+    <script th:inline="javascript">
+        var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+        var docId = /*[[${doc?.id}]]*/ null;
+        var isEdit = docId !== null;
+
         async function saveDoc() {
             var title = document.getElementById('title').value.trim();
             var content = document.getElementById('content').value.trim();
@@ -133,20 +137,22 @@
                 summary: document.getElementById('summary').value.trim()
             };
             try {
-                var resp = await fetch('/api/docs', {
-                    method: 'POST',
+                var url = isEdit ? contextPath + '/api/docs/' + docId : contextPath + '/api/docs';
+                var method = isEdit ? 'PUT' : 'POST';
+                var resp = await fetch(url, {
+                    method: method,
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
                 var result = await resp.json();
                 if (result.code === 0) {
-                    alert('保存成功！');
-                    window.location.href = '/docs/' + result.data.id;
+                    alert(isEdit ? '更新成功！' : '保存成功！');
+                    window.location.href = contextPath + '/docs/' + result.data.id;
                 } else {
-                    alert('保存失败：' + result.message);
+                    alert((isEdit ? '更新' : '保存') + '失败：' + result.message);
                 }
             } catch (e) {
-                alert('保存失败：' + e.message);
+                alert((isEdit ? '更新' : '保存') + '失败：' + e.message);
             }
         }
     </script>

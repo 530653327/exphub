@@ -31,6 +31,6 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
         HttpSession session = request.getSession();
         session.setAttribute("user", user);
         
-        response.sendRedirect("/dashboard");
+        response.sendRedirect(request.getContextPath() + "/dashboard");
     }
 }

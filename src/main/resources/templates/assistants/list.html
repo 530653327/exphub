@@ -35,24 +35,24 @@
 <body>
     <div class="sidebar">
         <div class="brand">经验<span>阁</span> ExpHub</div>
-        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
-        <a href="/docs"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a href="/assistants" class="active"><i class="fas fa-robot mr-2"></i> 助手管理</a>
-        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/assistants}" class="active"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
         <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
-            <a href="/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
         </div>
     </div>
 
     <div class="main-content">
         <div class="topbar">
             <h4 class="mb-0">助手管理</h4>
-            <a href="/assistants/add" class="btn btn-primary btn-sm">
+            <a th:href="@{/assistants/add}" class="btn btn-primary btn-sm">
                 <i class="fas fa-plus mr-1"></i> 新建助手
             </a>
         </div>
 
-        <div th:each="a : ${assistants}" class="assistant-card">
+        <div th:each="a : ${assistants}" class="assistant-card" th:data-id="${a.id}" th:data-enabled="${a.enabled}">
             <div class="d-flex align-items-center">
                 <div class="assistant-avatar mr-3" th:text="${#strings.substring(a.assistantName, 0, 1)}">助</div>
                 <div class="assistant-info">
@@ -67,29 +67,74 @@
                     </div>
                 </div>
             </div>
-            <div class="assistant-stats">
-                <div class="stat">
-                    <div class="num" th:text="${a.totalCalls}">0</div>
-                    <div class="lbl">总调用</div>
+            <div class="d-flex align-items-center">
+                <div class="assistant-stats mr-4">
+                    <div class="stat">
+                        <div class="num" th:text="${a.totalCalls}">0</div>
+                        <div class="lbl">总调用</div>
+                    </div>
+                    <div class="stat">
+                        <div class="num text-success" th:text="${a.successCalls}">0</div>
+                        <div class="lbl">成功</div>
+                    </div>
+                    <div class="stat">
+                        <div class="num text-danger" th:text="${a.failCalls}">0</div>
+                        <div class="lbl">失败</div>
+                    </div>
                 </div>
-                <div class="stat">
-                    <div class="num text-success" th:text="${a.successCalls}">0</div>
-                    <div class="lbl">成功</div>
-                </div>
-                <div class="stat">
-                    <div class="num text-danger" th:text="${a.failCalls}">0</div>
-                    <div class="lbl">失败</div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-secondary" th:onclick="'toggleEnabled(' + ${a.id} + ')'">
+                        <i class="fas fa-toggle-on" th:if="${a.enabled}"></i>
+                        <i class="fas fa-toggle-off" th:unless="${a.enabled}"></i>
+                        <span th:text="${a.enabled} ? '禁用' : '启用'">切换</span>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" th:onclick="'deleteAssistant(' + ${a.id} + ')'">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </div>
             </div>
         </div>
 
         <div th:if="${#lists.isEmpty(assistants)}" class="text-center text-muted py-5">
             <i class="fas fa-robot fa-3x mb-3"></i>
-            <p>暂无助手，<a href="/assistants/add">创建一个</a>吧~</p>
+            <p>暂无助手，<a th:href="@{/assistants/add}">创建一个</a>吧~</p>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+
+        async function toggleEnabled(id) {
+            if (!confirm('确定要切换启用状态吗？')) return;
+            try {
+                var resp = await fetch(contextPath + '/api/assistants/' + id + '/toggle', {
+                    method: 'POST'
+                });
+                var result = await resp.json();
+                if (result.code === 0) {
+                    location.reload();
+                } else {
+                    alert('操作失败：' + result.message);
+                }
+            } catch (e) { alert('操作失败：' + e.message); }
+        }
+
+        async function deleteAssistant(id) {
+            if (!confirm('确定要删除这个助手吗？此操作不可恢复！')) return;
+            try {
+                var resp = await fetch(contextPath + '/api/assistants/' + id, {
+                    method: 'DELETE'
+                });
+                var result = await resp.json();
+                if (result.code === 0) {
+                    location.reload();
+                } else {
+                    alert('删除失败：' + result.message);
+                }
+            } catch (e) { alert('删除失败：' + e.message); }
+        }
+    </script>
 </body>
 </html>

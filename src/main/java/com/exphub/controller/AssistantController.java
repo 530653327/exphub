@@ -20,9 +20,6 @@ public class AssistantController {
     // 创建助手
     @PostMapping
     public R<AiAssistant> create(@RequestBody AiAssistant assistant) {
-        if (assistant.getAssistantId() == null || assistant.getAssistantId().isEmpty()) {
-            return R.fail("助手ID不能为空");
-        }
         if (assistant.getAssistantName() == null || assistant.getAssistantName().isEmpty()) {
             return R.fail("助手名称不能为空");
         }
@@ -87,6 +84,14 @@ public class AssistantController {
     public R<Void> delete(@PathVariable Long id) {
         assistantService.delete(id);
         return R.ok();
+    }
+
+    // 切换启用/禁用
+    @PostMapping("/{id}/toggle")
+    public R<AiAssistant> toggleEnabled(@PathVariable Long id) {
+        AiAssistant updated = assistantService.toggleEnabled(id);
+        if (updated == null) return R.fail(404, "助手不存在");
+        return R.ok(updated);
     }
 
     // 验证 API Key

@@ -36,12 +36,12 @@
 <body>
     <div class="sidebar">
         <div class="brand">经验<span>阁</span> ExpHub</div>
-        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
-        <a href="/docs" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
-        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
         <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
-            <a href="/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
         </div>
     </div>
 
@@ -49,14 +49,27 @@
         <div class="topbar">
             <h4 class="mb-0">经验管理</h4>
             <div class="d-flex align-items-center">
-                <input type="text" class="form-control search-box" placeholder="搜索经验..." id="searchInput">
-                <a href="/docs/edit" class="btn btn-primary ml-3">
+                <div class="input-group" style="width: 300px;">
+                    <input type="text" class="form-control search-box" placeholder="搜索经验..." id="searchInput" th:value="${keyword}">
+                    <div class="input-group-append">
+                        <button class="btn btn-outline-secondary" type="button" onclick="doSearch()">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                </div>
+                <a th:href="@{/docs/edit}" class="btn btn-primary ml-3">
                     <i class="fas fa-plus mr-1"></i> 新建经验
                 </a>
             </div>
         </div>
 
         <div class="card">
+            <div class="card-header">
+                <span th:if="${keyword != null && keyword != ''}">
+                    搜索 "<strong th:text="${keyword}"></strong>" 的结果：共 <span th:text="${#lists.size(docs)}">0</span> 条
+                </span>
+                <span th:unless="${keyword != null && keyword != ''}">全部经验</span>
+            </div>
             <div class="card-body p-0" id="docList">
                 <div class="doc-item" th:each="doc : ${docs}">
                     <div class="d-flex justify-content-between align-items-start">
@@ -81,7 +94,7 @@
                 </div>
                 <div th:if="${#lists.isEmpty(docs)}" class="text-center text-muted py-5">
                     <i class="fas fa-inbox fa-3x mb-3"></i>
-                    <p>暂无经验文档，<a href="/docs/edit">创建一个</a>吧~</p>
+                    <p>暂无经验文档，<a th:href="@{/docs/edit}">创建一个</a>吧~</p>
                 </div>
             </div>
         </div>
@@ -89,11 +102,17 @@
 
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
+    <script th:inline="javascript">
+        var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+
+        function doSearch() {
+            var keyword = document.getElementById('searchInput').value.trim();
+            window.location.href = contextPath + '/docs?keyword=' + encodeURIComponent(keyword);
+        }
+
         document.getElementById('searchInput').addEventListener('keyup', function(e) {
             if (e.key === 'Enter') {
-                var keyword = this.value;
-                window.location.href = '/docs?keyword=' + encodeURIComponent(keyword);
+                doSearch();
             }
         });
     </script>
