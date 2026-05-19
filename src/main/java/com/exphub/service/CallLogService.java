@@ -34,43 +34,97 @@ public class CallLogService {
     @Autowired
     private DocService docService;
 
+    // 系统自动记录调用日志（从拦截器获取调用者信息）
     @Transactional
-    public CallLog logCall(CallLog log) {
+    public CallLog logSearch(String keyword, int hitCount) {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
-        log.setAssistantId(assistant.getAssistantId());
-        log.setAssistantName(assistant.getAssistantName());
-
-        Doc doc = docMapper.selectById(log.getDocId());
-        if (doc != null) {
-            log.setDocTitle(doc.getTitle());
-        }
-
+        
+        CallLog log = new CallLog();
+        log.setApiKey(assistant.getApiKey());
+        log.setCallerName(assistant.getAssistantName());
+        log.setAction("SEARCH");
+        log.setKeyword(keyword);
+        log.setHitCount(hitCount);
+        
         callLogMapper.insert(log);
 
+        // 更新助手调用统计
         assistant.setTotalCalls(assistant.getTotalCalls() + 1);
-        if (log.getSuccess()) {
-            assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
-            docService.updateCallResult(log.getDocId(), true);
-        } else {
-            assistant.setFailCalls(assistant.getFailCalls() + 1);
-            docService.updateCallResult(log.getDocId(), false);
-        }
         assistant.setLastCallAt(LocalDateTime.now());
         assistantMapper.updateById(assistant);
-
-        if (log.getRating() != null) {
-            docService.updateRating(log.getDocId(), log.getRating());
-        }
 
         return log;
     }
 
-    public Page<CallLog> list(Long docId, String assistantId, Boolean success, int page, int size) {
+    // 记录创建经验
+    @Transactional
+    public CallLog logCreate(Doc doc) {
+        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        
+        CallLog log = new CallLog();
+        log.setApiKey(assistant.getApiKey());
+        log.setCallerName(assistant.getAssistantName());
+        log.setAction("CREATE");
+        log.setDocId(doc.getId());
+        log.setDocTitle(doc.getTitle());
+        log.setDetail("创建新经验");
+        
+        callLogMapper.insert(log);
+
+        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+        assistant.setLastCallAt(LocalDateTime.now());
+        assistantMapper.updateById(assistant);
+
+        return log;
+    }
+
+    // 记录更新经验
+    @Transactional
+    public CallLog logUpdate(Doc doc) {
+        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        
+        CallLog log = new CallLog();
+        log.setApiKey(assistant.getApiKey());
+        log.setCallerName(assistant.getAssistantName());
+        log.setAction("UPDATE");
+        log.setDocId(doc.getId());
+        log.setDocTitle(doc.getTitle());
+        log.setDetail("更新经验至 v" + doc.getVersion());
+        
+        callLogMapper.insert(log);
+
+        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+        assistant.setLastCallAt(LocalDateTime.now());
+        assistantMapper.updateById(assistant);
+
+        return log;
+    }
+
+    // 记录删除经验
+    @Transactional
+    public CallLog logDelete(Long docId, String docTitle) {
+        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        
+        CallLog log = new CallLog();
+        log.setApiKey(assistant.getApiKey());
+        log.setCallerName(assistant.getAssistantName());
+        log.setAction("DELETE");
+        log.setDocId(docId);
+        log.setDocTitle(docTitle);
+        log.setDetail("删除经验");
+        
+        callLogMapper.insert(log);
+
+        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+        assistant.setLastCallAt(LocalDateTime.now());
+        assistantMapper.updateById(assistant);
+
+        return log;
+    }
+
+    public Page<CallLog> list(int page, int size) {
         Page<CallLog> p = new Page<>(page, size);
         QueryWrapper<CallLog> wrapper = new QueryWrapper<>();
-        if (docId != null) wrapper.eq("doc_id", docId);
-        if (assistantId != null && !assistantId.isEmpty()) wrapper.eq("assistant_id", assistantId);
-        if (success != null) wrapper.eq("success", success);
         wrapper.orderByDesc("created_at");
         return callLogMapper.selectPage(p, wrapper);
     }
@@ -79,20 +133,30 @@ public class CallLogService {
         Map<String, Object> stats = new HashMap<>();
         long total = callLogMapper.selectCount(null);
         stats.put("totalCalls", total);
-
-        QueryWrapper<CallLog> successWrapper = new QueryWrapper<>();
-        successWrapper.eq("success", true);
-        long successCount = callLogMapper.selectCount(successWrapper);
-        stats.put("successCalls", successCount);
-        stats.put("failCalls", total - successCount);
-        stats.put("successRate", total > 0 ? (double) successCount / total : 0.0);
-
+        stats.put("totalDocs", docService.countAll());
         return stats;
     }
 
     public Map<String, Object> getOverview() {
         Map<String, Object> stats = getStats();
-        stats.put("totalDocs", docService.countAll());
+        
+        // 今日调用次数
+        QueryWrapper<CallLog> todayWrapper = new QueryWrapper<>();
+        todayWrapper.apply("DATE(created_at) = CURDATE()");
+        long todayCalls = callLogMapper.selectCount(todayWrapper);
+        stats.put("todayCalls", todayCalls);
+        
+        // 成功率（基于助手的成功/失败调用统计）
+        double successRate = 0.0;
+        List<AiAssistant> assistants = assistantMapper.selectList(null);
+        long totalSuccess = assistants.stream().mapToLong(AiAssistant::getSuccessCalls).sum();
+        long totalFail = assistants.stream().mapToLong(AiAssistant::getFailCalls).sum();
+        long total = totalSuccess + totalFail;
+        if (total > 0) {
+            successRate = (double) totalSuccess / total;
+        }
+        stats.put("successRate", successRate);
+        
         stats.put("problemDocs", docService.countProblemDocs());
         return stats;
     }

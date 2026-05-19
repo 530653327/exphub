@@ -45,6 +45,9 @@ public class AssistantController {
             m.put("description", a.getDescription());
             m.put("apiKey", assistantService.maskApiKey(a.getApiKey()));
             m.put("enabled", a.getEnabled());
+            m.put("canCreate", a.getCanCreate());
+            m.put("canUpdate", a.getCanUpdate());
+            m.put("canSearch", a.getCanSearch());
             m.put("totalCalls", a.getTotalCalls());
             m.put("successCalls", a.getSuccessCalls());
             m.put("failCalls", a.getFailCalls());
@@ -105,6 +108,9 @@ public class AssistantController {
         data.put("assistantId", assistant.getAssistantId());
         data.put("assistantName", assistant.getAssistantName());
         data.put("enabled", assistant.getEnabled());
+        data.put("canCreate", assistant.getCanCreate());
+        data.put("canUpdate", assistant.getCanUpdate());
+        data.put("canSearch", assistant.getCanSearch());
         return R.ok(data);
     }
 }

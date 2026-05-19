@@ -29,9 +29,9 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .userDetailsService(userService)
-            .authorizeRequests(authorize -> authorize
-                .antMatchers("/api/**").permitAll()
-                .antMatchers("/css/**", "/js/**", "/images/**", "/login").permitAll()
+            .authorizeHttpRequests(authorize -> authorize
+                .requestMatchers("/api/**", "/mcp/**").permitAll()
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/login").permitAll()
                 .anyRequest().authenticated()
             )
             .formLogin(form -> form

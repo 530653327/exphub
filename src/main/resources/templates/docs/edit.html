@@ -14,14 +14,12 @@
         .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
         .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
         .main-content { margin-left: 220px; padding: 25px; }
-        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
         .btn-primary { background: #e94560; border-color: #e94560; }
         .btn-primary:hover { background: #d63850; border-color: #d63850; }
-        .form-control:focus { border-color: #e94560; box-shadow: none; }
-        textarea { font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.9rem; }
-        .tip-box { background: #fff9e6; border: 1px solid #ffe58f; border-radius: 8px; padding: 12px 15px; font-size: 0.85rem; color: #7a6a3a; }
+        .template-hint { background: #e7f3ff; border-left: 3px solid #2196f3; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+        .template-hint h6 { color: #1565c0; margin-bottom: 8px; }
+        .template-hint pre { background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 0.85rem; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -29,130 +27,124 @@
         <div class="brand">经验<span>阁</span> ExpHub</div>
         <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
         <a th:href="@{/docs}" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a th:href="@{/assistants}"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
         <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
     </div>
 
     <div class="main-content">
-        <div class="topbar">
-            <h4 class="mb-0" th:text="${pageTitle}">新建经验</h4>
-            <div>
-                <a th:href="@{/docs}" class="btn btn-outline-secondary btn-sm mr-2">取消</a>
-                <button class="btn btn-primary btn-sm" onclick="saveDoc()">
-                    <i class="fas fa-save mr-1"></i> 保存
-                </button>
-            </div>
+        <div class="topbar d-flex justify-content-between align-items-center">
+            <h4 class="mb-0">[[${doc.id != null ? '编辑经验' : '新建经验'}]]</h4>
+            <a th:href="@{/docs}" class="btn btn-outline-secondary">返回列表</a>
         </div>
 
-        <div class="card">
-            <div class="card-body p-4">
-                <div class="tip-box mb-4">
-                    <i class="fas fa-lightbulb mr-2"></i>
-                    <strong>写作提示：</strong>建议按「目标 → 前提条件 → 操作步骤 → 验证方式 → 注意事项」的顺序组织内容，方便 AI 理解执行。
-                    <br>在「别名/可能的表述」中列出常见关键词（如"不用密码登录"、"SSH配置"），帮助 AI 检索到这条经验。
+        <!-- 模板提示 -->
+        <div class="template-hint" id="templateHint" style="display: none;">
+            <h6><i class="fas fa-lightbulb mr-1"></i> 经验记录指南</h6>
+            <p class="text-muted mb-2" id="instructionText"></p>
+            <pre id="templateContentPreview"></pre>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <input type="hidden" id="docId" th:value="${doc.id}">
+                <div class="form-group">
+                    <label>标题 <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="title" th:value="${doc.title}" placeholder="经验标题">
                 </div>
-
-                <form id="docForm">
-                    <div class="row">
-                        <div class="col-md-8">
-                            <div class="form-group mb-3">
-                                <label>标题 <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" id="title" required placeholder="如：SSH免密登录配置" th:value="${doc?.title}">
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="form-group mb-3">
-                                <label>分类</label>
-                                <input type="text" class="form-control" id="category" placeholder="如：服务器、部署、日常" th:value="${doc?.category}">
-                            </div>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>分类</label>
+                            <input type="text" class="form-control" id="category" th:value="${doc.category}" placeholder="如：编程、运维、客服">
                         </div>
                     </div>
-
-                    <div class="form-group mb-3">
-                        <label>内容（Markdown）<span class="text-danger">*</span></label>
-                        <textarea class="form-control" id="content" rows="18" required
-                            placeholder="## 目标
-说明要做什么
-
-## 前提条件
-需要什么环境和工具
-
-## 操作步骤
-### 步骤1：xxx
-### 步骤2：xxx
-
-## 验证方式
-如何确认操作成功
-
-## 注意事项
-可能会遇到的问题" th:text="${doc?.content}"></textarea>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="form-group mb-3">
-                                <label>别名 / 同义词</label>
-                                <input type="text" class="form-control" id="aliases" placeholder="用逗号分隔，如：免密登录,SSH配置,不用密码" th:value="${doc?.aliases}">
-                                <small class="form-text text-muted">AI 可能用这些词搜索此经验</small>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="form-group mb-3">
-                                <label>标签</label>
-                                <input type="text" class="form-control" id="tags" placeholder="用逗号分隔，如：ssh,服务器,自动化" th:value="${doc?.tags}">
-                            </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>标签</label>
+                            <input type="text" class="form-control" id="tags" th:value="${doc.tags}" placeholder="多个标签用逗号分隔">
                         </div>
                     </div>
-
-                    <div class="form-group mb-3">
-                        <label>一句话摘要</label>
-                        <input type="text" class="form-control" id="summary" placeholder="用一句话描述这个经验的核心要点" th:value="${doc?.summary}">
-                        <small class="form-text text-muted">简洁的摘要有助于 AI 快速判断这条经验是否适用</small>
-                    </div>
-                </form>
+                </div>
+                <div class="form-group">
+                    <label>摘要</label>
+                    <textarea class="form-control" id="summary" rows="2" th:text="${doc.summary}" placeholder="简要描述这个经验"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>别名</label>
+                    <input type="text" class="form-control" id="aliases" th:value="${doc.aliases}" placeholder="多个别名用逗号分隔">
+                </div>
+                <div class="form-group">
+                    <label>内容 <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="content" rows="20" th:text="${doc.content}" placeholder="经验内容（Markdown格式）"></textarea>
+                </div>
+                <div class="text-right">
+                    <button class="btn btn-primary" onclick="saveDoc()">
+                        <i class="fas fa-save mr-1"></i> 保存
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     <script th:inline="javascript">
         var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
-        var docId = /*[[${doc?.id}]]*/ null;
-        var isEdit = docId !== null;
+        var defaultTemplate = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadTemplate();
+        });
+
+        function loadTemplate() {
+            fetch(contextPath + '/api/templates/default')
+                .then(res => res.json())
+                .then(res => {
+                    if (res.success && res.data) {
+                        defaultTemplate = res.data;
+                        document.getElementById('instructionText').textContent = defaultTemplate.instruction;
+                        document.getElementById('templateContentPreview').textContent = defaultTemplate.templateContent;
+                        document.getElementById('templateHint').style.display = 'block';
+                    }
+                });
+        }
 
         async function saveDoc() {
-            var title = document.getElementById('title').value.trim();
-            var content = document.getElementById('content').value.trim();
-            if (!title || !content) {
-                alert('标题和内容不能为空');
-                return;
-            }
             var data = {
-                title: title,
-                category: document.getElementById('category').value.trim(),
-                content: content,
-                aliases: document.getElementById('aliases').value.trim(),
-                tags: document.getElementById('tags').value.trim(),
-                summary: document.getElementById('summary').value.trim()
+                title: document.getElementById('title').value,
+                category: document.getElementById('category').value,
+                tags: document.getElementById('tags').value,
+                summary: document.getElementById('summary').value,
+                aliases: document.getElementById('aliases').value,
+                content: document.getElementById('content').value
             };
-            try {
-                var url = isEdit ? contextPath + '/api/docs/' + docId : contextPath + '/api/docs';
-                var method = isEdit ? 'PUT' : 'POST';
-                var resp = await fetch(url, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                var result = await resp.json();
-                if (result.code === 0) {
-                    alert(isEdit ? '更新成功！' : '保存成功！');
-                    window.location.href = contextPath + '/docs/' + result.data.id;
-                } else {
-                    alert((isEdit ? '更新' : '保存') + '失败：' + result.message);
-                }
-            } catch (e) {
-                alert((isEdit ? '更新' : '保存') + '失败：' + e.message);
+
+            if (!data.title) { alert('请输入标题'); return; }
+            if (!data.content) { alert('请输入内容'); return; }
+
+            var id = document.getElementById('docId').value;
+            var url = contextPath + '/api/docs';
+            var method = 'POST';
+
+            if (id) {
+                url += '/' + id;
+                method = 'PUT';
+            }
+
+            var res = await fetch(url, {
+                method: method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            }).then(r => r.json());
+
+            if (res.success) {
+                alert('保存成功');
+                window.location.href = contextPath + '/docs';
+            } else {
+                alert(res.message || '保存失败');
             }
         }
     </script>

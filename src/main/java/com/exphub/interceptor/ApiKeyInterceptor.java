@@ -6,8 +6,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * API Key 拦截器
@@ -29,11 +29,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 已登录用户（后台页面操作）跳过 API Key 验证
-        if (request.getSession().getAttribute("user") != null) {
-            return true;
-        }
-
+        // 必须传 API Key
         String apiKey = request.getHeader("X-API-Key");
         if (apiKey == null || apiKey.isEmpty()) {
             response.setStatus(401);

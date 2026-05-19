@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>新建助手 - 经验阁 ExpHub</title>
+    <title>新建秘钥 - 经验阁 ExpHub</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
     <style>
@@ -20,6 +20,10 @@
         .btn-primary:hover { background: #d63850; border-color: #d63850; }
         .form-control:focus { border-color: #e94560; box-shadow: none; }
         .api-key-box { background: #f8f9fa; border-radius: 8px; padding: 15px; font-family: monospace; word-break: break-all; }
+        .permission-tag { font-size: 0.8rem; padding: 5px 12px; border-radius: 20px; margin-right: 10px; }
+        .permission-search { background: #d4edda; color: #155724; }
+        .permission-create { background: #fff3cd; color: #856404; }
+        .permission-update { background: #cce5ff; color: #004085; }
     </style>
 </head>
 <body>
@@ -27,7 +31,7 @@
         <div class="brand">经验<span>阁</span> ExpHub</div>
         <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
         <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a th:href="@{/assistants}" class="active"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/assistants}" class="active"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
         <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
         <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
             <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
@@ -36,7 +40,7 @@
 
     <div class="main-content">
         <div class="topbar">
-            <h4 class="mb-0">新建助手</h4>
+            <h4 class="mb-0">新建秘钥</h4>
             <div id="topbarActions">
                 <a th:href="@{/assistants}" class="btn btn-outline-secondary btn-sm mr-2">取消</a>
                 <button class="btn btn-primary btn-sm" id="createBtn" onclick="createAssistant()">
@@ -55,12 +59,38 @@
             <div class="card-body p-4">
                 <form id="form">
                     <div class="form-group mb-3">
-                        <label>助手名称 <span class="text-danger">*</span></label>
+                        <label>秘钥名称 <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="assistantName" required placeholder="如：朱雀">
                     </div>
                     <div class="form-group mb-3">
                         <label>描述</label>
-                        <textarea class="form-control" id="description" rows="2" placeholder="助手的用途、特点描述"></textarea>
+                        <textarea class="form-control" id="description" rows="2" placeholder="秘钥的用途、特点描述"></textarea>
+                    </div>
+                    <div class="form-group mb-4">
+                        <label>权限设置</label>
+                        <div class="p-3 bg-light rounded">
+                            <div class="custom-control custom-switch mb-2">
+                                <input type="checkbox" class="custom-control-input" id="canSearch" checked>
+                                <label class="custom-control-label" for="canSearch">
+                                    <span class="permission-tag permission-search">查询</span>
+                                    允许搜索经验文档（默认开启）
+                                </label>
+                            </div>
+                            <div class="custom-control custom-switch mb-2">
+                                <input type="checkbox" class="custom-control-input" id="canCreate">
+                                <label class="custom-control-label" for="canCreate">
+                                    <span class="permission-tag permission-create">创建</span>
+                                    允许创建新经验文档
+                                </label>
+                            </div>
+                            <div class="custom-control custom-switch">
+                                <input type="checkbox" class="custom-control-input" id="canUpdate">
+                                <label class="custom-control-label" for="canUpdate">
+                                    <span class="permission-tag permission-update">编辑</span>
+                                    允许编辑/更新经验文档
+                                </label>
+                            </div>
+                        </div>
                     </div>
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle mr-1"></i>
@@ -102,10 +132,13 @@
 
             var data = {
                 assistantName: document.getElementById('assistantName').value.trim(),
-                description: document.getElementById('description').value.trim()
+                description: document.getElementById('description').value.trim(),
+                canSearch: document.getElementById('canSearch').checked,
+                canCreate: document.getElementById('canCreate').checked,
+                canUpdate: document.getElementById('canUpdate').checked
             };
             if (!data.assistantName) {
-                alert('助手名称不能为空');
+                alert('秘钥名称不能为空');
                 resetButton();
                 return;
             }

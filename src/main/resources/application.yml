@@ -45,3 +45,16 @@ logging:
   level:
     org.springframework.security: DEBUG
     com.exphub: DEBUG
+
+# MCP Server 配置 (SSE 模式)
+spring:
+  ai:
+    mcp:
+      server:
+        name: exphub
+        version: 1.0.0
+        type: sync
+        stdio: false
+        sse:
+          message-endpoint: /mcp/message
+          endpoint: /mcp/sse

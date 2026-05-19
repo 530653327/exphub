@@ -27,6 +27,10 @@ public class AiAssistantService {
         assistant.setApiKey(generateApiKey());
         assistant.setApiKeySecret(UUID.randomUUID().toString().replace("-", "").substring(0, 32));
         assistant.setEnabled(true);
+        // 默认权限：查询开启，创建和编辑关闭
+        assistant.setCanCreate(assistant.getCanCreate() != null ? assistant.getCanCreate() : false);
+        assistant.setCanUpdate(assistant.getCanUpdate() != null ? assistant.getCanUpdate() : false);
+        assistant.setCanSearch(assistant.getCanSearch() != null ? assistant.getCanSearch() : true);
         assistant.setTotalCalls(0);
         assistant.setSuccessCalls(0);
         assistant.setFailCalls(0);
@@ -70,6 +74,9 @@ public class AiAssistantService {
         if (updateData.getAssistantName() != null) assistant.setAssistantName(updateData.getAssistantName());
         if (updateData.getDescription() != null) assistant.setDescription(updateData.getDescription());
         if (updateData.getEnabled() != null) assistant.setEnabled(updateData.getEnabled());
+        if (updateData.getCanCreate() != null) assistant.setCanCreate(updateData.getCanCreate());
+        if (updateData.getCanUpdate() != null) assistant.setCanUpdate(updateData.getCanUpdate());
+        if (updateData.getCanSearch() != null) assistant.setCanSearch(updateData.getCanSearch());
         assistantMapper.updateById(assistant);
         return assistant;
     }

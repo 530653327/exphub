@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模板管理 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .badge-default { background: #007bff; color: #fff; padding: 4px 8px; border-radius: 10px; font-size: 0.75rem; }
+        .template-item { padding: 20px 25px; border-bottom: 1px solid #f5f5f5; transition: all 0.2s; cursor: pointer; }
+        .template-item:hover { background: #fafafa; }
+        .template-item:last-child { border-bottom: none; }
+        .modal-lg { max-width: 800px; }
+        .preview-box { background: #f8f9fa; border-radius: 8px; padding: 15px; font-size: 0.85rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/templates}" class="active"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar d-flex justify-content-between align-items-center">
+            <h4 class="mb-0">模板管理</h4>
+            <button class="btn btn-primary" onclick="showCreateModal()">
+                <i class="fas fa-plus mr-1"></i> 新建模板
+            </button>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body p-0">
+                <div id="templateList"></div>
+                <div id="emptyState" class="text-center text-muted py-5" style="display: none;">
+                    <i class="fas fa-file-alt fa-3x mb-3"></i>
+                    <p>暂无模板，<a href="javascript:void(0)" onclick="showCreateModal()">创建一个</a>吧~</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 创建/编辑 Modal -->
+    <div class="modal fade" id="templateModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">新建模板</h5>
+                    <button type="button" class="close" data-dismiss="modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="templateId">
+                    <div class="form-group">
+                        <label>模板名称</label>
+                        <input type="text" class="form-control" id="templateName" placeholder="如：编程经验模板">
+                    </div>
+                    <div class="form-group">
+                        <label>环境字段名</label>
+                        <input type="text" class="form-control" id="platformField" placeholder="如：操作系统、运行环境" value="操作系统">
+                    </div>
+                    <div class="form-group">
+                        <label>AI 填写指南</label>
+                        <textarea class="form-control" id="instruction" rows="4" placeholder="告诉 AI 如何使用这个模板"></textarea>
+                        <small class="text-muted">例如：记录 AI 完成任务后应按以下格式整理经验，包括环境、场景、问题、解决方案等...</small>
+                    </div>
+                    <div class="form-group">
+                        <label>模板结构</label>
+                        <textarea class="form-control" id="templateContent" rows="12" placeholder="AI 需要按此格式填写经验"></textarea>
+                        <small class="text-muted">使用 ## 标题 + 描述的格式</small>
+                    </div>
+                    <div class="form-group">
+                        <label>模板预览</label>
+                        <div class="preview-box" id="previewBox">预览区域</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTemplate()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+        var templates = [];
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadTemplates();
+            document.getElementById('templateContent').addEventListener('input', updatePreview);
+            document.getElementById('instruction').addEventListener('input', updatePreview);
+        });
+
+        function loadTemplates() {
+            fetch(contextPath + '/api/templates')
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code === 0) {
+                        templates = res.data || [];
+                        renderList();
+                    }
+                });
+        }
+
+        function renderList() {
+            var html = '';
+            if (templates.length === 0) {
+                document.getElementById('emptyState').style.display = 'block';
+                document.getElementById('templateList').style.display = 'none';
+                return;
+            }
+            document.getElementById('emptyState').style.display = 'none';
+            document.getElementById('templateList').style.display = 'block';
+            templates.forEach(function(t) {
+                var isDefault = t.isDefault ? '<span class="badge-default ml-2">默认</span>' : '';
+                html += '<div class="template-item" onclick="showEditModal(' + t.id + ')">' +
+                    '<div class="d-flex justify-content-between align-items-start">' +
+                    '<div>' +
+                    '<h6 class="mb-1">' + t.name + isDefault + '</h6>' +
+                    '<small class="text-muted">环境字段：' + t.platformField + '</small>' +
+                    '</div>' +
+                    '<div class="btn-group btn-group-sm">' +
+                    (t.isDefault ? '' : '<button class="btn btn-outline-primary" onclick="event.stopPropagation();setDefault(' + t.id + ')">设为默认</button>') +
+                    '<button class="btn btn-outline-danger" onclick="event.stopPropagation();deleteTemplate(' + t.id + ')">删除</button>' +
+                    '</div>' +
+                    '</div>' +
+                    '</div>';
+            });
+            document.getElementById('templateList').innerHTML = html;
+        }
+
+        function showCreateModal() {
+            document.getElementById('modalTitle').textContent = '新建模板';
+            document.getElementById('templateId').value = '';
+            document.getElementById('templateName').value = '';
+            document.getElementById('platformField').value = '操作系统';
+            document.getElementById('instruction').value = '请按以下格式记录经验，包括：环境信息、场景描述、问题描述、解决方案、示例代码和注意事项。';
+            document.getElementById('templateContent').value = '## 环境信息\n- ' + document.getElementById('platformField').value + '：\n- 依赖条件：\n\n## 场景描述\n描述在什么情况下需要这个经验。\n\n## 问题描述\n具体要解决什么问题？\n\n## 解决方案\n详细的解决步骤和核心代码。\n\n## 示例\n```\n代码示例\n```\n\n## 注意事项\n容易出错的地方和需要注意的坑。';
+            updatePreview();
+            $('#templateModal').modal('show');
+        }
+
+        function showEditModal(id) {
+            var t = templates.find(function(x) { return x.id === id; });
+            if (!t) return;
+            document.getElementById('modalTitle').textContent = '编辑模板';
+            document.getElementById('templateId').value = t.id;
+            document.getElementById('templateName').value = t.name;
+            document.getElementById('platformField').value = t.platformField;
+            document.getElementById('instruction').value = t.instruction;
+            document.getElementById('templateContent').value = t.templateContent;
+            updatePreview();
+            $('#templateModal').modal('show');
+        }
+
+        function updatePreview() {
+            var content = '【填写指南】\n' + document.getElementById('instruction').value + '\n\n【模板结构】\n' + document.getElementById('templateContent').value;
+            document.getElementById('previewBox').textContent = content || '预览区域';
+        }
+
+        async function saveTemplate() {
+            var id = document.getElementById('templateId').value;
+            var data = {
+                name: document.getElementById('templateName').value,
+                platformField: document.getElementById('platformField').value,
+                instruction: document.getElementById('instruction').value,
+                templateContent: document.getElementById('templateContent').value
+            };
+            if (!data.name) { alert('请输入模板名称'); return; }
+            if (!data.instruction) { alert('请输入填写指南'); return; }
+            if (!data.templateContent) { alert('请输入模板结构'); return; }
+
+            var url = contextPath + '/api/templates';
+            var method = 'POST';
+            if (id) {
+                url += '/' + id;
+                method = 'PUT';
+            }
+
+            var res = await fetch(url, {
+                method: method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            }).then(r => r.json());
+            
+            if (res.code === 0) {
+                $('#templateModal').modal('hide');
+                loadTemplates();
+            } else {
+                alert(res.message || '保存失败');
+            }
+        }
+
+        function setDefault(id) {
+            if (!confirm('确定设为默认模板？')) return;
+            fetch(contextPath + '/api/templates/' + id + '/set-default', {method: 'POST'})
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code === 0) {
+                        loadTemplates();
+                    } else {
+                        alert(res.message || '操作失败');
+                    }
+                });
+        }
+
+        function deleteTemplate(id) {
+            if (!confirm('确定删除该模板？')) return;
+            fetch(contextPath + '/api/templates/' + id, {method: 'DELETE'})
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code === 0) {
+                        loadTemplates();
+                    } else {
+                        alert(res.message || '删除失败');
+                    }
+                });
+        }
+    </script>
+</body>
+</html>

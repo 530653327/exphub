@@ -31,12 +31,13 @@
 <body>
     <div class="sidebar">
         <div class="brand">经验<span>阁</span> ExpHub</div>
-        <a href="/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
-        <a href="/docs" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a href="/assistants"><i class="fas fa-robot mr-2"></i> 助手管理</a>
-        <a href="/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}" class="active"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
         <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
-            <a href="/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
         </div>
     </div>
 
@@ -64,7 +65,7 @@
                         </div>
                         <span class="text-muted">v<span th:text="${doc.version}">1</span></span>
                     </div>
-                    <div class="markdown-body" th:utext="${doc.content}"></div>
+                    <div class="markdown-body" id="docContent" th:data-content="${doc.content}"></div>
                 </div>
             </div>
             <div class="col-md-4">
@@ -114,5 +115,11 @@
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@5.1.0/marked.min.js"></script>
+    <script>
+        var content = document.getElementById('docContent').getAttribute('data-content');
+        if (content) {
+            document.getElementById('docContent').innerHTML = marked.parse(content);
+        }
+    </script>
 </body>
 </html>

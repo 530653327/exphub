@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
-import javax.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpSession;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -138,14 +138,14 @@ public class PageController {
         return "docs/view";
     }
 
-    // 助手管理
+    // 秘钥管理
     @GetMapping("/assistants")
     public String assistants(HttpSession session, Model model) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
         model.addAttribute("active", "assistants");
-        model.addAttribute("pageTitle", "助手管理");
+        model.addAttribute("pageTitle", "秘钥管理");
 
         List<AiAssistant> assistants = assistantService.list(1, 100).getRecords();
         model.addAttribute("assistants", assistants);
@@ -153,18 +153,18 @@ public class PageController {
         return "assistants/list";
     }
 
-    // 助手新建
+    // 新建秘钥
     @GetMapping("/assistants/add")
     public String assistantAdd(HttpSession session, Model model) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
         model.addAttribute("active", "assistants");
-        model.addAttribute("pageTitle", "新建助手");
+        model.addAttribute("pageTitle", "新建秘钥");
         return "assistants/add";
     }
 
-    // 助手创建成功结果页
+    // 秘钥创建成功结果页
     @GetMapping("/assistants/created")
     public String assistantCreated(HttpSession session,
                                    @RequestParam String apiKey,
@@ -189,6 +189,17 @@ public class PageController {
         model.addAttribute("active", "logs");
         model.addAttribute("pageTitle", "调用日志");
         return "logs/list";
+    }
+
+    // 模板管理
+    @GetMapping("/templates")
+    public String templates(HttpSession session, Model model) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        model.addAttribute("active", "templates");
+        model.addAttribute("pageTitle", "模板管理");
+        return "templates/list";
     }
 
     // 退出登录

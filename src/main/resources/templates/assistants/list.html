@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>助手管理 - 经验阁 ExpHub</title>
+    <title>秘钥管理 - 经验阁 ExpHub</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
     <style>
@@ -30,6 +30,11 @@
         .assistant-stats .stat .lbl { font-size: 0.75rem; color: #999; }
         .badge-enabled { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
         .badge-disabled { background: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 20px; }
+        .permission-tag { font-size: 0.7rem; padding: 3px 8px; border-radius: 10px; margin-left: 5px; }
+        .permission-create { background: #fff3cd; color: #856404; }
+        .permission-update { background: #cce5ff; color: #004085; }
+        .permission-search { background: #d4edda; color: #155724; }
+        .permission-off { background: #e2e3e5; color: #6c757d; }
     </style>
 </head>
 <body>
@@ -37,8 +42,9 @@
         <div class="brand">经验<span>阁</span> ExpHub</div>
         <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
         <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
-        <a th:href="@{/assistants}" class="active"><i class="fas fa-robot mr-2"></i> 助手管理</a>
+        <a th:href="@{/assistants}" class="active"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
         <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
         <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
             <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
         </div>
@@ -46,10 +52,23 @@
 
     <div class="main-content">
         <div class="topbar">
-            <h4 class="mb-0">助手管理</h4>
+            <h4 class="mb-0">秘钥管理</h4>
             <a th:href="@{/assistants/add}" class="btn btn-primary btn-sm">
-                <i class="fas fa-plus mr-1"></i> 新建助手
+                <i class="fas fa-plus mr-1"></i> 新建秘钥
             </a>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center text-muted" style="font-size: 0.9rem;">
+                    <i class="fas fa-info-circle mr-2"></i>
+                    <span><strong>权限说明：</strong>
+                        <span class="permission-tag permission-search">查询</span> 可搜索经验文档（默认开启），
+                        <span class="permission-tag permission-create">创建</span> 可新建经验文档，
+                        <span class="permission-tag permission-update">编辑</span> 可编辑/更新经验文档
+                    </span>
+                </div>
+            </div>
         </div>
 
         <div th:each="a : ${assistants}" class="assistant-card" th:data-id="${a.id}" th:data-enabled="${a.enabled}">
@@ -64,6 +83,14 @@
                     <div class="desc" th:text="${a.description}">-</div>
                     <div class="api-key">
                         <i class="fas fa-key mr-1"></i>API Key: <span th:text="${a.apiKey}">-</span>
+                    </div>
+                    <div class="mt-2">
+                        <span class="permission-tag permission-search" th:if="${a.canSearch}">查询</span>
+                        <span class="permission-tag permission-off" th:if="${!a.canSearch}">查询</span>
+                        <span class="permission-tag permission-create" th:if="${a.canCreate}">创建</span>
+                        <span class="permission-tag permission-off" th:if="${!a.canCreate}">创建</span>
+                        <span class="permission-tag permission-update" th:if="${a.canUpdate}">编辑</span>
+                        <span class="permission-tag permission-off" th:if="${!a.canUpdate}">编辑</span>
                     </div>
                 </div>
             </div>
@@ -88,6 +115,9 @@
                         <i class="fas fa-toggle-off" th:unless="${a.enabled}"></i>
                         <span th:text="${a.enabled} ? '禁用' : '启用'">切换</span>
                     </button>
+                    <button class="btn btn-sm btn-outline-primary" th:onclick="'editPermissions(' + ${a.id} + ')'">
+                        <i class="fas fa-shield-alt"></i> 权限
+                    </button>
                     <button class="btn btn-sm btn-outline-danger" th:onclick="'deleteAssistant(' + ${a.id} + ')'">
                         <i class="fas fa-trash"></i>
                     </button>
@@ -96,8 +126,51 @@
         </div>
 
         <div th:if="${#lists.isEmpty(assistants)}" class="text-center text-muted py-5">
-            <i class="fas fa-robot fa-3x mb-3"></i>
-            <p>暂无助手，<a th:href="@{/assistants/add}">创建一个</a>吧~</p>
+            <i class="fas fa-key fa-3x mb-3"></i>
+            <p>暂无秘钥，<a th:href="@{/assistants/add}">创建一个</a>吧~</p>
+        </div>
+    </div>
+
+    <!-- 权限编辑弹窗 -->
+    <div class="modal fade" id="permissionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-shield-alt mr-2"></i>编辑秘钥权限</h5>
+                    <button type="button" class="close" data-dismiss="modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="editAssistantId">
+                    <p class="text-muted mb-3">当前助手：<strong id="editAssistantName"></strong></p>
+                    <div class="form-group">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="permSearch">
+                            <label class="custom-control-label" for="permSearch">查询权限</label>
+                        </div>
+                        <small class="text-muted">允许通过API搜索经验文档</small>
+                    </div>
+                    <div class="form-group">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="permCreate">
+                            <label class="custom-control-label" for="permCreate">创建权限</label>
+                        </div>
+                        <small class="text-muted">允许通过API创建新经验</small>
+                    </div>
+                    <div class="form-group mb-0">
+                        <div class="custom-control custom-switch">
+                            <input type="checkbox" class="custom-control-input" id="permUpdate">
+                            <label class="custom-control-label" for="permUpdate">编辑权限</label>
+                        </div>
+                        <small class="text-muted">允许通过API编辑/更新经验</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="savePermissions()">
+                        <i class="fas fa-save mr-1"></i> 保存
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -105,6 +178,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     <script th:inline="javascript">
         var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+        var assistants = /*[[${assistants}]]*/ [];
 
         async function toggleEnabled(id) {
             if (!confirm('确定要切换启用状态吗？')) return;
@@ -122,7 +196,7 @@
         }
 
         async function deleteAssistant(id) {
-            if (!confirm('确定要删除这个助手吗？此操作不可恢复！')) return;
+            if (!confirm('确定要删除这个秘钥吗？此操作不可恢复！')) return;
             try {
                 var resp = await fetch(contextPath + '/api/assistants/' + id, {
                     method: 'DELETE'
@@ -134,6 +208,43 @@
                     alert('删除失败：' + result.message);
                 }
             } catch (e) { alert('删除失败：' + e.message); }
+        }
+
+        function editPermissions(id) {
+            var assistant = assistants.find(function(a) { return a.id === id; });
+            if (!assistant) return;
+            
+            document.getElementById('editAssistantId').value = id;
+            document.getElementById('editAssistantName').textContent = assistant.assistantName;
+            document.getElementById('permSearch').checked = assistant.canSearch === true;
+            document.getElementById('permCreate').checked = assistant.canCreate === true;
+            document.getElementById('permUpdate').checked = assistant.canUpdate === true;
+            
+            $('#permissionModal').modal('show');
+        }
+
+        async function savePermissions() {
+            var id = document.getElementById('editAssistantId').value;
+            var data = {
+                canSearch: document.getElementById('permSearch').checked,
+                canCreate: document.getElementById('permCreate').checked,
+                canUpdate: document.getElementById('permUpdate').checked
+            };
+            
+            try {
+                var resp = await fetch(contextPath + '/api/assistants/' + id, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                var result = await resp.json();
+                if (result.code === 0) {
+                    $('#permissionModal').modal('hide');
+                    location.reload();
+                } else {
+                    alert('保存失败：' + result.message);
+                }
+            } catch (e) { alert('保存失败：' + e.message); }
         }
     </script>
 </body>

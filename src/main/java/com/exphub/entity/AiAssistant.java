@@ -15,6 +15,9 @@ public class AiAssistant {
     private String apiKey;          // API Key
     private String apiKeySecret;    // API Key 签名密钥
     private Boolean enabled;         // 是否启用
+    private Boolean canCreate;       // 可创建经验
+    private Boolean canUpdate;       // 可编辑经验
+    private Boolean canSearch;       // 可查询经验（默认开启）
     private Integer totalCalls;     // 总调用次数
     private Integer successCalls;   // 成功调用次数
     private Integer failCalls;      // 失败调用次数
