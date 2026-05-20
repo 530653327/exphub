@@ -9,6 +9,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.Http403ForbiddenEntryPoint;
 
 @Configuration
 @EnableWebSecurity
@@ -28,10 +29,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .securityMatcher("/**")  // 只匹配所有路径
+            .securityMatcher("/**")
             .userDetailsService(userService)
             .authorizeHttpRequests(authorize -> authorize
-                // MCP 和 API 完全放行
+                // MCP 和 API 完全放行，不需要认证
                 .requestMatchers("/mcp/**").permitAll()
                 .requestMatchers("/api/**").permitAll()
                 // 静态资源放行
@@ -41,6 +42,10 @@ public class SecurityConfig {
                 // 后台管理页面需要认证
                 .requestMatchers("/docs/**", "/assistants/**", "/stats/**", "/templates/**").authenticated()
                 .anyRequest().authenticated()
+            )
+            // MCP 和 API 不触发登录重定向，返回 403
+            .exceptionHandling(ex -> ex
+                .defaultEntriesDenied("/mcp/**", "/api/**", new Http403ForbiddenEntryPoint())
             )
             .formLogin(form -> form
                 .loginPage("/login")
@@ -55,8 +60,12 @@ public class SecurityConfig {
                 .permitAll()
             )
             .csrf(csrf -> csrf.disable())
-            // 禁用 HTTP Basic 认证，避免自动弹出登录框
-            .httpBasic(httpBasic -> httpBasic.disable());
+            .httpBasic(httpBasic -> httpBasic.disable())
+            // 禁用匿名认证对 /mcp/** 和 /api/** 的重定向
+            .anonymous(anonymous -> anonymous
+                .principal("anonymousUser")
+                .authorities("ROLE_ANONYMOUS")
+            );
 
         return http.build();
     }
