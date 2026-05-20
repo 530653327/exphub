@@ -4,6 +4,7 @@ import com.exphub.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -27,8 +28,10 @@ public class SecurityConfig {
 
     /**
      * MCP 和 API 不需要认证，完全放行
+     * Order(1) 确保优先匹配
      */
     @Bean
+    @Order(1)
     public SecurityFilterChain publicFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher("/mcp/**", "/api/**")
@@ -43,6 +46,7 @@ public class SecurityConfig {
      * 后台管理页面需要登录认证
      */
     @Bean
+    @Order(2)
     public SecurityFilterChain adminFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher("/**")
