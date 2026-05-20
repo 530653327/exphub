@@ -25,9 +25,9 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 放行认证接口
+        // 放行认证接口和信息服务
         String uri = request.getRequestURI();
-        if (uri.startsWith("/api/auth/")) {
+        if (uri.startsWith("/api/auth/") || uri.equals("/api/info")) {
             return true;
         }
 
