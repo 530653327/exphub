@@ -25,15 +25,10 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /**
-     * 后台管理页面需要登录认证
-     * 使用 securityMatcher 排除 MCP 和 API 路径
-     */
     @Bean
-    public SecurityFilterChain adminFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .securityMatcher("/**")
-            .authorizeHttpRequests(authorize -> authorize
+            .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/login", "/").permitAll()
                 .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
                 .requestMatchers("/mcp/**", "/api/**").permitAll()
@@ -53,7 +48,7 @@ public class SecurityConfig {
                 .permitAll()
             )
             .csrf(csrf -> csrf.disable())
-            .httpBasic(httpBasic -> httpBasic.disable());
+            .httpBasic(basic -> basic.disable());
         return http.build();
     }
 }
