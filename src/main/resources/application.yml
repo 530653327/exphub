@@ -42,11 +42,10 @@ spring:
       server:
         name: exphub
         version: 1.0.0
-        type: sync
+        type: SYNC
         stdio: false
-        sse:
-          message-endpoint: /mcp/message
-          endpoint: /mcp/sse
+        sse-endpoint: /mcp/sse
+        sse-message-endpoint: /mcp/message
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml
