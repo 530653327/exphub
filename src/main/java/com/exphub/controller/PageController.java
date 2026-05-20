@@ -8,20 +8,20 @@ import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 @Controller
 @RequestMapping("")
-public class PageController {
+public class PageController extends BaseController {
 
     @Autowired
     private DocMapper docMapper;
@@ -48,10 +48,11 @@ public class PageController {
 
     // Dashboard 仪表盘
     @GetMapping("/dashboard")
-    public String dashboard(HttpSession session, Model model) {
+    public String dashboard(HttpSession session, Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "dashboard");
         model.addAttribute("pageTitle", "仪表盘");
 
@@ -82,10 +83,11 @@ public class PageController {
     @GetMapping("/docs")
     public String docs(HttpSession session,
                        @RequestParam(required = false) String keyword,
-                       Model model) {
+                       Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "docs");
         model.addAttribute("pageTitle", "经验管理");
         model.addAttribute("keyword", keyword != null ? keyword : "");
@@ -112,10 +114,11 @@ public class PageController {
     @GetMapping("/docs/edit")
     public String docEdit(HttpSession session, 
                           @RequestParam(required = false) Long id,
-                          Model model) {
+                          Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "docs");
         if (id != null) {
             model.addAttribute("pageTitle", "编辑经验");
@@ -128,10 +131,11 @@ public class PageController {
 
     // 经验详情
     @GetMapping("/docs/{id}")
-    public String docView(HttpSession session, @org.springframework.web.bind.annotation.PathVariable Long id, Model model) {
+    public String docView(HttpSession session, @PathVariable Long id, Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "docs");
         model.addAttribute("pageTitle", "经验详情");
         model.addAttribute("doc", docMapper.selectById(id));
@@ -140,10 +144,11 @@ public class PageController {
 
     // 秘钥管理
     @GetMapping("/assistants")
-    public String assistants(HttpSession session, Model model) {
+    public String assistants(HttpSession session, Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "assistants");
         model.addAttribute("pageTitle", "秘钥管理");
 
@@ -155,10 +160,11 @@ public class PageController {
 
     // 新建秘钥
     @GetMapping("/assistants/add")
-    public String assistantAdd(HttpSession session, Model model) {
+    public String assistantAdd(HttpSession session, Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "assistants");
         model.addAttribute("pageTitle", "新建秘钥");
         return "assistants/add";
@@ -182,10 +188,11 @@ public class PageController {
 
     // 调用日志
     @GetMapping("/logs")
-    public String logs(HttpSession session, Model model) {
+    public String logs(HttpSession session, Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "logs");
         model.addAttribute("pageTitle", "调用日志");
         return "logs/list";
@@ -193,10 +200,11 @@ public class PageController {
 
     // 模板管理
     @GetMapping("/templates")
-    public String templates(HttpSession session, Model model) {
+    public String templates(HttpSession session, Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
+        addContextPath(model, request);
         model.addAttribute("active", "templates");
         model.addAttribute("pageTitle", "模板管理");
         return "templates/list";
