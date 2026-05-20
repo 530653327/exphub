@@ -9,7 +9,6 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.Http403ForbiddenEntryPoint;
 
 @Configuration
 @EnableWebSecurity
@@ -26,26 +25,32 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
+    /**
+     * MCP 和 API 不需要认证，完全放行
+     */
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain publicFilterChain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/mcp/**", "/api/**")
+            .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+            .csrf(csrf -> csrf.disable())
+            .httpBasic(httpBasic -> httpBasic.disable())
+            .anonymous(anonymous -> anonymous.disable());
+        return http.build();
+    }
+
+    /**
+     * 后台管理页面需要登录认证
+     */
+    @Bean
+    public SecurityFilterChain adminFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher("/**")
             .userDetailsService(userService)
             .authorizeHttpRequests(authorize -> authorize
-                // MCP 和 API 完全放行，不需要认证
-                .requestMatchers("/mcp/**").permitAll()
-                .requestMatchers("/api/**").permitAll()
-                // 静态资源放行
-                .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
-                // 登录页面放行
                 .requestMatchers("/login", "/").permitAll()
-                // 后台管理页面需要认证
-                .requestMatchers("/docs/**", "/assistants/**", "/stats/**", "/templates/**").authenticated()
+                .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
                 .anyRequest().authenticated()
-            )
-            // MCP 和 API 不触发登录重定向，返回 403
-            .exceptionHandling(ex -> ex
-                .defaultEntriesDenied("/mcp/**", "/api/**", new Http403ForbiddenEntryPoint())
             )
             .formLogin(form -> form
                 .loginPage("/login")
@@ -60,13 +65,7 @@ public class SecurityConfig {
                 .permitAll()
             )
             .csrf(csrf -> csrf.disable())
-            .httpBasic(httpBasic -> httpBasic.disable())
-            // 禁用匿名认证对 /mcp/** 和 /api/** 的重定向
-            .anonymous(anonymous -> anonymous
-                .principal("anonymousUser")
-                .authorities("ROLE_ANONYMOUS")
-            );
-
+            .httpBasic(httpBasic -> httpBasic.disable());
         return http.build();
     }
 }
