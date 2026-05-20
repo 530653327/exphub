@@ -126,4 +126,39 @@ public class ExpHubTools {
             return "创建失败: " + e.getMessage();
         }
     }
+
+    /**
+     * 更新经验
+     */
+    @Tool(name = "update_experience", description = "更新已有经验。当发现经验有错误或需要补充内容时，使用此工具更新。")
+    public String updateExperience(
+            @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
+            @ToolParam(description = "经验标题", required = false) String title,
+            @ToolParam(description = "经验正文，使用Markdown格式", required = false) String content,
+            @ToolParam(description = "分类，如：服务器、开发、运维、部署等", required = false) String category,
+            @ToolParam(description = "标签，逗号分隔", required = false) String tags,
+            @ToolParam(description = "一句话摘要", required = false) String summary) {
+        
+        try {
+            // 检查经验是否存在
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+            
+            Doc updateDoc = new Doc();
+            updateDoc.setId(id);
+            if (title != null) updateDoc.setTitle(title);
+            if (content != null) updateDoc.setContent(content);
+            if (category != null) updateDoc.setCategory(category);
+            if (tags != null) updateDoc.setTags(tags);
+            if (summary != null) updateDoc.setSummary(summary);
+            
+            docService.update(id, updateDoc);
+            
+            return "✅ 经验更新成功！\n\n**ID**: " + id + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n\n经验已更新，其他AI助手可以看到最新内容。";
+        } catch (Exception e) {
+            return "更新失败: " + e.getMessage();
+        }
+    }
 }
