@@ -36,18 +36,6 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
 
-mybatis-plus:
-  mapper-locations: classpath:/mapper/*.xml
-  configuration:
-    map-underscore-to-camel-case: true
-
-logging:
-  level:
-    org.springframework.security: DEBUG
-    com.exphub: DEBUG
-
-# MCP Server 配置 (SSE 模式)
-spring:
   ai:
     mcp:
       server:
@@ -58,3 +46,13 @@ spring:
         sse:
           message-endpoint: /mcp/message
           endpoint: /mcp/sse
+
+mybatis-plus:
+  mapper-locations: classpath:/mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    org.springframework.security: DEBUG
+    com.exphub: DEBUG
