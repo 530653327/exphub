@@ -85,7 +85,9 @@ public class DocService {
     public Page<Doc> listByCategory(String category, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
-        wrapper.eq("category", category);
+        if (category != null && !category.trim().isEmpty()) {
+            wrapper.eq("category", category.trim());
+        }
         wrapper.orderByDesc("updated_at");
         return docMapper.selectPage(p, wrapper);
     }
