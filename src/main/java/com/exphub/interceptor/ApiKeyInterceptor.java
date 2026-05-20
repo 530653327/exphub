@@ -29,6 +29,13 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // 放行后台管理接口（POST /api/assistants 等由管理员操作）
+        if (request.getMethod().equals("POST") || request.getMethod().equals("PUT") || request.getMethod().equals("DELETE")) {
+            if (uri.equals("/api/assistants") || uri.matches("/api/assistants/\\d+")) {
+                return true;
+            }
+        }
+
         // 必须传 API Key
         String apiKey = request.getHeader("X-API-Key");
         if (apiKey == null || apiKey.isEmpty()) {
