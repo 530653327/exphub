@@ -90,6 +90,9 @@
                             <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
                             <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
                             <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
+                            <button class="btn btn-sm btn-outline-danger ml-2" th:onclick="'deleteDoc(' + ${doc.id} + ')'" title="删除">
+                                <i class="fas fa-trash"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -116,6 +119,17 @@
                 doSearch();
             }
         });
+
+        function deleteDoc(id) {
+            if (!confirm('确定要删除这条经验吗？删除后将无法恢复。')) {
+                return;
+            }
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.action = contextPath + '/docs/' + id + '/delete';
+            document.body.appendChild(form);
+            form.submit();
+        }
     </script>
 </body>
 </html>

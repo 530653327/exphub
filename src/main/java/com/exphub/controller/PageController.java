@@ -12,6 +12,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
@@ -216,5 +217,15 @@ public class PageController extends BaseController {
     public String logout(HttpSession session) {
         session.invalidate();
         return "redirect:/login";
+    }
+
+    // 删除经验（后台管理）
+    @PostMapping("/docs/{id}/delete")
+    public String deleteDoc(HttpSession session, @PathVariable Long id) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        docService.delete(id);
+        return "redirect:/docs";
     }
 }

@@ -1,6 +1,7 @@
 package com.exphub.interceptor;
 
 import com.exphub.entity.AiAssistant;
+import com.exphub.entity.User;
 import com.exphub.mapper.AiAssistantMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -8,6 +9,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
 /**
  * API Key 拦截器
@@ -23,13 +25,22 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 放行认证接口和静态资源
+        // 放行认证接口
         String uri = request.getRequestURI();
         if (uri.startsWith("/api/auth/")) {
             return true;
         }
 
-        // 放行后台管理接口（POST /api/assistants 等由管理员操作）
+        // 检查后台管理登录状态（Session中有登录用户）
+        HttpSession session = request.getSession(false);
+        User loginUser = session != null ? (User) session.getAttribute("user") : null;
+        
+        // 已登录用户可以操作所有 /api/assistants 接口（后台管理）
+        if (loginUser != null) {
+            return true;
+        }
+
+        // 放行后台管理接口（无Session但可能是特定接口）
         if (request.getMethod().equals("POST") || request.getMethod().equals("PUT") || request.getMethod().equals("DELETE")) {
             if (uri.equals("/api/assistants") || uri.matches("/api/assistants/\\d+")) {
                 return true;
