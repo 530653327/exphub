@@ -67,7 +67,7 @@
     </div>
 
     <script th:inline="javascript">
-        var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+        var contextPath = /*[[${contextPath}]]*/ '';
 
         async function loadLogs() {
             try {

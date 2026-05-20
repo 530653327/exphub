@@ -92,7 +92,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     <script th:inline="javascript">
-        var contextPath = /*[[${#httpServletRequest.getContextPath()}]]*/ '';
+        var contextPath = /*[[${${contextPath}}]]*/ '';
         var defaultTemplate = null;
 
         document.addEventListener('DOMContentLoaded', function() {
