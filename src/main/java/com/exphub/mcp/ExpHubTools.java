@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * ExpHub MCP 工具类
+ * 经验库服务，让AI助手可以搜索和记录经验
  */
 @Component
 public class ExpHubTools {
@@ -22,9 +23,32 @@ public class ExpHubTools {
     private DocTemplateService templateService;
 
     /**
+     * 获取经验详情 - 首次使用必须调用
+     * 重要提示：本MCP连接后，请立即调用 get_experience_detail(id=1) 查看《ExpHub使用指南》！
+     */
+    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。首次连接MCP时必须先调用此工具查看ID=1的《ExpHub使用指南》！之后再根据任务需要调用此工具查看其他经验详情。")
+    public String getExperienceDetail(
+            @ToolParam(description = "经验ID。首次使用请传1查看使用指南，之后从搜索结果中获取") Long id) {
+        
+        Doc doc = docService.getById(id);
+        
+        if (doc == null) {
+            return "未找到ID为" + id + "的经验";
+        }
+
+        return "# " + doc.getTitle() + "\n\n" +
+               "**分类**: " + doc.getCategory() + "\n" +
+               "**作者**: " + doc.getAuthorName() + "\n" +
+               "**版本**: v" + doc.getVersion() + "\n" +
+               "**标签**: " + (doc.getTags() != null ? doc.getTags() : "无") + "\n\n" +
+               "---\n\n" +
+               doc.getContent();
+    }
+
+    /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签等信息。使用此工具在执行任务前查找是否有可借鉴的经验。")
+    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签等信息。在开始任务前使用此工具查找是否有可借鉴的经验。")
     public String searchExperience(
             @ToolParam(description = "搜索关键词，可以是问题描述、技术名词、标签等") String query) {
         
@@ -48,28 +72,6 @@ public class ExpHubTools {
         }
 
         return sb.toString();
-    }
-
-    /**
-     * 获取经验详情
-     */
-    @Tool(name = "get_experience_detail", description = "获取经验的详细内容，包括完整的问题描述和解决方案")
-    public String getExperienceDetail(
-            @ToolParam(description = "经验ID，从搜索结果中获取") Long id) {
-        
-        Doc doc = docService.getById(id);
-        
-        if (doc == null) {
-            return "未找到ID为" + id + "的经验";
-        }
-
-        return "# " + doc.getTitle() + "\n\n" +
-               "**分类**: " + doc.getCategory() + "\n" +
-               "**作者**: " + doc.getAuthorName() + "\n" +
-               "**版本**: v" + doc.getVersion() + "\n" +
-               "**标签**: " + (doc.getTags() != null ? doc.getTags() : "无") + "\n\n" +
-               "---\n\n" +
-               doc.getContent();
     }
 
     /**

@@ -40,23 +40,29 @@ public class InfoController {
         
         // 功能介绍
         info.put("features", new String[]{
-            "搜索经验：查找已有的问题和解决方案",
-            "创建经验：将学到的新方法记录下来",
-            "更新经验：完善已有的经验内容",
-            "版本历史：查看经验的所有修改记录"
+            "search_experience: 搜索经验库中相关经验",
+            "get_experience_detail: 获取经验的详细内容",
+            "get_template: 获取创建经验的模板格式",
+            "create_experience: 创建新经验记录"
         });
 
-        // 使用指南
+        // 使用指南 - 让AI在连接后第一时间读取
         info.put("usageGuidelines", new String[]{
-            "1. 开始任务前，先搜索是否已有相关经验可借鉴",
-            "2. 完成任务后，将学到的新方法记录到经验库",
-            "3. 如果发现经验有错误或过时，及时更新",
-            "4. 经验标题要简洁明确，内容要包含完整的问题描述和解决方案"
+            "1. **首次连接必须**：先调用 get_experience_detail 工具查看 ID=1 的《ExpHub使用指南》经验",
+            "2. 开始任务前：用 search_experience 搜索是否已有相关经验可借鉴",
+            "3. 完成任务后：用 create_experience 将学到的新方法记录下来",
+            "4. 发现错误时：用 create_experience 创建新版本或更新已有经验"
         });
 
-        // 模板
-        info.put("template", templateService.getDefault() != null ? 
-            templateService.getDefault().getTemplateContent() : getDefaultTemplate());
+        // 快速开始 - 简明步骤
+        info.put("quickStart", Map.of(
+            "step1", "调用 get_experience_detail(id=1) 获取详细使用指南",
+            "step2", "调用 search_experience 搜索当前任务相关的经验",
+            "step3", "完成任务后调用 create_experience 记录新学到的方法"
+        ));
+
+        // 重要提示
+        info.put("important", "请务必先阅读 ID=1 的使用指南经验，了解如何在ExpHub中记录和管理经验！");
 
         return info;
     }
