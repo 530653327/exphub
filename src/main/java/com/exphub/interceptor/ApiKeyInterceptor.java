@@ -3,6 +3,8 @@ package com.exphub.interceptor;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.User;
 import com.exphub.mapper.AiAssistantMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -18,6 +20,8 @@ import jakarta.servlet.http.HttpSession;
 @Component
 public class ApiKeyInterceptor implements HandlerInterceptor {
 
+    private static final Logger log = LoggerFactory.getLogger(ApiKeyInterceptor.class);
+
     public static final ThreadLocal<AiAssistant> CURRENT_ASSISTANT = new ThreadLocal<>();
 
     @Autowired
@@ -25,14 +29,18 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 放行认证接口和信息服务
         String uri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        log.debug("ApiKeyInterceptor.preHandle: uri={}, contextPath={}, method={}", uri, contextPath, request.getMethod());
+        
+        // 放行认证接口和信息服务
         if (uri.startsWith("/api/auth/") || uri.equals("/api/info")) {
             return true;
         }
 
         // MCP 请求必须验证 API Key，不能被 Session 登录状态短路
-        if (uri.startsWith("/mcp/")) {
+        if (uri.startsWith("/mcp/") || uri.endsWith("/mcp/sse") || uri.contains("/mcp/message")) {
+            log.info("MCP request detected: uri={}, checking API Key", uri);
             return validateApiKey(request, response);
         }
 
@@ -61,7 +69,10 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
      */
     private boolean validateApiKey(HttpServletRequest request, HttpServletResponse response) throws Exception {
         String apiKey = request.getHeader("X-API-Key");
+        log.info("validateApiKey: apiKey header present={}", apiKey != null && !apiKey.isEmpty());
+        
         if (apiKey == null || apiKey.isEmpty()) {
+            log.warn("validateApiKey: no API Key header, uri={}", request.getRequestURI());
             response.setStatus(401);
             response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write("{\"code\":401,\"message\":\"API Key缺失\"}");
@@ -74,6 +85,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         );
 
         if (assistant == null) {
+            log.warn("validateApiKey: invalid API Key");
             response.setStatus(401);
             response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write("{\"code\":401,\"message\":\"API Key无效\"}");
@@ -81,6 +93,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         }
 
         if (!assistant.getEnabled()) {
+            log.warn("validateApiKey: disabled API Key, assistant={}", assistant.getAssistantId());
             response.setStatus(403);
             response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write("{\"code\":403,\"message\":\"API Key已禁用\"}");
@@ -89,6 +102,8 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
         // 将助手信息存入 ThreadLocal
         CURRENT_ASSISTANT.set(assistant);
+        log.info("validateApiKey: CURRENT_ASSISTANT set to assistantId={}, assistantName={}", 
+            assistant.getAssistantId(), assistant.getAssistantName());
         return true;
     }
 

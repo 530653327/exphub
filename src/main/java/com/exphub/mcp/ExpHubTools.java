@@ -6,6 +6,8 @@ import com.exphub.entity.DocTemplate;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.DocService;
 import com.exphub.service.DocTemplateService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class ExpHubTools {
+
+    private static final Logger log = LoggerFactory.getLogger(ExpHubTools.class);
 
     @Autowired
     private DocService docService;
@@ -149,6 +153,12 @@ public class ExpHubTools {
         
         // 权限验证
         AiAssistant assistant = getCaller();
+        log.info("ExpHubTools.createExperience: caller={}, canCreate={}", 
+            assistant != null ? assistant.getAssistantId() : "NULL",
+            assistant != null ? assistant.getCanCreate() : "N/A");
+        log.info("ExpHubTools.createExperience: title={}, tags={}, aliases={}, summary={}", 
+            title, tags, aliases, summary);
+        
         if (assistant != null && !Boolean.TRUE.equals(assistant.getCanCreate())) {
             return "❌ 权限不足：该API Key没有创建经验的权限";
         }
@@ -161,6 +171,8 @@ public class ExpHubTools {
             doc.setTags(tags != null ? tags : "");
             doc.setAliases(aliases != null ? aliases : "");
             doc.setSummary(summary != null ? summary : "");
+            log.info("ExpHubTools.createExperience: Doc object before create: tags={}, aliases={}", 
+                doc.getTags(), doc.getAliases());
             
             Doc created = docService.create(doc);
             

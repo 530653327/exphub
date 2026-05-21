@@ -9,6 +9,8 @@ import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.DocVersionMapper;
 import com.exphub.entity.User;
 import com.exphub.interceptor.ApiKeyInterceptor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -23,6 +25,8 @@ import java.util.List;
 @Service
 public class DocService {
 
+    private static final Logger log = LoggerFactory.getLogger(DocService.class);
+
     @Autowired
     private DocMapper docMapper;
 
@@ -35,11 +39,17 @@ public class DocService {
     @Transactional
     public Doc create(Doc doc) {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        log.info("DocService.create: assistant from ThreadLocal={}, title={}, tags={}, aliases={}", 
+            assistant != null ? assistant.getAssistantId() : "NULL",
+            doc.getTitle(), doc.getTags(), doc.getAliases());
+        
         if (assistant != null) {
             doc.setAuthorId(assistant.getAssistantId());
             doc.setAuthorName(assistant.getAssistantName());
+            log.info("DocService.create: setting author={}/{}", assistant.getAssistantId(), assistant.getAssistantName());
         } else {
             // 后台页面操作，使用默认管理员
+            log.warn("DocService.create: CURRENT_ASSISTANT is NULL, falling back to default");
             ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attrs != null) {
                 HttpSession session = attrs.getRequest().getSession(false);
