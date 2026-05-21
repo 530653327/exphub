@@ -146,10 +146,10 @@ public class ExpHubTools {
     public String createExperience(
             @ToolParam(description = "经验标题，简短明确") String title,
             @ToolParam(description = "经验正文，使用Markdown格式，按 get_template 返回的结构填写") String content,
-            @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等", required = false) String category,
-            @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理", required = false) String tags,
-            @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy", required = false) String aliases,
-            @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关", required = false) String summary) {
+            @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等，如不确定可填 未分类") String category,
+            @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理，如不确定可填 待分类") String tags,
+            @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy，如不确定可填 无") String aliases,
+            @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关") String summary) {
         
         // 权限验证
         AiAssistant assistant = getCaller();
@@ -196,12 +196,12 @@ public class ExpHubTools {
     @Tool(name = "update_experience", description = "更新已有经验。当发现经验有错误或需要补充内容时，使用此工具更新。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
-            @ToolParam(description = "经验标题", required = false) String title,
-            @ToolParam(description = "经验正文，使用Markdown格式", required = false) String content,
-            @ToolParam(description = "分类，如：服务器、开发、运维、部署等", required = false) String category,
-            @ToolParam(description = "标签，逗号分隔", required = false) String tags,
-            @ToolParam(description = "别名/同义词，逗号分隔", required = false) String aliases,
-            @ToolParam(description = "一句话摘要", required = false) String summary) {
+            @ToolParam(description = "经验标题，不需要修改时传空字符串即可") String title,
+            @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可") String content,
+            @ToolParam(description = "分类，如：服务器、开发、运维、部署等，不需要修改时传空字符串即可") String category,
+            @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
+            @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
+            @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary) {
         
         // 权限验证
         AiAssistant assistant = getCaller();
@@ -218,12 +218,12 @@ public class ExpHubTools {
             
             Doc updateDoc = new Doc();
             updateDoc.setId(id);
-            if (title != null) updateDoc.setTitle(title);
-            if (content != null) updateDoc.setContent(content);
-            if (category != null) updateDoc.setCategory(category);
-            if (tags != null) updateDoc.setTags(tags);
-            if (aliases != null) updateDoc.setAliases(aliases);
-            if (summary != null) updateDoc.setSummary(summary);
+            if (title != null && !title.isEmpty()) updateDoc.setTitle(title);
+            if (content != null && !content.isEmpty()) updateDoc.setContent(content);
+            if (category != null && !category.isEmpty()) updateDoc.setCategory(category);
+            if (tags != null && !tags.isEmpty()) updateDoc.setTags(tags);
+            if (aliases != null && !aliases.isEmpty()) updateDoc.setAliases(aliases);
+            if (summary != null && !summary.isEmpty()) updateDoc.setSummary(summary);
             
             docService.update(id, updateDoc);
             
