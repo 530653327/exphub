@@ -29,6 +29,9 @@ public class DocService {
     @Autowired
     private DocVersionMapper versionMapper;
 
+    @Autowired
+    private CallLogService callLogService;
+
     @Transactional
     public Doc create(Doc doc) {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
@@ -61,6 +64,10 @@ public class DocService {
         doc.setRatingCount(0);
         doc.setStatus("ACTIVE");
         docMapper.insert(doc);
+        
+        // 记录操作日志
+        callLogService.logCreate(doc);
+        
         return doc;
     }
 
@@ -79,7 +86,12 @@ public class DocService {
         } else {
             wrapper.orderByDesc("updated_at");
         }
-        return docMapper.selectPage(p, wrapper);
+        Page<Doc> result = docMapper.selectPage(p, wrapper);
+        
+        // 记录搜索日志
+        callLogService.logSearch(keyword, (int) result.getTotal());
+        
+        return result;
     }
 
     public Page<Doc> listByCategory(String category, int page, int size) {
@@ -151,12 +163,22 @@ public class DocService {
         newDoc.setRating(old.getRating());
         newDoc.setRatingCount(old.getRatingCount());
         docMapper.updateById(newDoc);
-        return docMapper.selectById(id);
+        Doc updated = docMapper.selectById(id);
+        
+        // 记录更新日志
+        callLogService.logUpdate(updated);
+        
+        return updated;
     }
 
     @Transactional
     public void delete(Long id) {
+        Doc doc = docMapper.selectById(id);
+        String title = doc != null ? doc.getTitle() : "未知";
         docMapper.deleteById(id);
+        
+        // 记录删除日志
+        callLogService.logDelete(id, title);
     }
 
     public void updateCallResult(Long docId, boolean success) {

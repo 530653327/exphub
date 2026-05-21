@@ -40,19 +40,25 @@ public class CallLogService {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
         
         CallLog log = new CallLog();
-        log.setApiKey(assistant.getApiKey());
-        log.setCallerName(assistant.getAssistantName());
         log.setAction("SEARCH");
         log.setKeyword(keyword);
         log.setHitCount(hitCount);
         
+        if (assistant != null) {
+            log.setApiKey(assistant.getApiKey());
+            log.setCallerName(assistant.getAssistantName());
+            
+            // 更新助手调用统计
+            assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setLastCallAt(LocalDateTime.now());
+            assistantMapper.updateById(assistant);
+        } else {
+            // 后台管理操作
+            log.setApiKey("MANUAL");
+            log.setCallerName("后台管理");
+        }
+        
         callLogMapper.insert(log);
-
-        // 更新助手调用统计
-        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
-        assistant.setLastCallAt(LocalDateTime.now());
-        assistantMapper.updateById(assistant);
-
         return log;
     }
 
@@ -62,19 +68,24 @@ public class CallLogService {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
         
         CallLog log = new CallLog();
-        log.setApiKey(assistant.getApiKey());
-        log.setCallerName(assistant.getAssistantName());
         log.setAction("CREATE");
         log.setDocId(doc.getId());
         log.setDocTitle(doc.getTitle());
         log.setDetail("创建新经验");
         
+        if (assistant != null) {
+            log.setApiKey(assistant.getApiKey());
+            log.setCallerName(assistant.getAssistantName());
+            
+            assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setLastCallAt(LocalDateTime.now());
+            assistantMapper.updateById(assistant);
+        } else {
+            log.setApiKey("MANUAL");
+            log.setCallerName("后台管理");
+        }
+        
         callLogMapper.insert(log);
-
-        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
-        assistant.setLastCallAt(LocalDateTime.now());
-        assistantMapper.updateById(assistant);
-
         return log;
     }
 
@@ -84,19 +95,24 @@ public class CallLogService {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
         
         CallLog log = new CallLog();
-        log.setApiKey(assistant.getApiKey());
-        log.setCallerName(assistant.getAssistantName());
         log.setAction("UPDATE");
         log.setDocId(doc.getId());
         log.setDocTitle(doc.getTitle());
         log.setDetail("更新经验至 v" + doc.getVersion());
         
+        if (assistant != null) {
+            log.setApiKey(assistant.getApiKey());
+            log.setCallerName(assistant.getAssistantName());
+            
+            assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setLastCallAt(LocalDateTime.now());
+            assistantMapper.updateById(assistant);
+        } else {
+            log.setApiKey("MANUAL");
+            log.setCallerName("后台管理");
+        }
+        
         callLogMapper.insert(log);
-
-        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
-        assistant.setLastCallAt(LocalDateTime.now());
-        assistantMapper.updateById(assistant);
-
         return log;
     }
 
@@ -106,19 +122,24 @@ public class CallLogService {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
         
         CallLog log = new CallLog();
-        log.setApiKey(assistant.getApiKey());
-        log.setCallerName(assistant.getAssistantName());
         log.setAction("DELETE");
         log.setDocId(docId);
         log.setDocTitle(docTitle);
         log.setDetail("删除经验");
         
+        if (assistant != null) {
+            log.setApiKey(assistant.getApiKey());
+            log.setCallerName(assistant.getAssistantName());
+            
+            assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setLastCallAt(LocalDateTime.now());
+            assistantMapper.updateById(assistant);
+        } else {
+            log.setApiKey("MANUAL");
+            log.setCallerName("后台管理");
+        }
+        
         callLogMapper.insert(log);
-
-        assistant.setTotalCalls(assistant.getTotalCalls() + 1);
-        assistant.setLastCallAt(LocalDateTime.now());
-        assistantMapper.updateById(assistant);
-
         return log;
     }
 

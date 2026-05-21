@@ -6,7 +6,6 @@ import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.DocVersion;
 import com.exphub.interceptor.ApiKeyInterceptor;
-import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -22,9 +21,6 @@ public class DocController {
     @Autowired
     private DocService docService;
 
-    @Autowired
-    private CallLogService callLogService;
-
     // 创建文档（需校验 canCreate 权限）
     @PostMapping
     public R<Doc> create(@RequestBody Doc doc) {
@@ -38,17 +34,8 @@ public class DocController {
         if (doc.getContent() == null || doc.getContent().isEmpty()) {
             return R.fail("内容不能为空");
         }
+        // 日志记录已在 DocService.create() 中自动完成
         Doc created = docService.create(doc);
-        
-        // 记录操作日志
-        if (assistant != null) {
-            try {
-                callLogService.logCreate(created);
-            } catch (Exception e) {
-                // 日志记录失败不影响操作
-            }
-        }
-        
         return R.ok(created);
     }
 
@@ -63,16 +50,8 @@ public class DocController {
             return R.fail(403, "该API Key没有查询经验的权限");
         }
         
+        // 日志记录已在 DocService.search() 中自动完成
         Page<Doc> result = docService.search(q, page, size);
-        
-        // 自动记录调用日志（如果有 API Key）
-        if (assistant != null) {
-            try {
-                callLogService.logSearch(q, (int) result.getTotal());
-            } catch (Exception e) {
-                // 日志记录失败不影响搜索
-            }
-        }
         
         Map<String, Object> data = new java.util.HashMap<>();
         data.put("total", result.getTotal());
@@ -129,20 +108,11 @@ public class DocController {
         if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
             return R.fail(403, "该API Key没有编辑经验的权限");
         }
+        // 日志记录已在 DocService.update() 中自动完成
         Doc doc = docService.update(id, updateDoc);
         if (doc == null) {
             return R.fail(404, "文档不存在");
         }
-        
-        // 记录操作日志
-        if (assistant != null) {
-            try {
-                callLogService.logUpdate(doc);
-            } catch (Exception e) {
-                // 日志记录失败不影响操作
-            }
-        }
-        
         return R.ok(doc);
     }
 
@@ -150,22 +120,11 @@ public class DocController {
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
         AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
-        
-        // 获取文档标题用于日志
-        Doc doc = docService.getById(id);
-        String docTitle = doc != null ? doc.getTitle() : "未知";
-        
-        docService.delete(id);
-        
-        // 记录操作日志
-        if (assistant != null) {
-            try {
-                callLogService.logDelete(id, docTitle);
-            } catch (Exception e) {
-                // 日志记录失败不影响操作
-            }
+        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+            return R.fail(403, "该API Key没有删除经验的权限");
         }
-        
+        // 日志记录已在 DocService.delete() 中自动完成
+        docService.delete(id);
         return R.ok();
     }
 
