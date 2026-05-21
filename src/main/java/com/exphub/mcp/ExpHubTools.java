@@ -1,7 +1,9 @@
 package com.exphub.mcp;
 
+import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.DocTemplate;
+import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.DocService;
 import com.exphub.service.DocTemplateService;
 import org.springframework.ai.tool.annotation.Tool;
@@ -21,6 +23,13 @@ public class ExpHubTools {
 
     @Autowired
     private DocTemplateService templateService;
+
+    /**
+     * 获取当前调用者权限信息
+     */
+    private AiAssistant getCaller() {
+        return ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+    }
 
     /**
      * 获取经验详情 - 首次使用必须调用
@@ -51,6 +60,12 @@ public class ExpHubTools {
     @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签等信息。在开始任务前使用此工具查找是否有可借鉴的经验。")
     public String searchExperience(
             @ToolParam(description = "搜索关键词，可以是问题描述、技术名词、标签等") String query) {
+        
+        // 权限验证
+        AiAssistant assistant = getCaller();
+        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanSearch())) {
+            return "❌ 权限不足：该API Key没有查询经验的权限";
+        }
         
         var result = docService.search(query, 1, 20);
         var docs = result.getRecords();
@@ -111,6 +126,12 @@ public class ExpHubTools {
             @ToolParam(description = "标签，逗号分隔", required = false) String tags,
             @ToolParam(description = "一句话摘要", required = false) String summary) {
         
+        // 权限验证
+        AiAssistant assistant = getCaller();
+        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanCreate())) {
+            return "❌ 权限不足：该API Key没有创建经验的权限";
+        }
+        
         try {
             Doc doc = new Doc();
             doc.setTitle(title);
@@ -138,6 +159,12 @@ public class ExpHubTools {
             @ToolParam(description = "分类，如：服务器、开发、运维、部署等", required = false) String category,
             @ToolParam(description = "标签，逗号分隔", required = false) String tags,
             @ToolParam(description = "一句话摘要", required = false) String summary) {
+        
+        // 权限验证
+        AiAssistant assistant = getCaller();
+        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+            return "❌ 权限不足：该API Key没有编辑经验的权限";
+        }
         
         try {
             // 检查经验是否存在
