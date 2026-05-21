@@ -279,13 +279,15 @@ public class ExpHubTools {
             @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
             @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary) {
         
-        // 权限验证
-        AiAssistant assistant = getCaller();
-        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
-            return "❌ 权限不足：该API Key没有编辑经验的权限";
-        }
-        
         try {
+            log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}", id, title);
+            
+            // 权限验证
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            
             // 检查经验是否存在
             Doc existing = docService.getById(id);
             if (existing == null) {
@@ -305,7 +307,8 @@ public class ExpHubTools {
             
             return "✅ 经验更新成功！\n\n**ID**: " + id + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n\n经验已更新，其他AI助手可以看到最新内容。";
         } catch (Exception e) {
-            return "更新失败: " + e.getMessage();
+            log.error("ExpHubTools.updateExperience: FAILED", e);
+            return "更新失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 }
