@@ -226,19 +226,19 @@ public class ExpHubTools {
             @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy，如不确定可填 无") String aliases,
             @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关") String summary) {
         
-        // 权限验证
-        AiAssistant assistant = getCaller();
-        log.info("ExpHubTools.createExperience: caller={}, canCreate={}", 
-            assistant != null ? assistant.getAssistantId() : "NULL",
-            assistant != null ? assistant.getCanCreate() : "N/A");
-        log.info("ExpHubTools.createExperience: title={}, tags={}, aliases={}, summary={}", 
-            title, tags, aliases, summary);
-        
-        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanCreate())) {
-            return "❌ 权限不足：该API Key没有创建经验的权限";
-        }
-        
         try {
+            log.info("ExpHubTools.createExperience: ENTRY - title={}, tags={}", title, tags);
+            
+            // 权限验证
+            AiAssistant assistant = getCaller();
+            log.info("ExpHubTools.createExperience: caller={}, canCreate={}", 
+                assistant != null ? assistant.getAssistantId() : "NULL",
+                assistant != null ? assistant.getCanCreate() : "N/A");
+            
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanCreate())) {
+                return "❌ 权限不足：该API Key没有创建经验的权限";
+            }
+            
             Doc doc = new Doc();
             doc.setTitle(title);
             doc.setContent(content);
@@ -261,7 +261,8 @@ public class ExpHubTools {
             result.append("\n经验已保存，其他AI助手可以通过搜索找到这条经验。");
             return result.toString();
         } catch (Exception e) {
-            return "创建失败: " + e.getMessage();
+            log.error("ExpHubTools.createExperience: FAILED", e);
+            return "创建失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 
