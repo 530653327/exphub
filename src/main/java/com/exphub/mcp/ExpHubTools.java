@@ -140,6 +140,16 @@ public class ExpHubTools {
     }
 
     /**
+     * 测试工具 - 验证多参数调用是否正常
+     */
+    @Tool(name = "multi_param_test", description = "测试多参数工具调用，验证Spring AI MCP是否支持多参数")
+    public String multiParamTest(
+            @ToolParam(description = "参数a") String a,
+            @ToolParam(description = "参数b") String b) {
+        return "✅ 多参数测试成功！a=" + a + ", b=" + b;
+    }
+
+    /**
      * 创建新经验
      */
     @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template 获取填写指南！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。")
