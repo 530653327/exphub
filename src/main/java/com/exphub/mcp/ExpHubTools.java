@@ -200,6 +200,21 @@ public class ExpHubTools {
     }
 
     /**
+     * 测试工具 - 模拟create的参数名
+     */
+    @Tool(name = "test_create_mock", description = "使用create_experience相同的参数名测试")
+    public String testCreateMock(
+            @ToolParam(description = "经验标题") String title,
+            @ToolParam(description = "经验正文") String content,
+            @ToolParam(description = "分类") String category,
+            @ToolParam(description = "标签") String tags,
+            @ToolParam(description = "别名") String aliases,
+            @ToolParam(description = "摘要") String summary) {
+        return "Mock OK: title=" + title + ", content_len=" + (content != null ? content.length() : 0) 
+            + ", category=" + category + ", tags=" + tags + ", aliases=" + aliases + ", summary=" + summary;
+    }
+
+    /**
      * 创建新经验
      */
     @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template 获取填写指南！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。")
