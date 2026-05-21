@@ -140,13 +140,63 @@ public class ExpHubTools {
     }
 
     /**
-     * 测试工具 - 验证多参数调用是否正常
+     * 测试工具2参数
      */
-    @Tool(name = "multi_param_test", description = "测试多参数工具调用，验证Spring AI MCP是否支持多参数")
-    public String multiParamTest(
+    @Tool(name = "test_2params", description = "测试2参数工具调用")
+    public String test2Params(
             @ToolParam(description = "参数a") String a,
             @ToolParam(description = "参数b") String b) {
-        return "✅ 多参数测试成功！a=" + a + ", b=" + b;
+        return "2params OK: a=" + a + ", b=" + b;
+    }
+
+    /**
+     * 测试工具3参数
+     */
+    @Tool(name = "test_3params", description = "测试3参数工具调用")
+    public String test3Params(
+            @ToolParam(description = "参数a") String a,
+            @ToolParam(description = "参数b") String b,
+            @ToolParam(description = "参数c") String c) {
+        return "3params OK: a=" + a + ", b=" + b + ", c=" + c;
+    }
+
+    /**
+     * 测试工具4参数
+     */
+    @Tool(name = "test_4params", description = "测试4参数工具调用")
+    public String test4Params(
+            @ToolParam(description = "参数a") String a,
+            @ToolParam(description = "参数b") String b,
+            @ToolParam(description = "参数c") String c,
+            @ToolParam(description = "参数d") String d) {
+        return "4params OK: a=" + a + ", b=" + b + ", c=" + c + ", d=" + d;
+    }
+
+    /**
+     * 测试工具5参数
+     */
+    @Tool(name = "test_5params", description = "测试5参数工具调用")
+    public String test5Params(
+            @ToolParam(description = "参数a") String a,
+            @ToolParam(description = "参数b") String b,
+            @ToolParam(description = "参数c") String c,
+            @ToolParam(description = "参数d") String d,
+            @ToolParam(description = "参数e") String e) {
+        return "5params OK: a=" + a + ", b=" + b + ", c=" + c + ", d=" + d + ", e=" + e;
+    }
+
+    /**
+     * 测试工具6参数
+     */
+    @Tool(name = "test_6params", description = "测试6参数工具调用")
+    public String test6Params(
+            @ToolParam(description = "参数a") String a,
+            @ToolParam(description = "参数b") String b,
+            @ToolParam(description = "参数c") String c,
+            @ToolParam(description = "参数d") String d,
+            @ToolParam(description = "参数e") String e,
+            @ToolParam(description = "参数f") String f) {
+        return "6params OK: a=" + a + ", b=" + b + ", c=" + c + ", d=" + d + ", e=" + e + ", f=" + f;
     }
 
     /**
