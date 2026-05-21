@@ -142,6 +142,7 @@ public class PageController extends BaseController {
             model.addAttribute("doc", docMapper.selectById(id));
         } else {
             model.addAttribute("pageTitle", "新建经验");
+            model.addAttribute("doc", new Doc());
         }
         return "docs/edit";
     }
