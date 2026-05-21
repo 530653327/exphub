@@ -7,8 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,6 +23,11 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(ApiKeyInterceptor.class);
 
     public static final String ASSISTANT_ATTR = "CURRENT_ASSISTANT";
+
+    /**
+     * 用 InheritableThreadLocal 存储当前 AI 助手，避免 boundedElastic 线程中访问已回收的 request
+     */
+    private static final InheritableThreadLocal<AiAssistant> currentAssistantHolder = new InheritableThreadLocal<>();
 
     @Autowired
     private AiAssistantMapper assistantMapper;
@@ -102,29 +105,23 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        // 将助手信息存入 request attributes（跨线程可继承）
+        // 将助手信息存入 InheritableThreadLocal（关键！boundedElastic 线程需要）
+        currentAssistantHolder.set(assistant);
         request.setAttribute(ASSISTANT_ATTR, assistant);
-        // 启用 RequestContextHolder 的 inheritable 模式，使子线程也能读取
-        ServletRequestAttributes sra = new ServletRequestAttributes(request);
-        RequestContextHolder.setRequestAttributes(sra, true);
-        log.info("validateApiKey: assistant set to request attributes, assistantId={}, assistantName={}", 
+        log.info("validateApiKey: assistant set, assistantId={}, assistantName={}", 
             assistant.getAssistantId(), assistant.getAssistantName());
         return true;
     }
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
-        RequestContextHolder.resetRequestAttributes();
+        currentAssistantHolder.remove();
     }
 
     /**
-     * 获取当前请求的助手信息（可在子线程中调用）
+     * 获取当前请求的助手信息（可在 MCP boundedElastic 子线程中安全调用）
      */
     public static AiAssistant getCurrentAssistant() {
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attrs != null) {
-            return (AiAssistant) attrs.getRequest().getAttribute(ASSISTANT_ATTR);
-        }
-        return null;
+        return currentAssistantHolder.get();
     }
 }
