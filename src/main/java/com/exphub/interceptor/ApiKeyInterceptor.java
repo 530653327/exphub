@@ -31,6 +31,11 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return true;
         }
 
+        // MCP 请求必须验证 API Key，不能被 Session 登录状态短路
+        if (uri.startsWith("/mcp/")) {
+            return validateApiKey(request, response);
+        }
+
         // 检查后台管理登录状态（Session中有登录用户）
         HttpSession session = request.getSession(false);
         User loginUser = session != null ? (User) session.getAttribute("user") : null;
@@ -47,7 +52,14 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             }
         }
 
-        // 必须传 API Key
+        // API 请求也走统一的 API Key 验证
+        return validateApiKey(request, response);
+    }
+
+    /**
+     * 验证 API Key 并设置 CURRENT_ASSISTANT
+     */
+    private boolean validateApiKey(HttpServletRequest request, HttpServletResponse response) throws Exception {
         String apiKey = request.getHeader("X-API-Key");
         if (apiKey == null || apiKey.isEmpty()) {
             response.setStatus(401);
