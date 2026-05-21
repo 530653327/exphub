@@ -92,39 +92,60 @@ public class ExpHubTools {
     /**
      * 获取创建经验模板
      */
-    @Tool(name = "get_template", description = "获取创建经验的模板格式。创建新经验前应先获取此模板，确保格式正确。")
+    @Tool(name = "get_template", description = "【创建经验前必须调用】获取创建经验的完整指南，包括模板结构和元数据填写要求。")
     public String getTemplate() {
         DocTemplate template = templateService.getDefault();
         
+        StringBuilder sb = new StringBuilder();
+        
         if (template == null) {
-            return "未找到默认模板，使用以下基本格式：\n\n" +
-                   "## 环境信息\n" +
-                   "- 操作系统：\n" +
-                   "- 依赖条件：\n\n" +
-                   "## 问题描述\n" +
-                   "要解决什么问题？\n\n" +
-                   "## 解决方案\n" +
-                   "详细的解决步骤和核心代码\n\n" +
-                   "## 注意事项\n" +
-                   "容易出错的地方";
+            sb.append("# 经验模板：通用模板\n\n");
+            sb.append("**环境字段**: 操作系统，运行环境\n\n");
+            sb.append("## 填写指南\n");
+            sb.append("请按以下格式记录经验，包括：环境信息、场景描述、问题描述、解决方案、示例代码和注意事项。\n\n");
+            sb.append("## 模板结构\n");
+            sb.append("## 环境信息\n- 操作系统：\n- 依赖条件：\n\n");
+            sb.append("## 场景描述\n描述在什么情况下需要这个经验。\n\n");
+            sb.append("## 问题描述\n具体要解决什么问题？\n\n");
+            sb.append("## 解决方案\n详细的解决步骤和核心代码。\n\n");
+            sb.append("## 示例\n```\n代码示例\n```\n\n");
+            sb.append("## 注意事项\n容易出错的地方和需要注意的坑。\n");
+        } else {
+            sb.append("# 经验模板：").append(template.getName()).append("\n\n");
+            sb.append("**环境字段**: ").append(template.getPlatformField()).append("\n\n");
+            sb.append("## 填写指南\n").append(template.getInstruction()).append("\n\n");
+            sb.append("## 模板结构\n").append(template.getTemplateContent()).append("\n");
         }
 
-        return "# 经验模板：" + template.getName() + "\n\n" +
-               "**环境字段**: " + template.getPlatformField() + "\n\n" +
-               "## 填写指南\n" + template.getInstruction() + "\n\n" +
-               "## 模板结构\n" + template.getTemplateContent();
+        // ⭐ 追加元数据填写指南（关键！）
+        sb.append("\n---\n");
+        sb.append("## ⚠️ 创建经验时必须填写的元数据\n\n");
+        sb.append("创建经验时除了正文，必须填写以下元数据字段，否则经验搜索不到：\n\n");
+        sb.append("1. **category（分类）** - 必填！如：服务器、开发、运维、部署、数据库、前端等\n");
+        sb.append("2. **tags（标签）** - 必填！逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理,配置\n");
+        sb.append("3. **aliases（别名/同义词）** - 必填！逗号分隔，用户可能用不同称呼搜索，如：反向代理,reverse proxy,nginx proxy\n");
+        sb.append("4. **summary（摘要）** - 必填！一句话概括，让其他AI快速判断是否相关\n\n");
+        sb.append("**示例**：\n");
+        sb.append("- title: \"Nginx HTTPS反向代理配置\"\n");
+        sb.append("- category: \"服务器\"\n");
+        sb.append("- tags: \"Nginx,HTTPS,反向代理,SSL,配置\"\n");
+        sb.append("- aliases: \"nginx proxy,ssl termination,https proxy,加密代理\"\n");
+        sb.append("- summary: \"Nginx配置HTTPS反向代理的完整步骤，解决证书配置和端口转发问题\"\n");
+
+        return sb.toString();
     }
 
     /**
      * 创建新经验
      */
-    @Tool(name = "create_experience", description = "创建新经验。当完成任务后学到新方法时，将经验记录到系统中供其他AI助手学习。")
+    @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template 获取填写指南！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。")
     public String createExperience(
             @ToolParam(description = "经验标题，简短明确") String title,
-            @ToolParam(description = "经验正文，使用Markdown格式") String content,
-            @ToolParam(description = "分类，如：服务器、开发、运维、部署等", required = false) String category,
-            @ToolParam(description = "标签，逗号分隔", required = false) String tags,
-            @ToolParam(description = "一句话摘要", required = false) String summary) {
+            @ToolParam(description = "经验正文，使用Markdown格式，按 get_template 返回的结构填写") String content,
+            @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等", required = false) String category,
+            @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理", required = false) String tags,
+            @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy", required = false) String aliases,
+            @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关", required = false) String summary) {
         
         // 权限验证
         AiAssistant assistant = getCaller();
@@ -136,13 +157,22 @@ public class ExpHubTools {
             Doc doc = new Doc();
             doc.setTitle(title);
             doc.setContent(content);
-            doc.setCategory(category != null ? category : "未分类");
+            doc.setCategory(category != null && !category.isEmpty() ? category : "未分类");
             doc.setTags(tags != null ? tags : "");
+            doc.setAliases(aliases != null ? aliases : "");
             doc.setSummary(summary != null ? summary : "");
             
             Doc created = docService.create(doc);
             
-            return "✅ 经验创建成功！\n\n**ID**: " + created.getId() + "\n**标题**: " + created.getTitle() + "\n\n经验已保存，其他AI助手可以通过搜索找到这条经验。";
+            StringBuilder result = new StringBuilder();
+            result.append("✅ 经验创建成功！\n\n");
+            result.append("**ID**: ").append(created.getId()).append("\n");
+            result.append("**标题**: ").append(created.getTitle()).append("\n");
+            if (tags != null && !tags.isEmpty()) {
+                result.append("**标签**: ").append(tags).append("\n");
+            }
+            result.append("\n经验已保存，其他AI助手可以通过搜索找到这条经验。");
+            return result.toString();
         } catch (Exception e) {
             return "创建失败: " + e.getMessage();
         }
@@ -158,6 +188,7 @@ public class ExpHubTools {
             @ToolParam(description = "经验正文，使用Markdown格式", required = false) String content,
             @ToolParam(description = "分类，如：服务器、开发、运维、部署等", required = false) String category,
             @ToolParam(description = "标签，逗号分隔", required = false) String tags,
+            @ToolParam(description = "别名/同义词，逗号分隔", required = false) String aliases,
             @ToolParam(description = "一句话摘要", required = false) String summary) {
         
         // 权限验证
@@ -179,6 +210,7 @@ public class ExpHubTools {
             if (content != null) updateDoc.setContent(content);
             if (category != null) updateDoc.setCategory(category);
             if (tags != null) updateDoc.setTags(tags);
+            if (aliases != null) updateDoc.setAliases(aliases);
             if (summary != null) updateDoc.setSummary(summary);
             
             docService.update(id, updateDoc);
