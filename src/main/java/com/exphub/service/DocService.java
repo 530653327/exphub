@@ -84,6 +84,7 @@ public class DocService {
     public Page<Doc> search(String keyword, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        long total = 0;
         if (keyword != null && !keyword.trim().isEmpty()) {
             String kw = keyword.trim();
             // 使用 LIKE 模糊搜索（兼容所有 MySQL 环境）
@@ -92,14 +93,19 @@ public class DocService {
                     .or().like("aliases", kw)
                     .or().like("summary", kw)
                     .or().like("tags", kw));
+            // 手动 count：MyBatis-Plus 自动 count 在嵌套 or() 时会出错
+            total = docMapper.selectCount(wrapper);
             wrapper.orderByDesc("updated_at");
         } else {
             wrapper.orderByDesc("updated_at");
+            total = docMapper.selectCount(null);
         }
         Page<Doc> result = docMapper.selectPage(p, wrapper);
+        // 用实际 count 覆盖可能错误的 total
+        result.setTotal(total);
         
         // 记录搜索日志
-        callLogService.logSearch(keyword, (int) result.getTotal());
+        callLogService.logSearch(keyword, (int) total);
         
         return result;
     }
