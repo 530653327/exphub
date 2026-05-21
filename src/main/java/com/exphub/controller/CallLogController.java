@@ -27,7 +27,7 @@ public class CallLogController {
     @GetMapping
     public R<?> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "10") int size) {
         Page<CallLog> result = callLogService.list(page, size);
         Map<String, Object> data = new HashMap<>();
         data.put("total", result.getTotal());

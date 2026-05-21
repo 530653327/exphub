@@ -98,9 +98,9 @@ public class PageController extends BaseController {
 
         Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
-            result = docService.search(keyword, page, 20);
+            result = docService.search(keyword, page, 10);
         } else {
-            result = docMapper.selectPage(new Page<>(page, 20),
+            result = docMapper.selectPage(new Page<>(page, 10),
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
                     .orderByDesc("updated_at"));
         }
@@ -156,7 +156,7 @@ public class PageController extends BaseController {
         model.addAttribute("active", "assistants");
         model.addAttribute("pageTitle", "秘钥管理");
 
-        Page<AiAssistant> result = assistantService.list(page, 20);
+        Page<AiAssistant> result = assistantService.list(page, 5);
         model.addAttribute("assistants", result.getRecords());
         model.addAttribute("currentPage", result.getCurrent());
         model.addAttribute("totalPages", result.getPages());

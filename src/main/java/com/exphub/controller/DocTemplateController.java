@@ -23,7 +23,7 @@ public class DocTemplateController {
     @GetMapping
     public R<Page<DocTemplate>> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "5") int size) {
         Page<DocTemplate> p = new Page<>(page, size);
         return R.ok(templateService.page(p));
     }
