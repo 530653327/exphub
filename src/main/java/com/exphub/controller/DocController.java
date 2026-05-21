@@ -116,17 +116,7 @@ public class DocController {
         return R.ok(doc);
     }
 
-    // 删除文档
-    @DeleteMapping("/{id}")
-    public R<Void> delete(@PathVariable Long id) {
-        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
-        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
-            return R.fail(403, "该API Key没有删除经验的权限");
-        }
-        // 日志记录已在 DocService.delete() 中自动完成
-        docService.delete(id);
-        return R.ok();
-    }
+    // 删除功能仅限后台管理员操作（PageController），REST API 不提供删除接口
 
     // 版本历史
     @GetMapping("/{id}/versions")
