@@ -31,9 +31,6 @@ public class CallLogService {
     @Autowired
     private AiAssistantMapper assistantMapper;
 
-    @Autowired
-    private DocService docService;
-
     // 系统自动记录调用日志（从拦截器获取调用者信息）
     @Transactional
     public CallLog logSearch(String keyword, int hitCount) {
@@ -154,7 +151,7 @@ public class CallLogService {
         Map<String, Object> stats = new HashMap<>();
         long total = callLogMapper.selectCount(null);
         stats.put("totalCalls", total);
-        stats.put("totalDocs", docService.countAll());
+        stats.put("totalDocs", docMapper.selectCount(null));
         return stats;
     }
 
@@ -178,7 +175,7 @@ public class CallLogService {
         }
         stats.put("successRate", successRate);
         
-        stats.put("problemDocs", docService.countProblemDocs());
+        stats.put("problemDocs", docMapper.selectCount(new QueryWrapper<Doc>().eq("status", "BROKEN")));
         return stats;
     }
 
