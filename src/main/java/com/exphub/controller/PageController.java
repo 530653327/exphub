@@ -98,7 +98,27 @@ public class PageController extends BaseController {
 
         Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
-            result = docService.search(keyword, page, 10);
+            String kw = keyword.trim();
+            // 如果输入的是纯数字，先尝试按 ID 精确查找
+            try {
+                Long id = Long.valueOf(kw);
+                Doc doc = docMapper.selectById(id);
+                if (doc != null) {
+                    result = new Page<>(1, 10);
+                    result.setRecords(List.of(doc));
+                    result.setTotal(1);
+                    result.setPages(1);
+                } else {
+                    // ID 不存在，返回空结果
+                    result = new Page<>(1, 10);
+                    result.setRecords(List.of());
+                    result.setTotal(0);
+                    result.setPages(0);
+                }
+            } catch (NumberFormatException e) {
+                // 不是纯数字，走模糊搜索
+                result = docService.search(keyword, page, 10);
+            }
         } else {
             result = docMapper.selectPage(new Page<>(page, 10),
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
