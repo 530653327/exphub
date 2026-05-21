@@ -104,16 +104,11 @@ public class PageController extends BaseController {
                 Long id = Long.valueOf(kw);
                 Doc doc = docMapper.selectById(id);
                 if (doc != null) {
-                    result = new Page<>(1, 10);
-                    result.setRecords(List.of(doc));
-                    result.setTotal(1);
-                    result.setPages(1);
+                    result = new Page<>(1, 10, 1);
+                    result.setRecords(java.util.Collections.singletonList(doc));
                 } else {
                     // ID 不存在，返回空结果
-                    result = new Page<>(1, 10);
-                    result.setRecords(List.of());
-                    result.setTotal(0);
-                    result.setPages(0);
+                    result = new Page<>(1, 10, 0);
                 }
             } catch (NumberFormatException e) {
                 // 不是纯数字，走模糊搜索
