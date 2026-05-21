@@ -32,7 +32,7 @@ public class ExpHubTools {
      * 获取当前调用者权限信息
      */
     private AiAssistant getCaller() {
-        return ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        return ApiKeyInterceptor.getCurrentAssistant();
     }
 
     /**

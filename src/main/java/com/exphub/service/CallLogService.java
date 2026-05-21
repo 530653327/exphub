@@ -34,7 +34,7 @@ public class CallLogService {
     // 系统自动记录调用日志（从拦截器获取调用者信息）
     @Transactional
     public CallLog logSearch(String keyword, int hitCount) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         
         CallLog log = new CallLog();
         log.setAction("SEARCH");
@@ -62,7 +62,7 @@ public class CallLogService {
     // 记录创建经验
     @Transactional
     public CallLog logCreate(Doc doc) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         
         CallLog log = new CallLog();
         log.setAction("CREATE");
@@ -89,7 +89,7 @@ public class CallLogService {
     // 记录更新经验
     @Transactional
     public CallLog logUpdate(Doc doc) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         
         CallLog log = new CallLog();
         log.setAction("UPDATE");
@@ -116,7 +116,7 @@ public class CallLogService {
     // 记录删除经验
     @Transactional
     public CallLog logDelete(Long docId, String docTitle) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         
         CallLog log = new CallLog();
         log.setAction("DELETE");

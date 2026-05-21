@@ -72,7 +72,7 @@ public class InfoController {
      */
     @GetMapping("/info/me")
     public Map<String, Object> getMyInfo() {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         Map<String, Object> info = new HashMap<>();
         
         if (assistant != null) {

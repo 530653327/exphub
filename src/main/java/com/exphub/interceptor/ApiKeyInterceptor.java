@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,7 +24,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(ApiKeyInterceptor.class);
 
-    public static final ThreadLocal<AiAssistant> CURRENT_ASSISTANT = new ThreadLocal<>();
+    public static final String ASSISTANT_ATTR = "CURRENT_ASSISTANT";
 
     @Autowired
     private AiAssistantMapper assistantMapper;
@@ -100,15 +102,29 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        // 将助手信息存入 ThreadLocal
-        CURRENT_ASSISTANT.set(assistant);
-        log.info("validateApiKey: CURRENT_ASSISTANT set to assistantId={}, assistantName={}", 
+        // 将助手信息存入 request attributes（跨线程可继承）
+        request.setAttribute(ASSISTANT_ATTR, assistant);
+        // 启用 RequestContextHolder 的 inheritable 模式，使子线程也能读取
+        ServletRequestAttributes sra = new ServletRequestAttributes(request);
+        RequestContextHolder.setRequestAttributes(sra, true);
+        log.info("validateApiKey: assistant set to request attributes, assistantId={}, assistantName={}", 
             assistant.getAssistantId(), assistant.getAssistantName());
         return true;
     }
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
-        CURRENT_ASSISTANT.remove();
+        RequestContextHolder.resetRequestAttributes();
+    }
+
+    /**
+     * 获取当前请求的助手信息（可在子线程中调用）
+     */
+    public static AiAssistant getCurrentAssistant() {
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs != null) {
+            return (AiAssistant) attrs.getRequest().getAttribute(ASSISTANT_ATTR);
+        }
+        return null;
     }
 }

@@ -24,7 +24,7 @@ public class DocController {
     // 创建文档（需校验 canCreate 权限）
     @PostMapping
     public R<Doc> create(@RequestBody Doc doc) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null && !Boolean.TRUE.equals(assistant.getCanCreate())) {
             return R.fail(403, "该API Key没有创建经验的权限");
         }
@@ -45,7 +45,7 @@ public class DocController {
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null && !Boolean.TRUE.equals(assistant.getCanSearch())) {
             return R.fail(403, "该API Key没有查询经验的权限");
         }
@@ -104,7 +104,7 @@ public class DocController {
     // 更新文档（需校验 canUpdate 权限）
     @PutMapping("/{id}")
     public R<Doc> update(@PathVariable Long id, @RequestBody Doc updateDoc) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
             return R.fail(403, "该API Key没有编辑经验的权限");
         }
@@ -119,7 +119,7 @@ public class DocController {
     // 删除文档
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
             return R.fail(403, "该API Key没有删除经验的权限");
         }

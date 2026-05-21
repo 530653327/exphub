@@ -38,7 +38,7 @@ public class DocService {
 
     @Transactional
     public Doc create(Doc doc) {
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         log.info("DocService.create: assistant from ThreadLocal={}, title={}, tags={}, aliases={}", 
             assistant != null ? assistant.getAssistantId() : "NULL",
             doc.getTitle(), doc.getTags(), doc.getAliases());
@@ -139,7 +139,7 @@ public class DocService {
         v.setContent(old.getContent());
         v.setAliases(old.getAliases());
         v.setSummary(old.getSummary());
-        AiAssistant assistant = ApiKeyInterceptor.CURRENT_ASSISTANT.get();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
             v.setUpdatedBy(assistant.getAssistantId());
             v.setUpdatedName(assistant.getAssistantName());
