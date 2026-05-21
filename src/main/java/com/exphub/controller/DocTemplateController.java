@@ -1,5 +1,6 @@
 package com.exphub.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.exphub.entity.DocTemplate;
 import com.exphub.service.DocTemplateService;
 import com.exphub.common.R;
@@ -17,10 +18,21 @@ public class DocTemplateController {
     private DocTemplateService templateService;
 
     /**
-     * 获取所有模板
+     * 获取所有模板（分页）
      */
     @GetMapping
-    public R<List<DocTemplate>> list() {
+    public R<Page<DocTemplate>> list(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<DocTemplate> p = new Page<>(page, size);
+        return R.ok(templateService.page(p));
+    }
+
+    /**
+     * 获取全部模板（不分页，供 MCP 工具调用）
+     */
+    @GetMapping("/all")
+    public R<List<DocTemplate>> listAll() {
         return R.ok(templateService.list());
     }
 

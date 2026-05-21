@@ -31,6 +31,7 @@ public class CallLogController {
         Page<CallLog> result = callLogService.list(page, size);
         Map<String, Object> data = new HashMap<>();
         data.put("total", result.getTotal());
+        data.put("totalPages", result.getPages());
         data.put("page", result.getCurrent());
         data.put("pageSize", result.getSize());
         data.put("list", result.getRecords());

@@ -7,6 +7,7 @@ import com.exphub.mapper.DocMapper;
 import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -85,6 +86,7 @@ public class PageController extends BaseController {
     @GetMapping("/docs")
     public String docs(HttpSession session,
                        @RequestParam(required = false) String keyword,
+                       @RequestParam(defaultValue = "1") int page,
                        Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
@@ -94,20 +96,18 @@ public class PageController extends BaseController {
         model.addAttribute("pageTitle", "经验管理");
         model.addAttribute("keyword", keyword != null ? keyword : "");
 
-        List<Doc> docs;
+        Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
-            // 搜索模式
-            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Doc> result =
-                docService.search(keyword, 1, 100);
-            docs = result.getRecords();
+            result = docService.search(keyword, page, 20);
         } else {
-            // 普通列表
-            docs = docMapper.selectList(
+            result = docMapper.selectPage(new Page<>(page, 20),
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
-                    .orderByDesc("updated_at")
-            );
+                    .orderByDesc("updated_at"));
         }
-        model.addAttribute("docs", docs);
+        model.addAttribute("docs", result.getRecords());
+        model.addAttribute("currentPage", result.getCurrent());
+        model.addAttribute("totalPages", result.getPages());
+        model.addAttribute("totalRows", result.getTotal());
 
         return "docs/list";
     }
@@ -146,7 +146,9 @@ public class PageController extends BaseController {
 
     // 秘钥管理
     @GetMapping("/assistants")
-    public String assistants(HttpSession session, Model model, HttpServletRequest request) {
+    public String assistants(HttpSession session,
+                             @RequestParam(defaultValue = "1") int page,
+                             Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
@@ -154,8 +156,11 @@ public class PageController extends BaseController {
         model.addAttribute("active", "assistants");
         model.addAttribute("pageTitle", "秘钥管理");
 
-        List<AiAssistant> assistants = assistantService.list(1, 100).getRecords();
-        model.addAttribute("assistants", assistants);
+        Page<AiAssistant> result = assistantService.list(page, 20);
+        model.addAttribute("assistants", result.getRecords());
+        model.addAttribute("currentPage", result.getCurrent());
+        model.addAttribute("totalPages", result.getPages());
+        model.addAttribute("totalRows", result.getTotal());
 
         return "assistants/list";
     }
