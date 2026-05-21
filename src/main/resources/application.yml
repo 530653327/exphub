@@ -56,5 +56,3 @@ logging:
   level:
     org.springframework.security: DEBUG
     com.exphub: DEBUG
-    org.springframework.ai.mcp: TRACE
-    org.springframework.ai.tool: TRACE
