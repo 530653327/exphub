@@ -73,7 +73,7 @@
                             <span class="text-muted mr-3"><i class="fas fa-folder mr-1"></i><span th:text="${doc.category ?: '未分类'}">-</span></span>
                             <span class="text-muted"><i class="fas fa-clock mr-1"></i><span th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}">-</span></span>
                         </div>
-                        <span class="badge badge-version-current" th:title="'最新版本'">v<span th:text="${doc.version}">1</span> · 最新</span>
+                        <span class="badge badge-version-current" id="versionBadge" th:data-current-version="${doc.version}">v<span th:text="${doc.version}">1</span> · 最新</span>
                     </div>
                     <div class="markdown-body" id="docContent" th:data-content="${doc.content}"></div>
                 </div>
@@ -159,6 +159,8 @@
         }
 
         // 版本切换
+        var versionBadge = document.getElementById('versionBadge');
+        var currentVersion = versionBadge.getAttribute('data-current-version');
         document.querySelectorAll('.version-link').forEach(function(link) {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -168,6 +170,15 @@
                 // 渲染内容
                 var raw = this.getAttribute('data-content');
                 document.getElementById('docContent').innerHTML = raw ? marked.parse(raw) : '';
+                // 同步右上角版本徽章
+                var v = this.getAttribute('data-version');
+                if (v === 'current') {
+                    versionBadge.innerHTML = 'v' + currentVersion + ' · 最新';
+                    versionBadge.title = '最新版本';
+                } else {
+                    versionBadge.innerHTML = 'v' + v;
+                    versionBadge.title = '查看版本 v' + v;
+                }
             });
         });
     </script>
