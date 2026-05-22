@@ -73,7 +73,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
      * 验证 API Key 并设置 CURRENT_ASSISTANT
      */
     private boolean validateApiKey(HttpServletRequest request, HttpServletResponse response) throws Exception {
-        String apiKey = request.getHeader("authorization_key");
+        String apiKey = request.getHeader("authorization-key");
         log.info("validateApiKey: apiKey header present={}", apiKey != null && !apiKey.isEmpty());
         
         if (apiKey == null || apiKey.isEmpty()) {
