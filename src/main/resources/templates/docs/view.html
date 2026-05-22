@@ -26,6 +26,13 @@
         .btn-primary:hover { background: #d63850; border-color: #d63850; }
         .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
         .badge-version-current { background: #e94560; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; }
+        .tag-color { display: inline-block; padding: 4px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; margin-right: 4px; margin-bottom: 4px; }
+        .tag-color:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
+        .tag-color:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
+        .tag-color:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
+        .tag-color:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
+        .tag-color:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
+        .tag-color:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
         .stat-box { display: inline-block; background: #f8f9fa; padding: 8px 15px; border-radius: 8px; text-align: center; margin-right: 15px; }
         .stat-box .number { font-size: 1.3rem; font-weight: bold; color: #333; }
         .stat-box .label { font-size: 0.75rem; color: #999; }
@@ -101,7 +108,7 @@
                     <div class="card-header"><h6 class="mb-0"><i class="fas fa-tags mr-2"></i>标签</h6></div>
                     <div class="card-body">
                         <span th:each="tag : ${#strings.listSplit(doc.tags, ',')}" 
-                              class="badge badge-secondary mr-1 mb-1" th:text="${tag}">标签</span>
+                              class="tag-color" th:text="${tag}">标签</span>
                     </div>
                 </div>
                 <div class="card mb-3" th:if="${doc.aliases != null}">
