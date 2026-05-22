@@ -19,7 +19,7 @@ public class CallLogController {
     // 系统自动记录搜索日志（由检索服务调用）
     @PostMapping
     public R<CallLog> logSearch(@RequestParam String keyword, @RequestParam int hitCount) {
-        CallLog result = callLogService.logSearch(keyword, hitCount);
+        CallLog result = callLogService.logSearch(keyword, hitCount, null);
         return R.ok(result);
     }
 

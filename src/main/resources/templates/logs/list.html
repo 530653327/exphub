@@ -93,13 +93,14 @@
                             <th>调用者</th>
                             <th>AppKey</th>
                             <th>检索关键字</th>
+                            <th>涉及经验</th>
                             <th>命中条数</th>
                             <th>调用时间</th>
                         </tr>
                     </thead>
                     <tbody id="logTable">
                         <tr>
-                            <td colspan="6" class="text-center text-muted py-4">
+                            <td colspan="7" class="text-center text-muted py-4">
                                 <i class="fas fa-spinner fa-spin mr-2"></i>加载中...
                             </td>
                         </tr>
@@ -199,11 +200,13 @@
                         else if (log.action === 'CREATE') actionBadge = 'badge-success';
                         else if (log.action === 'UPDATE') actionBadge = 'badge-warning';
                         else if (log.action === 'DELETE') actionBadge = 'badge-danger';
+                        var relatedTitle = log.docTitle || log.detail || '-';
                         html += '<tr>' +
                             '<td><span class="badge ' + actionBadge + '">' + actionLabel + '</span></td>' +
                             '<td><i class="fas fa-user mr-1 text-muted"></i>' + (log.callerName || '-') + '</td>' +
                             '<td><code class="small">' + (log.apiKey || '-') + '</code></td>' +
                             '<td><span class="badge badge-info">' + (log.keyword || '-') + '</span></td>' +
+                            '<td class="small" title="' + (log.detail || '') + '">' + relatedTitle + '</td>' +
                             '<td><span class="text-success font-weight-bold">' + (log.hitCount || 0) + '</span> 条</td>' +
                             '<td class="text-muted small">' + new Date(log.createdAt).toLocaleString('zh-CN') + '</td>' +
                         '</tr>';
@@ -211,11 +214,11 @@
                     document.getElementById('logTable').innerHTML = html;
                     renderPagination();
                 } else {
-                    document.getElementById('logTable').innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">暂无数据</td></tr>';
+                    document.getElementById('logTable').innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无数据</td></tr>';
                     document.getElementById('logPagination').style.display = 'none';
                 }
             } catch (e) {
-                document.getElementById('logTable').innerHTML = '<tr><td colspan="6" class="text-center text-danger py-4">加载失败: ' + e.message + '</td></tr>';
+                document.getElementById('logTable').innerHTML = '<tr><td colspan="7" class="text-center text-danger py-4">加载失败: ' + e.message + '</td></tr>';
             }
         }
         loadLogs();

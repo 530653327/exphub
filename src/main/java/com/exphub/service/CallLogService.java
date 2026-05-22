@@ -33,13 +33,27 @@ public class CallLogService {
 
     // 系统自动记录调用日志（从拦截器获取调用者信息）
     @Transactional
-    public CallLog logSearch(String keyword, int hitCount) {
+    public CallLog logSearch(String keyword, int hitCount, List<Doc> matchedDocs) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         
         CallLog log = new CallLog();
         log.setAction("SEARCH");
         log.setKeyword(keyword);
         log.setHitCount(hitCount);
+        
+        // 记录匹配到的经验标题
+        if (matchedDocs != null && !matchedDocs.isEmpty()) {
+            Doc top = matchedDocs.get(0);
+            log.setDocId(top.getId());
+            log.setDocTitle(top.getTitle());
+            StringBuilder titles = new StringBuilder();
+            for (int i = 0; i < Math.min(matchedDocs.size(), 10); i++) {
+                if (i > 0) titles.append("；");
+                titles.append(matchedDocs.get(i).getTitle());
+            }
+            if (matchedDocs.size() > 10) titles.append("…等" + matchedDocs.size() + "条");
+            log.setDetail(titles.toString());
+        }
         
         if (assistant != null) {
             log.setApiKey(assistant.getApiKey());

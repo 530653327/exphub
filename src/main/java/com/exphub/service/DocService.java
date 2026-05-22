@@ -105,7 +105,7 @@ public class DocService {
         result.setTotal(total);
         
         // 记录搜索日志
-        callLogService.logSearch(keyword, (int) total);
+        callLogService.logSearch(keyword, (int) total, result.getRecords());
         
         return result;
     }
