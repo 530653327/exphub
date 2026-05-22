@@ -104,18 +104,18 @@ public class PageController extends BaseController {
                 Long id = Long.valueOf(kw);
                 Doc doc = docMapper.selectById(id);
                 if (doc != null) {
-                    result = new Page<>(1, 10, 1);
+                    result = new Page<>(1, 20, 1);
                     result.setRecords(java.util.Collections.singletonList(doc));
                 } else {
                     // ID 不存在，返回空结果
-                    result = new Page<>(1, 10, 0);
+                    result = new Page<>(1, 20, 0);
                 }
             } catch (NumberFormatException e) {
                 // 不是纯数字，走模糊搜索
-                result = docService.search(keyword, page, 10);
+                result = docService.search(keyword, page, 20);
             }
         } else {
-            result = docMapper.selectPage(new Page<>(page, 10),
+            result = docMapper.selectPage(new Page<>(page, 20),
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
                     .orderByDesc("updated_at"));
         }
@@ -172,7 +172,7 @@ public class PageController extends BaseController {
         model.addAttribute("active", "assistants");
         model.addAttribute("pageTitle", "秘钥管理");
 
-        Page<AiAssistant> result = assistantService.list(page, 5);
+        Page<AiAssistant> result = assistantService.list(page, 20);
         model.addAttribute("assistants", result.getRecords());
         model.addAttribute("currentPage", result.getCurrent());
         model.addAttribute("totalPages", result.getPages());
