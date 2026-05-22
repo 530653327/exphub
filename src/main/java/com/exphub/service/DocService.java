@@ -87,13 +87,33 @@ public class DocService {
         long total = 0;
         if (keyword != null && !keyword.trim().isEmpty()) {
             String kw = keyword.trim();
-            // 使用 LIKE 模糊搜索（兼容所有 MySQL 环境）
-            wrapper.and(w -> w.like("title", kw)
-                    .or().like("content", kw)
-                    .or().like("aliases", kw)
-                    .or().like("summary", kw)
-                    .or().like("tags", kw));
-            // 手动 count：MyBatis-Plus 自动 count 在嵌套 or() 时会出错
+            // 分词：按空格、逗号、中文逗号、顿号等分割
+            String[] tokens = kw.split("[\\s,，、]+");
+            if (tokens.length == 1) {
+                // 单关键词：保持原有 OR 逻辑，广泛匹配
+                String t = tokens[0].trim();
+                wrapper.and(w -> w.like("title", t)
+                        .or().like("content", t)
+                        .or().like("aliases", t)
+                        .or().like("summary", t)
+                        .or().like("tags", t));
+            } else {
+                // 多关键词：AND 逻辑，每个词必须在至少一个字段中出现
+                for (String token : tokens) {
+                    String t = token.trim();
+                    if (t.isEmpty()) continue;
+                    // 净化输入防止 SQL 注入，只保留中英文、数字、下划线、连字符、点号
+                    String safe = t.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5._\\-+#]", "");
+                    if (safe.isEmpty()) continue;
+                    wrapper.apply("(" +
+                        "title LIKE '%" + safe + "%' OR " +
+                        "content LIKE '%" + safe + "%' OR " +
+                        "aliases LIKE '%" + safe + "%' OR " +
+                        "summary LIKE '%" + safe + "%' OR " +
+                        "tags LIKE '%" + safe + "%'" +
+                        ")");
+                }
+            }
             total = docMapper.selectCount(wrapper);
             wrapper.orderByDesc("updated_at");
         } else {
@@ -101,7 +121,6 @@ public class DocService {
             total = docMapper.selectCount(null);
         }
         Page<Doc> result = docMapper.selectPage(p, wrapper);
-        // 用实际 count 覆盖可能错误的 total
         result.setTotal(total);
         
         // 记录搜索日志

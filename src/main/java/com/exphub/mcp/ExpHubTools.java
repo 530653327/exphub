@@ -61,9 +61,9 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签等信息。在开始任务前使用此工具查找是否有可借鉴的经验。")
+    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签等信息。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。")
     public String searchExperience(
-            @ToolParam(description = "搜索关键词，可以是问题描述、技术名词、标签等") String query) {
+            @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query) {
         
         // 权限验证
         AiAssistant assistant = getCaller();
