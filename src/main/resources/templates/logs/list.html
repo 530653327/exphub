@@ -42,6 +42,48 @@
             <h4 class="mb-0">调用日志</h4>
         </div>
 
+        <!-- 筛选区域 -->
+        <div class="card mb-3">
+            <div class="card-body py-2">
+                <div class="form-row align-items-end">
+                    <div class="col-auto">
+                        <label class="small text-muted mb-1">开始时间</label>
+                        <input type="datetime-local" class="form-control form-control-sm" id="filterStartTime" style="width:190px;">
+                    </div>
+                    <div class="col-auto">
+                        <label class="small text-muted mb-1">结束时间</label>
+                        <input type="datetime-local" class="form-control form-control-sm" id="filterEndTime" style="width:190px;">
+                    </div>
+                    <div class="col-auto">
+                        <label class="small text-muted mb-1">操作类型</label>
+                        <select class="form-control form-control-sm" id="filterAction" style="width:110px;">
+                            <option value="">全部</option>
+                            <option value="SEARCH">查询</option>
+                            <option value="CREATE">创建</option>
+                            <option value="UPDATE">更新</option>
+                            <option value="DELETE">删除</option>
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <label class="small text-muted mb-1">调用者</label>
+                        <input type="text" class="form-control form-control-sm" id="filterCallerName" placeholder="调用者名称" style="width:130px;">
+                    </div>
+                    <div class="col-auto">
+                        <label class="small text-muted mb-1">AppKey</label>
+                        <input type="text" class="form-control form-control-sm" id="filterApiKey" placeholder="Key 模糊搜索" style="width:150px;">
+                    </div>
+                    <div class="col-auto">
+                        <label class="small text-muted mb-1">关键字</label>
+                        <input type="text" class="form-control form-control-sm" id="filterKeyword" placeholder="检索关键字" style="width:130px;">
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-primary btn-sm" onclick="searchLogs()"><i class="fas fa-search mr-1"></i>搜索</button>
+                        <button class="btn btn-outline-secondary btn-sm ml-1" onclick="resetFilters()"><i class="fas fa-redo mr-1"></i>重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-body p-0">
                 <table class="table mb-0">
@@ -78,6 +120,39 @@
         var totalPages = 0;
         var pageSize = 50;
 
+        function getFilterParams() {
+            var params = 'page=' + currentPage + '&size=' + pageSize;
+            var action = document.getElementById('filterAction').value;
+            var callerName = document.getElementById('filterCallerName').value.trim();
+            var apiKey = document.getElementById('filterApiKey').value.trim();
+            var keyword = document.getElementById('filterKeyword').value.trim();
+            var startTime = document.getElementById('filterStartTime').value;
+            var endTime = document.getElementById('filterEndTime').value;
+            if (action) params += '&action=' + encodeURIComponent(action);
+            if (callerName) params += '&callerName=' + encodeURIComponent(callerName);
+            if (apiKey) params += '&apiKey=' + encodeURIComponent(apiKey);
+            if (keyword) params += '&keyword=' + encodeURIComponent(keyword);
+            if (startTime) params += '&startTime=' + encodeURIComponent(startTime);
+            if (endTime) params += '&endTime=' + encodeURIComponent(endTime);
+            return params;
+        }
+
+        function searchLogs() {
+            currentPage = 1;
+            loadLogs(1);
+        }
+
+        function resetFilters() {
+            document.getElementById('filterAction').value = '';
+            document.getElementById('filterCallerName').value = '';
+            document.getElementById('filterApiKey').value = '';
+            document.getElementById('filterKeyword').value = '';
+            document.getElementById('filterStartTime').value = '';
+            document.getElementById('filterEndTime').value = '';
+            currentPage = 1;
+            loadLogs(1);
+        }
+
         function renderPagination() {
             var nav = document.getElementById('logPageNav');
             if (totalPages <= 1) {
@@ -111,7 +186,7 @@
             page = page || 1;
             currentPage = page;
             try {
-                var resp = await fetch(contextPath + '/api/logs?page=' + page + '&size=' + pageSize);
+                var resp = await fetch(contextPath + '/api/logs?' + getFilterParams());
                 var result = await resp.json();
                 if (result.code === 0 && result.data.list && result.data.list.length > 0) {
                     totalPages = result.data.totalPages || Math.ceil(result.data.total / pageSize);

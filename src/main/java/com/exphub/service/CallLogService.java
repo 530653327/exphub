@@ -140,9 +140,30 @@ public class CallLogService {
         return log;
     }
 
-    public Page<CallLog> list(int page, int size) {
+    public Page<CallLog> list(int page, int size, String action, String callerName,
+                              String apiKey, String keyword, String startTime, String endTime) {
         Page<CallLog> p = new Page<>(page, size);
         QueryWrapper<CallLog> wrapper = new QueryWrapper<>();
+
+        if (action != null && !action.isEmpty()) {
+            wrapper.eq("action", action);
+        }
+        if (callerName != null && !callerName.isEmpty()) {
+            wrapper.like("caller_name", callerName);
+        }
+        if (apiKey != null && !apiKey.isEmpty()) {
+            wrapper.like("api_key", apiKey);
+        }
+        if (keyword != null && !keyword.isEmpty()) {
+            wrapper.like("keyword", keyword);
+        }
+        if (startTime != null && !startTime.isEmpty()) {
+            wrapper.ge("created_at", startTime);
+        }
+        if (endTime != null && !endTime.isEmpty()) {
+            wrapper.le("created_at", endTime);
+        }
+
         wrapper.orderByDesc("created_at");
         return callLogMapper.selectPage(p, wrapper);
     }

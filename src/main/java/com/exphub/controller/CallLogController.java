@@ -23,12 +23,18 @@ public class CallLogController {
         return R.ok(result);
     }
 
-    // 查询调用日志
+    // 查询调用日志（支持多维度筛选）
     @GetMapping
     public R<?> list(
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        Page<CallLog> result = callLogService.list(page, size);
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String callerName,
+            @RequestParam(required = false) String apiKey,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String startTime,
+            @RequestParam(required = false) String endTime) {
+        Page<CallLog> result = callLogService.list(page, size, action, callerName, apiKey, keyword, startTime, endTime);
         Map<String, Object> data = new HashMap<>();
         data.put("total", result.getTotal());
         data.put("totalPages", result.getPages());
