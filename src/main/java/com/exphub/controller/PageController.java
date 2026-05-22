@@ -157,6 +157,7 @@ public class PageController extends BaseController {
         model.addAttribute("active", "docs");
         model.addAttribute("pageTitle", "经验详情");
         model.addAttribute("doc", docMapper.selectById(id));
+        model.addAttribute("versions", docService.getVersions(id));
         return "docs/view";
     }
 

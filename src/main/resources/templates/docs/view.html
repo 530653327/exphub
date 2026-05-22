@@ -21,8 +21,11 @@
         .markdown-body { padding: 30px; font-size: 0.95rem; }
         .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
         .badge-broken { background: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 20px; }
+        .badge-deprecated { background: #fff3cd; color: #856404; padding: 5px 10px; border-radius: 20px; }
         .btn-primary { background: #e94560; border-color: #e94560; }
         .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+        .badge-version-current { background: #e94560; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; }
         .stat-box { display: inline-block; background: #f8f9fa; padding: 8px 15px; border-radius: 8px; text-align: center; margin-right: 15px; }
         .stat-box .number { font-size: 1.3rem; font-weight: bold; color: #333; }
         .stat-box .label { font-size: 0.75rem; color: #999; }
@@ -63,7 +66,7 @@
                             <span class="text-muted mr-3"><i class="fas fa-folder mr-1"></i><span th:text="${doc.category ?: '未分类'}">-</span></span>
                             <span class="text-muted"><i class="fas fa-clock mr-1"></i><span th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}">-</span></span>
                         </div>
-                        <span class="text-muted">v<span th:text="${doc.version}">1</span></span>
+                        <span class="badge badge-version-current" th:title="'最新版本'">v<span th:text="${doc.version}">1</span> · 最新</span>
                     </div>
                     <div class="markdown-body" id="docContent" th:data-content="${doc.content}"></div>
                 </div>
@@ -108,6 +111,33 @@
                               class="badge badge-light mr-1 mb-1" th:text="${a}">别名</span>
                     </div>
                 </div>
+                <!-- 版本历史 -->
+                <div class="card mb-3" th:if="${versions != null and #lists.size(versions) > 0}">
+                    <div class="card-header"><h6 class="mb-0"><i class="fas fa-code-branch mr-2"></i>版本历史</h6></div>
+                    <div class="card-body p-0">
+                        <div class="list-group list-group-flush" id="versionList">
+                            <a href="javascript:void(0)" class="list-group-item list-group-item-action version-link active"
+                               th:attr="data-version=current,data-content=${doc.content}">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <strong>v<span th:text="${doc.version}">1</span></strong>
+                                    <span class="badge badge-primary ml-2" style="font-size:0.7rem;">最新</span>
+                                </div>
+                                <small class="text-muted" th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}"></small>
+                            </a>
+                            <a href="javascript:void(0)" class="list-group-item list-group-item-action version-link"
+                               th:each="v : ${versions}"
+                               th:attr="data-version=${v.version},data-content=${v.content}">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <strong>v<span th:text="${v.version}">1</span></strong>
+                                </div>
+                                <small class="text-muted">
+                                    <span th:text="${v.updatedName}">-</span>
+                                    <span th:text="${#temporals.format(v.createdAt, 'yyyy-MM-dd HH:mm')}">-</span>
+                                </small>
+                            </a>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -116,10 +146,23 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@5.1.0/marked.min.js"></script>
     <script>
-        var content = document.getElementById('docContent').getAttribute('data-content');
-        if (content) {
-            document.getElementById('docContent').innerHTML = marked.parse(content);
+        var currentContent = document.getElementById('docContent').getAttribute('data-content');
+        if (currentContent) {
+            document.getElementById('docContent').innerHTML = marked.parse(currentContent);
         }
+
+        // 版本切换
+        document.querySelectorAll('.version-link').forEach(function(link) {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                // 更新激活状态
+                document.querySelectorAll('.version-link').forEach(function(l) { l.classList.remove('active'); });
+                this.classList.add('active');
+                // 渲染内容
+                var raw = this.getAttribute('data-content');
+                document.getElementById('docContent').innerHTML = raw ? marked.parse(raw) : '';
+            });
+        });
     </script>
 </body>
 </html>
