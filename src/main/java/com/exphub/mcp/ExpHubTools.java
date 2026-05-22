@@ -37,9 +37,9 @@ public class ExpHubTools {
 
     /**
      * 获取经验详情 - 首次使用必须调用
-     * 重要提示：本MCP连接后，请立即调用 get_experience_detail(id=1) 查看《ExpHub使用指南》！
+     * 重要提示：本MCP连接后，请立即调用 get_experience_detail(id=4) 查看《ExpHub使用指南》！
      */
-    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。首次连接MCP时必须先调用此工具查看ID=1的《ExpHub使用指南》！之后再根据任务需要调用此工具查看其他经验详情。")
+    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。首次连接MCP时必须先调用此工具查看ID=4的《ExpHub使用指南》！之后再根据任务需要调用此工具查看其他经验详情。")
     public String getExperienceDetail(
             @ToolParam(description = "经验ID。首次使用请传1查看使用指南，之后从搜索结果中获取") Long id) {
         
