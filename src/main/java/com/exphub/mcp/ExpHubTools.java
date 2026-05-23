@@ -13,6 +13,8 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
  * ExpHub MCP 工具类
  * 经验库服务，让AI助手可以搜索和记录经验
@@ -102,10 +104,11 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型等信息。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。建议指定 templateType 缩小范围提高准确度。可选类型：problem_solution、knowledge_doc、todo_list、bug_fix、config_guide、how_to、schedule_plan。")
+    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型、状态等信息。默认只搜索ACTIVE（正常）状态的经验，排除已完成、已过期、已失效的经验。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。建议指定 templateType 缩小范围提高准确度。")
     public String searchExperience(
             @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
-            @ToolParam(description = "指定搜索的模板类型，缩小搜索范围提高准确度。可选：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。") String templateType) {
+            @ToolParam(description = "指定搜索的模板类型，缩小搜索范围提高准确度。可选：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。") String templateType,
+            @ToolParam(description = "指定搜索的状态，默认只搜索ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。") String includeStatus) {
         
         // 权限验证
         AiAssistant assistant = getCaller();
@@ -113,13 +116,27 @@ public class ExpHubTools {
             return "❌ 权限不足：该API Key没有查询经验的权限";
         }
         
-        var result = docService.search(query, templateType, 1, 100);
+        // 默认只搜索 ACTIVE 状态
+        String statusFilter = includeStatus;
+        if (statusFilter == null || statusFilter.isEmpty()) {
+            statusFilter = "ACTIVE";
+        } else if ("ALL".equalsIgnoreCase(statusFilter.trim())) {
+            statusFilter = null;
+        }
+        
+        var result = docService.search(query, templateType, statusFilter, 1, 100);
         var docs = result.getRecords();
         
-        String filterInfo = (templateType != null && !templateType.isEmpty()) ? "【类型过滤: " + templateType + "】" : "";
+        String filterInfo = "";
+        if (templateType != null && !templateType.isEmpty()) {
+            filterInfo += "【类型过滤: " + templateType + "】";
+        }
+        if (statusFilter != null && !"ACTIVE".equals(statusFilter)) {
+            filterInfo += "【状态过滤: " + statusFilter + "】";
+        }
         
         if (docs.isEmpty()) {
-            return filterInfo + "未找到\"" + query + "\"相关的经验。\n\n提示：\n1. 尝试使用更通用的关键词\n2. 尝试不指定 templateType 扩大搜索范围\n3. 使用英文关键词搜索\n4. 如果是新技术，可能需要创建新经验";
+            return filterInfo + "未找到\"" + query + "\"相关的经验。\n\n提示：\n1. 尝试使用更通用的关键词\n2. 尝试不指定 templateType 扩大搜索范围\n3. 使用英文关键词搜索\n4. 如果是新技术，可能需要创建新经验\n5. 尝试 includeStatus=COMPLETED,DEPRECATED,BROKEN 搜索已完成或已过期的经验";
         }
 
         StringBuilder sb = new StringBuilder();
@@ -129,7 +146,8 @@ public class ExpHubTools {
         for (Doc doc : docs) {
             sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
             String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
-            sb.append("   类型: ").append(typeLabel).append(" | 分类: ").append(doc.getCategory()).append(" | 调用: ").append(doc.getCallCount()).append("次\n");
+            String statusLabel = getStatusLabel(doc.getStatus());
+            sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel).append(" | 分类: ").append(doc.getCategory()).append(" | 调用: ").append(doc.getCallCount()).append("次\n");
             sb.append("   摘要: ").append(doc.getSummary() != null ? doc.getSummary() : "无").append("\n");
             sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
             sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n\n");
@@ -150,6 +168,56 @@ public class ExpHubTools {
             case "schedule_plan" -> "📅 计划排期";
             default -> "📄 " + type;
         };
+    }
+    
+    private String getStatusLabel(String status) {
+        if (status == null) return "未知";
+        return switch (status) {
+            case "ACTIVE" -> "🟢 正常";
+            case "COMPLETED" -> "✅ 已完成";
+            case "BROKEN" -> "🔴 已失效";
+            case "DEPRECATED" -> "⏸️ 已过期";
+            default -> "❓ " + status;
+        };
+    }
+
+    /**
+     * 更新经验状态
+     */
+    @Tool(name = "update_experience_status", description = "更新经验的状态。用于标记经验的生命周期状态：ACTIVE(正常可用)、COMPLETED(已完成，用于待办事项)、BROKEN(已失效，方案不再可用)、DEPRECATED(已过期，内容过时)。当待办事项完成时标记为COMPLETED，当经验不可用时标记为BROKEN或DEPRECATED。")
+    public String updateExperienceStatus(
+            @ToolParam(description = "经验ID（必填）") Long id,
+            @ToolParam(description = "新状态，可选值：ACTIVE(正常)、COMPLETED(已完成)、BROKEN(已失效)、DEPRECATED(已过期)") String status) {
+        
+        try {
+            log.info("ExpHubTools.updateExperienceStatus: ENTRY - id={}, status={}", id, status);
+            
+            // 权限验证
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            
+            // 校验状态值
+            String upperStatus = status != null ? status.toUpperCase() : "";
+            if (!List.of("ACTIVE", "COMPLETED", "BROKEN", "DEPRECATED").contains(upperStatus)) {
+                return "❌ 无效的状态值: " + status + "，可选：ACTIVE、COMPLETED、BROKEN、DEPRECATED";
+            }
+            
+            // 检查经验是否存在
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+            
+            Doc updated = docService.updateStatus(id, upperStatus);
+            String statusLabel = getStatusLabel(upperStatus);
+            
+            return "✅ 经验状态已更新！\n\n**ID**: " + id + "\n**标题**: " + updated.getTitle() + "\n**新状态**: " + statusLabel + "\n\n注意：非ACTIVE状态的经验默认不会被 search_experience 搜索到，其他AI助手将不会看到此经验。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.updateExperienceStatus: FAILED", e);
+            return "更新状态失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
     }
 
     /**

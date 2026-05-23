@@ -44,6 +44,7 @@ public class DocController {
     public R<Map<String, Object>> search(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String templateType,
+            @RequestParam(required = false) String includeStatus,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
@@ -52,7 +53,7 @@ public class DocController {
         }
         
         // 日志记录已在 DocService.search() 中自动完成
-        Page<Doc> result = docService.search(q, templateType, page, size);
+        Page<Doc> result = docService.search(q, templateType, includeStatus, page, size);
         
         Map<String, Object> data = new java.util.HashMap<>();
         data.put("total", result.getTotal());
@@ -124,6 +125,28 @@ public class DocController {
     @GetMapping("/{id}/versions")
     public R<List<DocVersion>> versions(@PathVariable Long id) {
         return R.ok(docService.getVersions(id));
+    }
+
+    // 更新经验状态（ACTIVE / COMPLETED / BROKEN / DEPRECATED）
+    @PutMapping("/{id}/status")
+    public R<Doc> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+            return R.fail(403, "该API Key没有编辑经验的权限");
+        }
+        String status = body.get("status");
+        if (status == null || status.isEmpty()) {
+            return R.fail("status 不能为空，可选值：ACTIVE、COMPLETED、BROKEN、DEPRECATED");
+        }
+        // 校验状态值
+        if (!List.of("ACTIVE", "COMPLETED", "BROKEN", "DEPRECATED").contains(status.toUpperCase())) {
+            return R.fail("无效的状态值，可选：ACTIVE、COMPLETED、BROKEN、DEPRECATED");
+        }
+        Doc doc = docService.updateStatus(id, status.toUpperCase());
+        if (doc == null) {
+            return R.fail(404, "文档不存在");
+        }
+        return R.ok(doc);
     }
 
     // 所有分类

@@ -19,6 +19,7 @@
         .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
         .badge-status { padding: 5px 10px; border-radius: 20px; }
         .badge-active { background: #d4edda; color: #155724; }
+        .badge-completed { background: #cce5ff; color: #004085; }
         .badge-broken { background: #f8d7da; color: #721c24; }
         .badge-deprecated { background: #fff3cd; color: #856404; }
         .badge-primary { background: #e94560; border-color: #e94560; }
@@ -108,8 +109,9 @@
                         </div>
                         <div class="text-right ml-3">
                             <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
-                            <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
-                            <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
+                            <span th:if="${doc.status == 'COMPLETED'}" class="badge badge-completed">已完成</span>
+                            <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">已失效</span>
+                            <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已过期</span>
                             <button class="btn btn-sm btn-outline-danger ml-2" th:onclick="'deleteDoc(' + ${doc.id} + ')'" title="删除">
                                 <i class="fas fa-trash"></i>
                             </button>

@@ -84,10 +84,14 @@ public class DocService {
     }
 
     public Page<Doc> search(String keyword, int page, int size) {
-        return search(keyword, null, page, size);
+        return search(keyword, null, null, page, size);
     }
 
     public Page<Doc> search(String keyword, String templateType, int page, int size) {
+        return search(keyword, templateType, null, page, size);
+    }
+
+    public Page<Doc> search(String keyword, String templateType, String includeStatus, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         
@@ -101,6 +105,12 @@ public class DocService {
         // 按模板类型过滤
         if (templateType != null && !templateType.trim().isEmpty()) {
             wrapper.eq("template_type", templateType.trim());
+        }
+        
+        // 按状态过滤：includeStatus 为 null 则不限制（Web后台），否则只搜索指定状态
+        if (includeStatus != null && !includeStatus.trim().isEmpty()) {
+            String[] statuses = includeStatus.split(",");
+            wrapper.in("status", (Object[]) statuses);
         }
         
         long total = 0;
@@ -300,6 +310,24 @@ public class DocService {
 
     public long countProblemDocs() {
         return docMapper.selectCount(new QueryWrapper<Doc>().eq("status", "BROKEN"));
+    }
+
+    /**
+     * 更新经验状态（ACTIVE / COMPLETED / BROKEN / DEPRECATED）
+     */
+    @Transactional
+    public Doc updateStatus(Long id, String status) {
+        Doc doc = docMapper.selectById(id);
+        if (doc == null) {
+            return null;
+        }
+        doc.setStatus(status);
+        docMapper.updateById(doc);
+        
+        // 记录状态变更日志
+        callLogService.logUpdate(doc);
+        
+        return doc;
     }
 
     /**
