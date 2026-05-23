@@ -291,4 +291,20 @@ public class DocService {
     public long countProblemDocs() {
         return docMapper.selectCount(new QueryWrapper<Doc>().eq("status", "BROKEN"));
     }
+
+    /**
+     * 按模板类型查询（用于 check_my_todos 等场景）
+     */
+    public List<Doc> listByTemplateType(String templateType) {
+        QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        // API Key 级别隔离
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        if (assistant != null) {
+            wrapper.and(w -> w.eq("api_key", assistant.getApiKey()).or().isNull("api_key"));
+        }
+        wrapper.eq("template_type", templateType)
+               .eq("status", "ACTIVE")
+               .orderByDesc("updated_at");
+        return docMapper.selectList(wrapper);
+    }
 }

@@ -47,15 +47,8 @@ public class ExpHubTools {
                 return "⚠️ 无法识别调用者身份，请检查API Key配置。";
             }
             
-            // 查询当前助手所在 workspace 的所有 todo_list 类型的经验
-            var result = docService.search("todo_list", 1, 200);
-            var docs = result.getRecords();
-            
-            // 过滤出 templateType = todo_list 且状态为 ACTIVE 的
-            var todos = docs.stream()
-                .filter(d -> "todo_list".equals(d.getTemplateType()))
-                .filter(d -> "ACTIVE".equals(d.getStatus()))
-                .toList();
+            // 直接按 template_type 查询，不做全文搜索
+            var todos = docService.listByTemplateType("todo_list");
             
             if (todos.isEmpty()) {
                 return "📋 当前没有待办事项。\n\n你可以通过 create_experience（templateType=todo_list）创建新的待办任务。";
