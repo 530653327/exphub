@@ -36,8 +36,56 @@ public class ExpHubTools {
     }
 
     /**
-     * 获取经验详情 - 首次使用必须调用
-     * 重要提示：本MCP连接后，请立即调用 get_experience_detail(id=4) 查看《ExpHub使用指南》！
+     * 🔔 检查待办事项 - 连接后优先调用
+     * 重要提示：本MCP连接后，请优先调用 check_my_todos() 检查是否有待处理任务！
+     */
+    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查当前AI助手在ExpHub中记录的待办事项（todo_list类型），包括任务状态、截止日期等信息。每次会话开始时都应该调用此工具，确保不遗漏重要任务。")
+    public String checkMyTodos() {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant == null) {
+                return "⚠️ 无法识别调用者身份，请检查API Key配置。";
+            }
+            
+            // 查询当前助手所在 workspace 的所有 todo_list 类型的经验
+            var result = docService.search("todo_list", 1, 200);
+            var docs = result.getRecords();
+            
+            // 过滤出 templateType = todo_list 且状态为 ACTIVE 的
+            var todos = docs.stream()
+                .filter(d -> "todo_list".equals(d.getTemplateType()))
+                .filter(d -> "ACTIVE".equals(d.getStatus()))
+                .toList();
+            
+            if (todos.isEmpty()) {
+                return "📋 当前没有待办事项。\n\n你可以通过 create_experience（templateType=todo_list）创建新的待办任务。";
+            }
+            
+            StringBuilder sb = new StringBuilder();
+            sb.append("📋 待办事项（共 ").append(todos.size()).append(" 条）\n\n");
+            sb.append("| # | ID | 标题 | 创建时间 | 更新时间 |\n");
+            sb.append("|---|-----|------|----------|----------|\n");
+            
+            int i = 1;
+            for (Doc todo : todos) {
+                sb.append("| ").append(i++).append(" | ")
+                  .append(todo.getId()).append(" | ")
+                  .append(todo.getTitle()).append(" | ")
+                  .append(todo.getCreatedAt() != null ? todo.getCreatedAt().toLocalDate() : "-").append(" | ")
+                  .append(todo.getUpdatedAt() != null ? todo.getUpdatedAt().toLocalDate() : "-").append(" |\n");
+            }
+            
+            sb.append("\n使用 get_experience_detail(id=?) 查看具体任务详情。");
+            
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.checkMyTodos: FAILED", e);
+            return "检查待办事项失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 获取经验详情
      */
     @Tool(name = "get_experience_detail", description = "获取经验的详细内容。")
     public String getExperienceDetail(
