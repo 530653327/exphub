@@ -48,7 +48,7 @@ public class InfoController {
 
         // 使用指南 - 让AI在连接后第一时间读取
         info.put("usageGuidelines", new String[]{
-            "1. **首次连接必须**：先调用 get_experience_detail 工具查看 ID=1 的《ExpHub使用指南》经验",
+            "1. **首次连接必须**：先调用 get_experience_detail 工具查看 ID=4 的《ExpHub使用指南》经验",
             "2. 开始任务前：用 search_experience 搜索是否已有相关经验可借鉴",
             "3. 完成任务后：用 create_experience 将学到的新方法记录下来",
             "4. 发现错误时：用 create_experience 创建新版本或更新已有经验"
@@ -56,13 +56,13 @@ public class InfoController {
 
         // 快速开始 - 简明步骤
         info.put("quickStart", Map.of(
-            "step1", "调用 get_experience_detail(id=1) 获取详细使用指南",
+            "step1", "调用 get_experience_detail(id=4) 获取详细使用指南",
             "step2", "调用 search_experience 搜索当前任务相关的经验",
             "step3", "完成任务后调用 create_experience 记录新学到的方法"
         ));
 
         // 重要提示
-        info.put("important", "请务必先阅读 ID=1 的使用指南经验，了解如何在ExpHub中记录和管理经验！");
+        info.put("important", "请务必先阅读 ID=4 的使用指南经验，了解如何在ExpHub中记录和管理经验！");
 
         return info;
     }

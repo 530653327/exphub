@@ -11,7 +11,7 @@ echo "========================================"
 cd /usr/local/exphub
 
 # 0. 检查并更新 nginx 配置
-echo "[0/6] 检查 nginx 配置..."
+echo "[0/7] 检查 nginx 配置..."
 NGINX_CONF="/etc/nginx/conf.d/exphub.conf"
 if [ -f "$NGINX_CONF" ]; then
     if ! grep -q "client_max_body_size 2m" "$NGINX_CONF"; then
@@ -37,24 +37,35 @@ else
 fi
 
 # 1. 拉取最新代码
-echo "[1/6] 拉取最新代码..."
+echo "[1/7] 拉取最新代码..."
 git fetch --all
 git reset --hard origin/master
 echo "  ✓ 代码更新完成"
 
-# 2. 设置 Java 环境
-echo "[2/6] 配置 Java 17 环境..."
+# 2. 执行数据库迁移
+echo "[2/7] 检查并执行数据库迁移..."
+MYSQL_CMD="mysql -h cloudim.club -u root -p'***CHANGED***' exphub"
+for migration in sql/v*.sql; do
+    if [ -f "$migration" ]; then
+        echo "  执行迁移: $migration"
+        $MYSQL_CMD < "$migration" 2>&1 | grep -v "Duplicate column name\|Duplicate key name" || true
+    fi
+done
+echo "  ✓ 数据库迁移完成"
+
+# 3. 设置 Java 环境
+echo "[3/7] 配置 Java 17 环境..."
 export JAVA_HOME=/usr/local/java17
 export PATH=$JAVA_HOME/bin:$PATH
 echo "  ✓ JAVA_HOME=$JAVA_HOME"
 
-# 3. 编译打包
-echo "[3/6] 编译打包 (跳过测试)..."
+# 4. 编译打包
+echo "[4/7] 编译打包 (跳过测试)..."
 mvn clean package -DskipTests -q
 echo "  ✓ 编译完成"
 
-# 4. 杀掉旧进程
-echo "[4/6] 停止旧进程..."
+# 5. 杀掉旧进程
+echo "[5/7] 停止旧进程..."
 PID=$(netstat -tlnp 2>/dev/null | grep ':3099' | awk '{print $7}' | cut -d'/' -f1)
 if [ -n "$PID" ]; then
     echo "  发现旧进程 PID: $PID"
@@ -65,8 +76,8 @@ else
     echo "  ✓ 无旧进程"
 fi
 
-# 5. 启动应用
-echo "[5/6] 启动应用..."
+# 6. 启动应用
+echo "[6/7] 启动应用..."
 nohup $JAVA_HOME/bin/java -jar target/exphub-1.0.0.jar > app.log 2>&1 &
 echo "  ✓ 启动命令已执行"
 

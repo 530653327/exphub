@@ -19,6 +19,7 @@ public class Doc {
     private Integer version;         // 版本号
     private String authorId;         // 作者ID
     private String authorName;      // 作者名称
+    private String apiKey;           // 创建时使用的API Key（同一Key下的助手共享经验）
     private Integer callCount;       // 调用次数
     private Integer successCount;    // 成功次数
     private Integer failCount;      // 失败次数

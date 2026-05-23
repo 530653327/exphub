@@ -46,7 +46,9 @@ public class DocService {
         if (assistant != null) {
             doc.setAuthorId(assistant.getAssistantId());
             doc.setAuthorName(assistant.getAssistantName());
-            log.info("DocService.create: setting author={}/{}", assistant.getAssistantId(), assistant.getAssistantName());
+            doc.setApiKey(assistant.getApiKey());  // API Key 级别的经验隔离
+            log.info("DocService.create: setting author={}/{}, apiKey={}", 
+                assistant.getAssistantId(), assistant.getAssistantName(), assistant.getApiKey());
         } else {
             // 后台页面操作，使用默认管理员
             log.warn("DocService.create: CURRENT_ASSISTANT is NULL, falling back to default");
@@ -84,6 +86,13 @@ public class DocService {
     public Page<Doc> search(String keyword, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        
+        // API Key 级别隔离：MCP/API 请求只能搜索同 Key 下创建的经验
+        // Web 后台（无 assistant context）不受限制
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        if (assistant != null) {
+            wrapper.eq("api_key", assistant.getApiKey());
+        }
         long total = 0;
         if (keyword != null && !keyword.trim().isEmpty()) {
             String kw = keyword.trim();
@@ -148,7 +157,15 @@ public class DocService {
     }
 
     public Doc getById(Long id) {
-        return docMapper.selectById(id);
+        Doc doc = docMapper.selectById(id);
+        // API Key 级别隔离：MCP/API 请求只能查看同 Key 下的经验
+        if (doc != null) {
+            AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+            if (assistant != null && !assistant.getApiKey().equals(doc.getApiKey())) {
+                return null; // 不可见
+            }
+        }
+        return doc;
     }
 
     @Transactional
