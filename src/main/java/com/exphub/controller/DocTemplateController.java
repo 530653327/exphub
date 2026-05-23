@@ -80,9 +80,6 @@ public class DocTemplateController {
         if (template.getTemplateContent() == null || template.getTemplateContent().trim().isEmpty()) {
             return R.fail(400, "模板内容不能为空");
         }
-        if (template.getPlatformField() == null) {
-            template.setPlatformField("操作系统");
-        }
         return R.ok(templateService.create(template));
     }
 
@@ -100,9 +97,6 @@ public class DocTemplateController {
         }
         if (template.getType() != null) {
             existing.setType(template.getType());
-        }
-        if (template.getPlatformField() != null) {
-            existing.setPlatformField(template.getPlatformField());
         }
         if (template.getDescription() != null) {
             existing.setDescription(template.getDescription());

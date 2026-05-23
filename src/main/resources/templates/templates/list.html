@@ -76,16 +76,18 @@
                         <label>模板名称 <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="templateName" placeholder="如：问题解决方案">
                     </div>
-                    <div class="form-row">
-                        <div class="form-group col-md-6">
-                            <label>类型标识 <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="templateType" placeholder="如：problem_solution、knowledge_doc">
-                            <small class="text-muted">英文标识，AI 通过此值选择模板，如 problem_solution</small>
-                        </div>
-                        <div class="form-group col-md-6">
-                            <label>环境字段名</label>
-                            <input type="text" class="form-control" id="platformField" placeholder="如：操作系统、运行环境" value="操作系统">
-                        </div>
+                    <div class="form-group">
+                        <label>模板类型 <span class="text-danger">*</span></label>
+                        <select class="form-control" id="templateType">
+                            <option value="">-- 请选择模板类型 --</option>
+                            <option value="problem_solution">🛠️ 问题解决方案</option>
+                            <option value="knowledge_doc">📚 知识文档</option>
+                            <option value="todo_list">✅ 待办事项</option>
+                            <option value="bug_fix">🐛 Bug修复记录</option>
+                            <option value="config_guide">⚙️ 配置指南</option>
+                            <option value="how_to">📖 操作指南</option>
+                        </select>
+                        <small class="text-muted">AI 通过此类型选择合适的模板</small>
                     </div>
                     <div class="form-group">
                         <label>适用场景 <span class="text-danger">*</span></label>
@@ -193,7 +195,6 @@
                     '<div style="flex:1;">' +
                     '<h6 class="mb-1">' + typeCode + t.name + isDefault + '</h6>' +
                     desc +
-                    '<small class="text-muted">环境字段：' + t.platformField + '</small>' +
                     '</div>' +
                     '<div class="btn-group btn-group-sm">' +
                     (t.isDefault ? '' : '<button class="btn btn-outline-primary" onclick="event.stopPropagation();setDefault(' + t.id + ')">设为默认</button>') +
@@ -210,10 +211,9 @@
             document.getElementById('templateId').value = '';
             document.getElementById('templateName').value = '';
             document.getElementById('templateType').value = '';
-            document.getElementById('platformField').value = '操作系统';
             document.getElementById('description').value = '';
             document.getElementById('instruction').value = '请按以下格式记录经验，包括：环境信息、场景描述、问题描述、解决方案、示例代码和注意事项。';
-            document.getElementById('templateContent').value = '## 环境信息\n- ' + document.getElementById('platformField').value + '：\n- 依赖条件：\n\n## 场景描述\n描述在什么情况下需要这个经验。\n\n## 问题描述\n具体要解决什么问题？\n\n## 解决方案\n详细的解决步骤和核心代码。\n\n## 示例\n```\n代码示例\n```\n\n## 注意事项\n容易出错的地方和需要注意的坑。';
+            document.getElementById('templateContent').value = '## 环境信息\n- 操作系统：\n- 依赖条件：\n\n## 场景描述\n描述在什么情况下需要这个经验。\n\n## 问题描述\n具体要解决什么问题？\n\n## 解决方案\n详细的解决步骤和核心代码。\n\n## 示例\n```\n代码示例\n```\n\n## 注意事项\n容易出错的地方和需要注意的坑。';
             updatePreview();
             $('#templateModal').modal('show');
         }
@@ -225,7 +225,6 @@
             document.getElementById('templateId').value = t.id;
             document.getElementById('templateName').value = t.name;
             document.getElementById('templateType').value = t.type || '';
-            document.getElementById('platformField').value = t.platformField;
             document.getElementById('description').value = t.description || '';
             document.getElementById('instruction').value = t.instruction;
             document.getElementById('templateContent').value = t.templateContent;
@@ -243,13 +242,12 @@
             var data = {
                 name: document.getElementById('templateName').value,
                 type: document.getElementById('templateType').value,
-                platformField: document.getElementById('platformField').value,
                 description: document.getElementById('description').value,
                 instruction: document.getElementById('instruction').value,
                 templateContent: document.getElementById('templateContent').value
             };
             if (!data.name) { alert('请输入模板名称'); return; }
-            if (!data.type) { alert('请输入类型标识（如 problem_solution）'); return; }
+            if (!data.type) { alert('请选择模板类型'); return; }
             if (!data.description) { alert('请输入适用场景描述'); return; }
             if (!data.instruction) { alert('请输入填写指南'); return; }
             if (!data.templateContent) { alert('请输入模板结构'); return; }
