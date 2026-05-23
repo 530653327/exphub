@@ -14,7 +14,6 @@ public class DocTemplate {
     private String description;    // 模板描述（适用场景说明）
     private String instruction;   // AI 填写指南
     private String templateContent; // 模板结构
-    private Boolean isDefault;    // 是否默认模板
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

@@ -100,11 +100,11 @@
         });
 
         function loadTemplate() {
-            fetch(contextPath + '/api/templates/default')
+            fetch(contextPath + '/api/templates/all')
                 .then(res => res.json())
                 .then(res => {
-                    if (res.success && res.data) {
-                        defaultTemplate = res.data;
+                    if (res.success && res.data && res.data.length > 0) {
+                        defaultTemplate = res.data[0];
                         document.getElementById('instructionText').textContent = defaultTemplate.instruction;
                         document.getElementById('templateContentPreview').textContent = defaultTemplate.templateContent;
                         document.getElementById('templateHint').style.display = 'block';

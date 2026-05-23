@@ -131,7 +131,6 @@ CREATE TABLE IF NOT EXISTS doc_templates (
     description     VARCHAR(500) COMMENT '适用场景描述',
     instruction     TEXT NOT NULL COMMENT 'AI填写指南',
     template_content TEXT NOT NULL COMMENT '模板结构',
-    is_default      TINYINT(1) DEFAULT 0 COMMENT '是否默认模板',
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='经验模板表';
@@ -160,5 +159,5 @@ INSERT IGNORE INTO docs (title, category, content, aliases, tags, summary, autho
 ('SSH免密登录配置', '服务器', '## 目标\n使用ssh2 npm包通过密码登录远程服务器并复制公钥，实现免密登录。\n\n## 别名/可能的关键词\n免密登录, 不用密码登录, passwordless ssh, ssh公钥部署\n\n## 前提条件\n- 本地已安装Node.js\n- 远程服务器已开启SSH\n- 知道远程服务器密码\n\n## 操作步骤\n### 步骤1：安装ssh2包\n```bash\nnpm install ssh2\n```\n\n### 步骤2：编写Node.js脚本\n```javascript\nconst { Client } = require(''ssh2'');\nconst fs = require(''fs'');\n\nconst conn = new Client();\nconn.on(''ready'', () => {\n  conn.exec(''mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys < ~/.ssh/id_rsa.pub'', (err, stream) => {\n    if (err) throw err;\n    stream.on(''close'', () => { conn.end(); console.log(''公钥已复制''); });\n  });\n}).connect({\n  host: ''远程服务器IP'',\n  port: 22,\n  username: ''root'',\n  password: ''密码''\n});\n```\n\n## 验证方式\n本地执行 `ssh root@服务器IP`，无需输入密码即成功。', 'SSH免密登录, 免密登录, passwordless ssh, ssh公钥', 'ssh,服务器,自动化,免密', '使用ssh2 npm包通过密码登录远程服务器并复制公钥，实现免密登录', 'openclaw-zhuque', '朱雀');
 
 -- 插入默认经验模板
-INSERT IGNORE INTO doc_templates (type, name, description, instruction, template_content, is_default) VALUES
-('problem_solution', '编程经验模板', '记录技术问题的排查过程和解决方案，方便下次遇到同类问题时快速参考。', '请按以下格式记录经验。环境信息帮助判断经验适用的运行平台；场景和问题描述让调用者快速理解上下文；解决方案和示例是核心内容；注意事项帮助避免常见错误；触发关键字提高匹配准确性。', '## 环境信息\n- 操作系统：Windows / macOS / Linux / 通用\n- 依赖条件：需要安装什么前置软件\n- 版本要求：相关版本号\n\n## 场景描述\n描述在什么情况下需要这个经验，适用的业务场景是什么。\n\n## 问题描述\n具体要解决什么问题？遇到了什么困难或痛点？\n\n## 解决方案\n详细的解决步骤和核心代码配置。\n\n## 示例\n```\n示例代码或配置\n```\n\n## 注意事项\n容易出错的地方和需要注意的坑。\n\n## 触发关键字\n什么关键词会触发这条经验（多个用逗号分隔）', 1);
+INSERT IGNORE INTO doc_templates (type, name, description, instruction, template_content) VALUES
+('problem_solution', '编程经验模板', '记录技术问题的排查过程和解决方案，方便下次遇到同类问题时快速参考。', '请按以下格式记录经验。环境信息帮助判断经验适用的运行平台；场景和问题描述让调用者快速理解上下文；解决方案和示例是核心内容；注意事项帮助避免常见错误；触发关键字提高匹配准确性。', '## 环境信息\n- 操作系统：Windows / macOS / Linux / 通用\n- 依赖条件：需要安装什么前置软件\n- 版本要求：相关版本号\n\n## 场景描述\n描述在什么情况下需要这个经验，适用的业务场景是什么。\n\n## 问题描述\n具体要解决什么问题？遇到了什么困难或痛点？\n\n## 解决方案\n详细的解决步骤和核心代码配置。\n\n## 示例\n```\n示例代码或配置\n```\n\n## 注意事项\n容易出错的地方和需要注意的坑。\n\n## 触发关键字\n什么关键词会触发这条经验（多个用逗号分隔）');
