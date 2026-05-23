@@ -68,6 +68,12 @@ public class DocTemplateController {
         if (template.getName() == null || template.getName().trim().isEmpty()) {
             return R.fail(400, "模板名称不能为空");
         }
+        if (template.getType() == null || template.getType().trim().isEmpty()) {
+            return R.fail(400, "类型标识不能为空");
+        }
+        if (template.getDescription() == null || template.getDescription().trim().isEmpty()) {
+            return R.fail(400, "适用场景不能为空");
+        }
         if (template.getInstruction() == null || template.getInstruction().trim().isEmpty()) {
             return R.fail(400, "填写指南不能为空");
         }
@@ -92,8 +98,14 @@ public class DocTemplateController {
         if (template.getName() != null) {
             existing.setName(template.getName());
         }
+        if (template.getType() != null) {
+            existing.setType(template.getType());
+        }
         if (template.getPlatformField() != null) {
             existing.setPlatformField(template.getPlatformField());
+        }
+        if (template.getDescription() != null) {
+            existing.setDescription(template.getDescription());
         }
         if (template.getInstruction() != null) {
             existing.setInstruction(template.getInstruction());

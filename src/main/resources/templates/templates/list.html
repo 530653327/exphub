@@ -73,12 +73,24 @@
                 <div class="modal-body">
                     <input type="hidden" id="templateId">
                     <div class="form-group">
-                        <label>模板名称</label>
-                        <input type="text" class="form-control" id="templateName" placeholder="如：编程经验模板">
+                        <label>模板名称 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="templateName" placeholder="如：问题解决方案">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label>类型标识 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="templateType" placeholder="如：problem_solution、knowledge_doc">
+                            <small class="text-muted">英文标识，AI 通过此值选择模板，如 problem_solution</small>
+                        </div>
+                        <div class="form-group col-md-6">
+                            <label>环境字段名</label>
+                            <input type="text" class="form-control" id="platformField" placeholder="如：操作系统、运行环境" value="操作系统">
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label>环境字段名</label>
-                        <input type="text" class="form-control" id="platformField" placeholder="如：操作系统、运行环境" value="操作系统">
+                        <label>适用场景 <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="description" rows="2" placeholder="描述这个模板适用于什么场景，AI 根据此描述选择合适的模板"></textarea>
+                        <small class="text-muted">例如：记录技术问题的排查过程和解决方案，方便下次遇到同类问题时快速参考。</small>
                     </div>
                     <div class="form-group">
                         <label>AI 填写指南</label>
@@ -174,10 +186,13 @@
             document.getElementById('templateList').style.display = 'block';
             templates.forEach(function(t) {
                 var isDefault = t.isDefault ? '<span class="badge-default ml-2">默认</span>' : '';
+                var typeCode = t.type ? '<code class="mr-2" style="font-size:0.8rem;background:#e8f0fe;color:#1967d2;padding:2px 6px;border-radius:4px;">' + t.type + '</code>' : '';
+                var desc = t.description ? '<p class="mb-2 text-muted" style="font-size:0.9rem;">' + t.description + '</p>' : '';
                 html += '<div class="template-item" onclick="showEditModal(' + t.id + ')">' +
                     '<div class="d-flex justify-content-between align-items-start">' +
-                    '<div>' +
-                    '<h6 class="mb-1">' + t.name + isDefault + '</h6>' +
+                    '<div style="flex:1;">' +
+                    '<h6 class="mb-1">' + typeCode + t.name + isDefault + '</h6>' +
+                    desc +
                     '<small class="text-muted">环境字段：' + t.platformField + '</small>' +
                     '</div>' +
                     '<div class="btn-group btn-group-sm">' +
@@ -194,7 +209,9 @@
             document.getElementById('modalTitle').textContent = '新建模板';
             document.getElementById('templateId').value = '';
             document.getElementById('templateName').value = '';
+            document.getElementById('templateType').value = '';
             document.getElementById('platformField').value = '操作系统';
+            document.getElementById('description').value = '';
             document.getElementById('instruction').value = '请按以下格式记录经验，包括：环境信息、场景描述、问题描述、解决方案、示例代码和注意事项。';
             document.getElementById('templateContent').value = '## 环境信息\n- ' + document.getElementById('platformField').value + '：\n- 依赖条件：\n\n## 场景描述\n描述在什么情况下需要这个经验。\n\n## 问题描述\n具体要解决什么问题？\n\n## 解决方案\n详细的解决步骤和核心代码。\n\n## 示例\n```\n代码示例\n```\n\n## 注意事项\n容易出错的地方和需要注意的坑。';
             updatePreview();
@@ -207,7 +224,9 @@
             document.getElementById('modalTitle').textContent = '编辑模板';
             document.getElementById('templateId').value = t.id;
             document.getElementById('templateName').value = t.name;
+            document.getElementById('templateType').value = t.type || '';
             document.getElementById('platformField').value = t.platformField;
+            document.getElementById('description').value = t.description || '';
             document.getElementById('instruction').value = t.instruction;
             document.getElementById('templateContent').value = t.templateContent;
             updatePreview();
@@ -223,11 +242,15 @@
             var id = document.getElementById('templateId').value;
             var data = {
                 name: document.getElementById('templateName').value,
+                type: document.getElementById('templateType').value,
                 platformField: document.getElementById('platformField').value,
+                description: document.getElementById('description').value,
                 instruction: document.getElementById('instruction').value,
                 templateContent: document.getElementById('templateContent').value
             };
             if (!data.name) { alert('请输入模板名称'); return; }
+            if (!data.type) { alert('请输入类型标识（如 problem_solution）'); return; }
+            if (!data.description) { alert('请输入适用场景描述'); return; }
             if (!data.instruction) { alert('请输入填写指南'); return; }
             if (!data.templateContent) { alert('请输入模板结构'); return; }
 
