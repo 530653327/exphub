@@ -87,11 +87,11 @@ public class DocService {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         
-        // API Key 级别隔离：MCP/API 请求只能搜索同 Key 下创建的经验
+        // API Key 级别隔离：MCP/API 请求可搜索同 Key 下创建的经验 + 管理员创建的经验（api_key 为空）
         // Web 后台（无 assistant context）不受限制
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
-            wrapper.eq("api_key", assistant.getApiKey());
+            wrapper.and(w -> w.eq("api_key", assistant.getApiKey()).or().isNull("api_key"));
         }
         long total = 0;
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -158,11 +158,14 @@ public class DocService {
 
     public Doc getById(Long id) {
         Doc doc = docMapper.selectById(id);
-        // API Key 级别隔离：MCP/API 请求只能查看同 Key 下的经验
+        // API Key 级别隔离：MCP/API 请求可查看同 Key 下的经验 + 管理员创建的经验（api_key 为空）
         if (doc != null) {
             AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
-            if (assistant != null && !assistant.getApiKey().equals(doc.getApiKey())) {
-                return null; // 不可见
+            if (assistant != null) {
+                // 管理员创建的经验（api_key 为空）对所有助手可见
+                if (doc.getApiKey() != null && !assistant.getApiKey().equals(doc.getApiKey())) {
+                    return null; // 不可见
+                }
             }
         }
         return doc;
