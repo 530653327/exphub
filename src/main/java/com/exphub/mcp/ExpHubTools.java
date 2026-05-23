@@ -124,7 +124,7 @@ public class ExpHubTools {
             statusFilter = null;
         }
         
-        var result = docService.search(query, templateType, statusFilter, 1, 100);
+        var result = docService.search(query, templateType, statusFilter, 1, 20);
         var docs = result.getRecords();
         
         String filterInfo = "";

@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Service
@@ -92,22 +94,57 @@ public class DocService {
     }
 
     public Page<Doc> search(String keyword, String templateType, String includeStatus, int page, int size) {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+        String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
+        List<String> statusList = null;
+        if (includeStatus != null && !includeStatus.trim().isEmpty()) {
+            statusList = Arrays.asList(includeStatus.split(","));
+        }
+        
+        // ===== 有搜索关键词：优先使用 FULLTEXT，命中率更高、性能更好 =====
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            String ftQuery = toFulltextQuery(keyword.trim());
+            long total = docMapper.countByFulltext(ftQuery, apiKey, tt, statusList);
+            
+            if (total > 0) {
+                // FULLTEXT 命中 → 按相关性 + 调用次数排序
+                long offset = (long) (page - 1) * size;
+                List<Doc> records = docMapper.searchByFulltext(ftQuery, apiKey, tt, statusList, offset, (long) size);
+                
+                Page<Doc> result = new Page<>(page, size);
+                result.setRecords(records);
+                result.setTotal(total);
+                
+                callLogService.logSearch(keyword, (int) total, records);
+                if (assistant != null) {
+                    for (Doc doc : records) incrementCallCount(doc.getId());
+                }
+                return result;
+            }
+            // FULLTEXT 无结果 → 降级到 LIKE 兜底（处理特殊字符/极短词等场景）
+        }
+        
+        // ===== LIKE 兜底或空关键词 =====
+        return searchWithLike(keyword, templateType, includeStatus, page, size);
+    }
+    
+    /**
+     * LIKE 搜索兜底（FULLTEXT 无结果或空关键词时使用）
+     */
+    private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         
-        // API Key 级别隔离：MCP/API 请求可搜索同 Key 下创建的经验 + 管理员创建的经验（api_key 为空）
-        // Web 后台（无 assistant context）不受限制
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
             wrapper.and(w -> w.eq("api_key", assistant.getApiKey()).or().isNull("api_key"));
         }
         
-        // 按模板类型过滤
         if (templateType != null && !templateType.trim().isEmpty()) {
             wrapper.eq("template_type", templateType.trim());
         }
         
-        // 按状态过滤：includeStatus 为 null 则不限制（Web后台），否则只搜索指定状态
         if (includeStatus != null && !includeStatus.trim().isEmpty()) {
             String[] statuses = includeStatus.split(",");
             wrapper.in("status", (Object[]) statuses);
@@ -116,10 +153,8 @@ public class DocService {
         long total = 0;
         if (keyword != null && !keyword.trim().isEmpty()) {
             String kw = keyword.trim();
-            // 分词：按空格、逗号、中文逗号、顿号等分割
             String[] tokens = kw.split("[\\s,，、]+");
             if (tokens.length == 1) {
-                // 单关键词：保持原有 OR 逻辑，广泛匹配
                 String t = tokens[0].trim();
                 wrapper.and(w -> w.like("title", t)
                         .or().like("content", t)
@@ -127,11 +162,9 @@ public class DocService {
                         .or().like("summary", t)
                         .or().like("tags", t));
             } else {
-                // 多关键词：AND 逻辑，每个词必须在至少一个字段中出现
                 for (String token : tokens) {
                     String t = token.trim();
                     if (t.isEmpty()) continue;
-                    // 净化输入防止 SQL 注入，只保留中英文、数字、下划线、连字符、点号
                     String safe = t.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5._\\-+#]", "");
                     if (safe.isEmpty()) continue;
                     wrapper.apply("(" +
@@ -152,10 +185,8 @@ public class DocService {
         Page<Doc> result = docMapper.selectPage(p, wrapper);
         result.setTotal(total);
         
-        // 记录搜索日志
         callLogService.logSearch(keyword, (int) total, result.getRecords());
         
-        // MCP/API 搜索时，对返回结果增加调用计数
         if (assistant != null) {
             for (Doc doc : result.getRecords()) {
                 incrementCallCount(doc.getId());
@@ -163,6 +194,41 @@ public class DocService {
         }
         
         return result;
+    }
+    
+    /**
+     * 将用户搜索关键词转换为 FULLTEXT BOOLEAN MODE 查询字符串
+     * - 单关键词：直接使用（ngram 自动分词）
+     * - 多关键词：+前缀实现 AND 逻辑，每个词必须在结果中出现
+     */
+    private String toFulltextQuery(String keyword) {
+        // 移除 BOOLEAN MODE 特殊字符（+ -> < ( ) ~ * " @），替换为空格分词
+        String cleaned = keyword.replaceAll("[+\\-><\\(\\)~\\*\"@]", " ");
+        String[] tokens = cleaned.split("[\\s,，、]+");
+        
+        List<String> parts = new ArrayList<>();
+        for (String token : tokens) {
+            String t = token.trim();
+            if (t.isEmpty()) continue;
+            parts.add(t);
+        }
+        
+        if (parts.isEmpty()) {
+            // 全是特殊字符，返回原始内容去掉符号
+            return keyword.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5]", " ");
+        }
+        
+        if (parts.size() == 1) {
+            return parts.get(0);
+        }
+        
+        // 多关键词：+前缀 = AND 逻辑
+        StringBuilder sb = new StringBuilder();
+        for (String part : parts) {
+            if (sb.length() > 0) sb.append(" ");
+            sb.append("+").append(part);
+        }
+        return sb.toString();
     }
 
     public Page<Doc> listByCategory(String category, int page, int size) {
