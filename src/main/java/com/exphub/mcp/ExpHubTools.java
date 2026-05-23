@@ -96,45 +96,65 @@ public class ExpHubTools {
     /**
      * 获取创建经验模板
      */
-    @Tool(name = "get_template", description = "【创建经验前必须调用】获取创建经验的完整指南，包括模板结构和元数据填写要求。")
-    public String getTemplate() {
-        DocTemplate template = templateService.getDefault();
+    @Tool(name = "get_template", description = "【创建经验前必须调用】获取经验模板。不传type时返回所有可用模板列表（含适用场景），传type时返回指定模板的完整结构和填写指南。")
+    public String getTemplate(
+            @ToolParam(description = "模板类型标识，如：problem_solution、knowledge_doc、todo_list。传空字符串则返回所有模板列表。") String type) {
+        
+        // 不传 type → 列出所有可用模板
+        if (type == null || type.isEmpty()) {
+            var templates = templateService.listAll();
+            if (templates.isEmpty()) {
+                return "# 可用模板\n\n暂无可选模板，请按通用格式创建经验。";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("# 可用经验模板（共 ").append(templates.size()).append(" 种）\n\n");
+            sb.append("请根据你要记录的内容类型选择合适的模板，然后用对应的 type 再次调用 get_template 获取详细格式：\n\n");
+            for (DocTemplate t : templates) {
+                sb.append("## ").append(t.getName()).append("\n");
+                sb.append("- **type**: `").append(t.getType()).append("`\n");
+                sb.append("- **适用场景**: ").append(t.getDescription()).append("\n\n");
+            }
+            sb.append("---\n");
+            sb.append("选定模板后，调用 `get_template(type=\"你选的type\")` 获取完整的填写指南。");
+            return sb.toString();
+        }
+        
+        // 传了 type → 返回指定模板的完整内容
+        DocTemplate template = templateService.getByType(type);
         
         StringBuilder sb = new StringBuilder();
         
         if (template == null) {
-            sb.append("# 经验模板：通用模板\n\n");
-            sb.append("**环境字段**: 操作系统，运行环境\n\n");
-            sb.append("## 填写指南\n");
-            sb.append("请按以下格式记录经验，包括：环境信息、场景描述、问题描述、解决方案、示例代码和注意事项。\n\n");
-            sb.append("## 模板结构\n");
-            sb.append("## 环境信息\n- 操作系统：\n- 依赖条件：\n\n");
-            sb.append("## 场景描述\n描述在什么情况下需要这个经验。\n\n");
-            sb.append("## 问题描述\n具体要解决什么问题？\n\n");
-            sb.append("## 解决方案\n详细的解决步骤和核心代码。\n\n");
-            sb.append("## 示例\n```\n代码示例\n```\n\n");
-            sb.append("## 注意事项\n容易出错的地方和需要注意的坑。\n");
-        } else {
-            sb.append("# 经验模板：").append(template.getName()).append("\n\n");
-            sb.append("**环境字段**: ").append(template.getPlatformField()).append("\n\n");
-            sb.append("## 填写指南\n").append(template.getInstruction()).append("\n\n");
-            sb.append("## 模板结构\n").append(template.getTemplateContent()).append("\n");
+            sb.append("# 未找到模板类型: ").append(type).append("\n\n");
+            sb.append("可用的模板类型：\n");
+            var all = templateService.listAll();
+            for (DocTemplate t : all) {
+                sb.append("- `").append(t.getType()).append("` → ").append(t.getName()).append("\n");
+            }
+            return sb.toString();
         }
-
-        // ⭐ 追加元数据填写指南（关键！）
+        
+        sb.append("# ").append(template.getName()).append("\n\n");
+        sb.append("**适用场景**: ").append(template.getDescription()).append("\n\n");
+        sb.append("## 📝 填写指南\n").append(template.getInstruction()).append("\n\n");
+        sb.append("## 📋 模板结构（请按此格式填写 content）\n").append(template.getTemplateContent()).append("\n");
+        
+        // ⭐ 追加元数据填写指南
         sb.append("\n---\n");
         sb.append("## ⚠️ 创建经验时必须填写的元数据\n\n");
-        sb.append("创建经验时除了正文，必须填写以下元数据字段，否则经验搜索不到：\n\n");
-        sb.append("1. **category（分类）** - 必填！如：服务器、开发、运维、部署、数据库、前端等\n");
-        sb.append("2. **tags（标签）** - 必填！逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理,配置\n");
-        sb.append("3. **aliases（别名/同义词）** - 必填！逗号分隔，用户可能用不同称呼搜索，如：反向代理,reverse proxy,nginx proxy\n");
-        sb.append("4. **summary（摘要）** - 必填！一句话概括，让其他AI快速判断是否相关\n\n");
+        sb.append("调用 create_experience 时除了 content，必须填写以下字段：\n\n");
+        sb.append("1. **templateType** - 本模板的 type 值：`").append(template.getType()).append("`\n");
+        sb.append("2. **category** - 必填！如：服务器、开发、运维、部署、数据库、前端等\n");
+        sb.append("3. **tags** - 必填！逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理,配置\n");
+        sb.append("4. **aliases** - 必填！逗号分隔，用户可能用不同称呼搜索，如：反向代理,reverse proxy\n");
+        sb.append("5. **summary** - 必填！一句话概括，让其他AI快速判断是否相关\n\n");
         sb.append("**示例**：\n");
         sb.append("- title: \"Nginx HTTPS反向代理配置\"\n");
+        sb.append("- templateType: \"").append(template.getType()).append("\"\n");
         sb.append("- category: \"服务器\"\n");
         sb.append("- tags: \"Nginx,HTTPS,反向代理,SSL,配置\"\n");
-        sb.append("- aliases: \"nginx proxy,ssl termination,https proxy,加密代理\"\n");
-        sb.append("- summary: \"Nginx配置HTTPS反向代理的完整步骤，解决证书配置和端口转发问题\"\n");
+        sb.append("- aliases: \"nginx proxy,ssl termination,https proxy\"\n");
+        sb.append("- summary: \"Nginx配置HTTPS反向代理的完整步骤\"\n");
 
         return sb.toString();
     }
@@ -142,10 +162,11 @@ public class ExpHubTools {
     /**
      * 创建新经验
      */
-    @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template 获取填写指南！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。")
+    @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template() 选择模板！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。")
     public String createExperience(
             @ToolParam(description = "经验标题，简短明确") String title,
             @ToolParam(description = "经验正文，使用Markdown格式，按 get_template 返回的结构填写") String content,
+            @ToolParam(description = "模板类型标识（必填），从 get_template 返回的 type 值中选择，如：problem_solution、knowledge_doc、todo_list") String templateType,
             @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等，如不确定可填 未分类") String category,
             @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理，如不确定可填 待分类") String tags,
             @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy，如不确定可填 无") String aliases,
@@ -167,6 +188,7 @@ public class ExpHubTools {
             Doc doc = new Doc();
             doc.setTitle(title);
             doc.setContent(content);
+            doc.setTemplateType(templateType != null && !templateType.isEmpty() ? templateType : "generic");
             doc.setCategory(category != null && !category.isEmpty() ? category : "未分类");
             doc.setTags(tags != null ? tags : "");
             doc.setAliases(aliases != null ? aliases : "");

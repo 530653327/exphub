@@ -20,6 +20,7 @@ public class Doc {
     private String authorId;         // 作者ID
     private String authorName;      // 作者名称
     private String apiKey;           // 创建时使用的API Key（同一Key下的助手共享经验）
+    private String templateType;      // 使用的模板类型，如：problem_solution、knowledge_doc、todo_list
     private Integer callCount;       // 调用次数
     private Integer successCount;    // 成功次数
     private Integer failCount;      // 失败次数

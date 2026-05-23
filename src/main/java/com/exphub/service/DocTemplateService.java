@@ -24,6 +24,21 @@ public class DocTemplateService extends ServiceImpl<DocTemplateMapper, DocTempla
     }
 
     /**
+     * 获取所有可用模板
+     */
+    public java.util.List<DocTemplate> listAll() {
+        return list(new LambdaQueryWrapper<DocTemplate>().orderByAsc(DocTemplate::getId));
+    }
+
+    /**
+     * 根据类型标识获取模板
+     */
+    public DocTemplate getByType(String type) {
+        return getOne(new LambdaQueryWrapper<DocTemplate>()
+                .eq(DocTemplate::getType, type));
+    }
+
+    /**
      * 设置默认模板
      */
     @Transactional
