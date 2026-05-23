@@ -85,14 +85,14 @@
                             <a class="doc-title" th:href="@{/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a>
                             <span class="badge badge-version ml-2" th:if="${doc.templateType != null and !doc.templateType.isEmpty()}" style="background:#e8f0fe;color:#1967d2;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;">
                                 <span th:switch="${doc.templateType}">
-                                    <span th:case="'problem_solution'">🛠️</span>
-                                    <span th:case="'knowledge_doc'">📚</span>
-                                    <span th:case="'todo_list'">✅</span>
-                                    <span th:case="'bug_fix'">🐛</span>
-                                    <span th:case="'config_guide'">⚙️</span>
-                                    <span th:case="'how_to'">📖</span>
-                                    <span th:case="'schedule_plan'">📅</span>
-                                    <span th:case="*">📄</span>
+                                    <span th:case="'problem_solution'">🛠️ 问题方案</span>
+                                    <span th:case="'knowledge_doc'">📚 知识文档</span>
+                                    <span th:case="'todo_list'">✅ 待办事项</span>
+                                    <span th:case="'bug_fix'">🐛 Bug修复</span>
+                                    <span th:case="'config_guide'">⚙️ 配置指南</span>
+                                    <span th:case="'how_to'">📖 操作指南</span>
+                                    <span th:case="'schedule_plan'">📅 计划排期</span>
+                                    <span th:case="*">📄 通用</span>
                                 </span>
                             </span>
                             <div class="doc-meta">
