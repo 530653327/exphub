@@ -1,90 +1,33 @@
 #!/bin/bash
 # ExpHub 部署脚本
-# 用法: ./deploy.sh 或 bash deploy.sh
+# 用法: ./deploy.sh
 
 set -e
 
 echo "========================================"
-echo "  ExpHub 自动化部署脚本"
+echo "  ExpHub 部署"
 echo "========================================"
 
 cd /usr/local/exphub
 
-# 0. 检查并更新 nginx 配置
-echo "[0/7] 检查 nginx 配置..."
-NGINX_CONF="/etc/nginx/conf.d/exphub.conf"
-if [ -f "$NGINX_CONF" ]; then
-    if ! grep -q "client_max_body_size 2m" "$NGINX_CONF"; then
-        echo "  更新 client_max_body_size → 2m"
-        sed -i '/location \/exphub/,/}/ {
-            /client_max_body_size/d
-            s|proxy_pass|\tclient_max_body_size 2m;\n\tproxy_pass|
-        }' "$NGINX_CONF"
-        # 确保 proxy_read_timeout
-        if ! grep -q "proxy_read_timeout" "$NGINX_CONF"; then
-            sed -i '/location \/exphub/,/}/ {
-                s|proxy_pass|\tproxy_read_timeout 120s;\n\tproxy_connect_timeout 120s;\n\tproxy_send_timeout 120s;\n\tproxy_pass|
-            }' "$NGINX_CONF"
-        fi
-        nginx -t && nginx -s reload
-        echo "  ✓ nginx 已更新并重载"
-    else
-        echo "  ✓ nginx 配置已满足要求"
-    fi
-else
-    echo "  ⚠ 未找到 $NGINX_CONF，跳过 nginx 配置检查"
-    echo "  ⚠ 请手动确保 nginx 中配置: client_max_body_size 2m; proxy_read_timeout 120s;"
-fi
-
 # 1. 拉取最新代码
-echo "[1/7] 拉取最新代码..."
+echo "[1/4] 拉取最新代码..."
 git fetch --all
 git reset --hard origin/master
-echo "  ✓ 代码更新完成"
 
-# 2. 执行数据库迁移
-echo "[2/7] 检查并执行数据库迁移..."
-MYSQL_CMD="mysql -h cloudim.club -u root -p'***CHANGED***' exphub"
-for migration in sql/v*.sql; do
-    if [ -f "$migration" ]; then
-        echo "  执行迁移: $migration"
-        $MYSQL_CMD < "$migration" 2>&1 | grep -v "Duplicate column name\|Duplicate key name" || true
-    fi
-done
-echo "  ✓ 数据库迁移完成"
-
-# 3. 设置 Java 环境
-echo "[3/7] 配置 Java 17 环境..."
+# 2. 编译打包
+echo "[2/4] 编译打包..."
 export JAVA_HOME=/usr/local/java17
 export PATH=$JAVA_HOME/bin:$PATH
-echo "  ✓ JAVA_HOME=$JAVA_HOME"
-
-# 4. 编译打包
-echo "[4/7] 编译打包 (跳过测试)..."
 mvn clean package -DskipTests -q
-echo "  ✓ 编译完成"
 
-# 5. 杀掉旧进程
-echo "[5/7] 停止旧进程..."
+# 3. 重启应用
+echo "[3/4] 重启应用..."
 PID=$(netstat -tlnp 2>/dev/null | grep ':3099' | awk '{print $7}' | cut -d'/' -f1)
 if [ -n "$PID" ]; then
-    echo "  发现旧进程 PID: $PID"
     kill -9 $PID 2>/dev/null || true
     sleep 2
-    echo "  ✓ 旧进程已停止"
-else
-    echo "  ✓ 无旧进程"
 fi
-
-# 6. 启动应用
-echo "[6/7] 启动应用..."
 nohup $JAVA_HOME/bin/java -jar target/exphub-1.0.0.jar > app.log 2>&1 &
-echo "  ✓ 启动命令已执行"
 
-echo ""
-echo "========================================"
-echo "  部署完成!"
-echo "========================================"
-echo "  查看日志: tail -f /usr/local/exphub/app.log"
-echo "  访问地址: https://cloudim.club/exphub"
-echo ""
+echo "[4/4] 部署完成 → https://cloudim.club/exphub"
