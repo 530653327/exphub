@@ -2,10 +2,6 @@ server:
   port: 3099
   servlet:
     context-path: /exphub
-    encoding:
-      charset: UTF-8
-      enabled: true
-      force: true
   forward-headers-strategy: native
   tomcat:
     max-http-form-post-size: 2MB
