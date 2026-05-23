@@ -43,6 +43,7 @@ public class DocController {
     @GetMapping("/search")
     public R<Map<String, Object>> search(
             @RequestParam(required = false) String q,
+            @RequestParam(required = false) String templateType,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
@@ -51,7 +52,7 @@ public class DocController {
         }
         
         // 日志记录已在 DocService.search() 中自动完成
-        Page<Doc> result = docService.search(q, page, size);
+        Page<Doc> result = docService.search(q, templateType, page, size);
         
         Map<String, Object> data = new java.util.HashMap<>();
         data.put("total", result.getTotal());
@@ -65,6 +66,7 @@ public class DocController {
             m.put("authorName", doc.getAuthorName());
             m.put("summary", doc.getSummary());
             m.put("tags", doc.getTags());
+            m.put("templateType", doc.getTemplateType());
             m.put("version", doc.getVersion());
             m.put("callCount", doc.getCallCount());
             m.put("successRate", doc.getCallCount() > 0 ? (double) doc.getSuccessCount() / doc.getCallCount() : 0);

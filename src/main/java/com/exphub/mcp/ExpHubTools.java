@@ -102,9 +102,10 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签等信息。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。")
+    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型等信息。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。建议指定 templateType 缩小范围提高准确度。可选类型：problem_solution、knowledge_doc、todo_list、bug_fix、config_guide、how_to、schedule_plan。")
     public String searchExperience(
-            @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query) {
+            @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
+            @ToolParam(description = "指定搜索的模板类型，缩小搜索范围提高准确度。可选：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。") String templateType) {
         
         // 权限验证
         AiAssistant assistant = getCaller();
@@ -112,26 +113,43 @@ public class ExpHubTools {
             return "❌ 权限不足：该API Key没有查询经验的权限";
         }
         
-        var result = docService.search(query, 1, 100);
+        var result = docService.search(query, templateType, 1, 100);
         var docs = result.getRecords();
         
+        String filterInfo = (templateType != null && !templateType.isEmpty()) ? "【类型过滤: " + templateType + "】" : "";
+        
         if (docs.isEmpty()) {
-            return "未找到\"" + query + "\"相关的经验。\n\n提示：\n1. 尝试使用更通用的关键词\n2. 使用英文关键词搜索\n3. 如果是新技术，可能需要创建新经验";
+            return filterInfo + "未找到\"" + query + "\"相关的经验。\n\n提示：\n1. 尝试使用更通用的关键词\n2. 尝试不指定 templateType 扩大搜索范围\n3. 使用英文关键词搜索\n4. 如果是新技术，可能需要创建新经验";
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("找到 ").append(docs.size()).append(" 条相关经验：\n\n");
+        sb.append(filterInfo).append("找到 ").append(docs.size()).append(" 条相关经验：\n\n");
         
         int i = 1;
         for (Doc doc : docs) {
             sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
-            sb.append("   分类: ").append(doc.getCategory()).append(" | 调用: ").append(doc.getCallCount()).append("次\n");
+            String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
+            sb.append("   类型: ").append(typeLabel).append(" | 分类: ").append(doc.getCategory()).append(" | 调用: ").append(doc.getCallCount()).append("次\n");
             sb.append("   摘要: ").append(doc.getSummary() != null ? doc.getSummary() : "无").append("\n");
             sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
             sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n\n");
         }
 
         return sb.toString();
+    }
+    
+    private String getTemplateTypeLabel(String type) {
+        if (type == null) return "通用";
+        return switch (type) {
+            case "problem_solution" -> "🛠️ 问题解决方案";
+            case "knowledge_doc" -> "📚 知识文档";
+            case "todo_list" -> "✅ 待办事项";
+            case "bug_fix" -> "🐛 Bug修复";
+            case "config_guide" -> "⚙️ 配置指南";
+            case "how_to" -> "📖 操作指南";
+            case "schedule_plan" -> "📅 计划排期";
+            default -> "📄 " + type;
+        };
     }
 
     /**

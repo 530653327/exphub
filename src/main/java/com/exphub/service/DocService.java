@@ -84,6 +84,10 @@ public class DocService {
     }
 
     public Page<Doc> search(String keyword, int page, int size) {
+        return search(keyword, null, page, size);
+    }
+
+    public Page<Doc> search(String keyword, String templateType, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         
@@ -93,6 +97,12 @@ public class DocService {
         if (assistant != null) {
             wrapper.and(w -> w.eq("api_key", assistant.getApiKey()).or().isNull("api_key"));
         }
+        
+        // 按模板类型过滤
+        if (templateType != null && !templateType.trim().isEmpty()) {
+            wrapper.eq("template_type", templateType.trim());
+        }
+        
         long total = 0;
         if (keyword != null && !keyword.trim().isEmpty()) {
             String kw = keyword.trim();
