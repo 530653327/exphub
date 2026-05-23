@@ -155,6 +155,13 @@ public class DocService {
         // 记录搜索日志
         callLogService.logSearch(keyword, (int) total, result.getRecords());
         
+        // MCP/API 搜索时，对返回结果增加调用计数
+        if (assistant != null) {
+            for (Doc doc : result.getRecords()) {
+                incrementCallCount(doc.getId());
+            }
+        }
+        
         return result;
     }
 
@@ -186,6 +193,8 @@ public class DocService {
                 if (doc.getApiKey() != null && !assistant.getApiKey().equals(doc.getApiKey())) {
                     return null; // 不可见
                 }
+                // MCP/API 调用查看详情时，增加调用计数
+                incrementCallCount(id);
             }
         }
         return doc;
@@ -266,6 +275,17 @@ public class DocService {
         } else {
             doc.setFailCount(doc.getFailCount() + 1);
         }
+        docMapper.updateById(doc);
+    }
+
+    /**
+     * 简单增加调用计数（不区分成功失败）
+     */
+    private void incrementCallCount(Long docId) {
+        if (docId == null) return;
+        Doc doc = docMapper.selectById(docId);
+        if (doc == null) return;
+        doc.setCallCount(doc.getCallCount() + 1);
         docMapper.updateById(doc);
     }
 
