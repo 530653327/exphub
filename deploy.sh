@@ -1,6 +1,16 @@
 #!/bin/bash
 # ExpHub 部署脚本
 # 用法: ./deploy.sh
+#
+# 首次部署前需要在 /etc/exphub/.env 中配置数据库密码等敏感信息：
+#   mkdir -p /etc/exphub
+#   cat > /etc/exphub/.env << 'EOF'
+#   EXPHUB_DB_URL=jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
+#   EXPHUB_DB_USERNAME=root
+#   EXPHUB_DB_PASSWORD=your_password
+
+
+#   EOF
 
 set -e
 
@@ -9,6 +19,16 @@ echo "  ExpHub 部署"
 echo "========================================"
 
 cd /usr/local/exphub
+
+# 0. 加载环境变量（服务器安全位置，不随代码提交）
+if [ -f /etc/exphub/.env ]; then
+    set -a
+    source /etc/exphub/.env
+    set +a
+    echo "[0/4] 已加载环境变量 /etc/exphub/.env"
+else
+    echo "⚠️  警告: 未找到 /etc/exphub/.env，将使用 application.yml 中的默认值"
+fi
 
 # 1. 拉取最新代码
 echo "[1/4] 拉取最新代码..."

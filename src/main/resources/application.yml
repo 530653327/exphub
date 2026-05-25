@@ -12,17 +12,17 @@ spring:
     name: ExpHub
 
   datasource:
-    url: jdbc:mysql://cloudim.club:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
-    username: root
-    password: ***CHANGED***
+    url: ${EXPHUB_DB_URL:jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
+    username: ${EXPHUB_DB_USERNAME:root}
+    password: ${EXPHUB_DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
       minimum-idle: 5
 
 
-    host: cloudim.club
-    port: 6379
+
+
     database: 0
     timeout: 5000ms
 
