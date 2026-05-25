@@ -4,6 +4,8 @@ target/
 *.war
 *.ear
 *.log
+*.bak
+*.backup
 .idea/
 *.iml
 .DS_Store

@@ -30,8 +30,7 @@ public class ExpHubApplication {
             System.out.println("║                    经验阁 ExpHub 启动成功                      ║");
             System.out.println("╠══════════════════════════════════════════════════════════════╣");
             System.out.println("║  后台管理:  " + padRight(baseUrl + "/login", 50) + "║");
-            System.out.println("║  账号:      admin                                             ║");
-            System.out.println("║  密码:      changeme                                          ║");
+            System.out.println("║  默认账号:  admin（首次登录后请立即修改密码）                   ║");
             System.out.println("╠══════════════════════════════════════════════════════════════╣");
             System.out.println("║  仪表盘:    " + padRight(baseUrl + "/dashboard", 50) + "║");
             System.out.println("║  经验管理:  " + padRight(baseUrl + "/docs", 50) + "║");

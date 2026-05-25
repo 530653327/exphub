@@ -70,7 +70,7 @@ public class PublicUserService {
         assistant.setFailCalls(0);
         assistantMapper.insert(assistant);
 
-        log.info("Public user registered: email={}, apiKey={}", email, apiKey);
+        log.info("Public user registered: email={}, apiKey={}...", email, maskKey(apiKey));
         return user;
     }
 
@@ -139,7 +139,7 @@ public class PublicUserService {
             assistantMapper.updateById(assistant);
         }
 
-        log.info("API Key reset: userId={}, oldKey={}, newKey={}", userId, oldApiKey, newApiKey);
+        log.info("API Key reset: userId={}, oldKey={}..., newKey={}...", userId, maskKey(oldApiKey), maskKey(newApiKey));
         return newApiKey;
     }
 
@@ -164,5 +164,10 @@ public class PublicUserService {
         LambdaQueryWrapper<AiAssistant> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AiAssistant::getApiKey, user.getApiKey());
         return assistantMapper.selectOne(wrapper);
+    }
+
+    private String maskKey(String key) {
+        if (key == null || key.length() < 12) return "****";
+        return key.substring(0, 8) + "..." + key.substring(key.length() - 4);
     }
 }

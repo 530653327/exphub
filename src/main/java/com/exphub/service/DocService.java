@@ -49,8 +49,8 @@ public class DocService {
             doc.setAuthorId(assistant.getAssistantId());
             doc.setAuthorName(assistant.getAssistantName());
             doc.setApiKey(assistant.getApiKey());  // API Key 级别的经验隔离
-            log.info("DocService.create: setting author={}/{}, apiKey={}", 
-                assistant.getAssistantId(), assistant.getAssistantName(), assistant.getApiKey());
+            log.info("DocService.create: setting author={}/{}, apiKey={}...", 
+                assistant.getAssistantId(), assistant.getAssistantName(), maskKey(assistant.getApiKey()));
         } else {
             // 后台页面操作，使用默认管理员
             log.warn("DocService.create: CURRENT_ASSISTANT is NULL, falling back to default");
@@ -428,5 +428,10 @@ public class DocService {
                .eq("status", "ACTIVE")
                .orderByDesc("updated_at");
         return docMapper.selectList(wrapper);
+    }
+
+    private String maskKey(String key) {
+        if (key == null || key.length() < 12) return "****";
+        return key.substring(0, 8) + "..." + key.substring(key.length() - 4);
     }
 }

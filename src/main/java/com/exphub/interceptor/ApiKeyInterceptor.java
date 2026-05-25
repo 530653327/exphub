@@ -63,7 +63,7 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         log.warn("preHandle: /api/** request rejected - no session login, uri={}, method={}", uri, request.getMethod());
         response.setStatus(403);
         response.setContentType("application/json;charset=UTF-8");
-        response.getWriter().write("{\"code\":403,\"message\":\"API调用已关闭，请通过MCP协议连接ExpHub。详见 https://cloudim.club/exphub\"}");
+        response.getWriter().write("{\"code\":403,\"message\":\"API调用已关闭，请通过MCP协议连接ExpHub\"}");
         return false;
     }
 
