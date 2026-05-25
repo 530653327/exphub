@@ -48,7 +48,7 @@ spring:
         type: SYNC
         stdio: false
         sse-endpoint: /mcp/sse
-        sse-message-endpoint: /exphub/mcp/message
+        sse-message-endpoint: /mcp/message
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml
