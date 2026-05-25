@@ -234,6 +234,18 @@ public class PageController extends BaseController {
         return "templates/list";
     }
 
+    // 修改密码页面
+    @GetMapping("/profile/password")
+    public String changePasswordPage(HttpSession session, Model model, HttpServletRequest request) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        addContextPath(model, request);
+        model.addAttribute("active", "profile");
+        model.addAttribute("pageTitle", "修改密码");
+        return "profile/password";
+    }
+
     // 退出登录
     @GetMapping("/logout")
     public String logout(HttpSession session) {
