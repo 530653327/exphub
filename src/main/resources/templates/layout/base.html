@@ -115,7 +115,7 @@
         <div class="topbar">
             <h4 class="mb-0" th:text="${pageTitle} ?: '仪表盘'">仪表盘</h4>
             <div>
-                <span class="text-muted mr-3" th:text="${#session.getAttribute('user')?.displayName} ?: '管理员'">管理员</span>
+                <span class="text-muted mr-3" th:text="${session.user?.displayName} ?: '管理员'">管理员</span>
                 <i class="fas fa-user-circle fa-lg text-muted"></i>
             </div>
         </div>
