@@ -162,9 +162,9 @@ CREATE TABLE IF NOT EXISTS doc_templates (
 -- 初始化数据
 -- ============================================================
 
--- 管理员账号（首次登录后请立即修改密码）
+-- 管理员账号（默认密码 admin123，首次登录后请立即修改密码）
 INSERT IGNORE INTO users (username, password, display_name, role) VALUES
-('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZRGdjGj/n3.Q7P4.yE9gV6U5m5bXm', '管理员', 'ADMIN');
+('admin', '$2a$10$Q0IcnbrdTPjLDs9xIZObA.wTA9f.YU1B1gWQB218KiIUjBYvV3ozS', '管理员', 'ADMIN');
 
 -- 默认 AI 助手示例（部署后请修改 api_key 和 api_key_secret）
 INSERT IGNORE INTO ai_assistants (assistant_id, assistant_name, description, api_key, api_key_secret, enabled, can_create, can_update, can_search) VALUES
