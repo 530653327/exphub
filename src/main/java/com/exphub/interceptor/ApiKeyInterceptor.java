@@ -58,15 +58,13 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
             return true;
         }
 
-        // 放行后台管理接口（无Session但可能是特定接口）
-        if (request.getMethod().equals("POST") || request.getMethod().equals("PUT") || request.getMethod().equals("DELETE")) {
-            if (uri.equals("/api/assistants") || uri.matches("/api/assistants/\\d+")) {
-                return true;
-            }
-        }
-
-        // API 请求也走统一的 API Key 验证
-        return validateApiKey(request, response);
+        // /api/** 路径：仅允许 Session 登录用户（后台管理），拒绝外部 AI 助手的 API Key 调用
+        // AI 助手必须通过 MCP 协议（/mcp/**）调用，不应直接使用 REST API
+        log.warn("preHandle: /api/** request rejected - no session login, uri={}, method={}", uri, request.getMethod());
+        response.setStatus(403);
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write("{\"code\":403,\"message\":\"API调用已关闭，请通过MCP协议连接ExpHub。详见 https://cloudim.club/exphub\"}");
+        return false;
     }
 
     /**
