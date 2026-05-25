@@ -162,18 +162,16 @@ public class DocService {
                         .or().like("summary", t)
                         .or().like("tags", t));
             } else {
+                // 多关键词 AND 逻辑：每个词必须在至少一个字段中出现
+                // 使用 MyBatis-Plus like() 参数化查询，防止 SQL 注入
                 for (String token : tokens) {
                     String t = token.trim();
                     if (t.isEmpty()) continue;
-                    String safe = t.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5._\\-+#]", "");
-                    if (safe.isEmpty()) continue;
-                    wrapper.apply("(" +
-                        "title LIKE '%" + safe + "%' OR " +
-                        "content LIKE '%" + safe + "%' OR " +
-                        "aliases LIKE '%" + safe + "%' OR " +
-                        "summary LIKE '%" + safe + "%' OR " +
-                        "tags LIKE '%" + safe + "%'" +
-                        ")");
+                    wrapper.and(w -> w.like("title", t)
+                            .or().like("content", t)
+                            .or().like("aliases", t)
+                            .or().like("summary", t)
+                            .or().like("tags", t));
                 }
             }
             total = docMapper.selectCount(wrapper);
