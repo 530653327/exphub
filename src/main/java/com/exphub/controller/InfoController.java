@@ -40,29 +40,35 @@ public class InfoController {
         
         // 功能介绍
         info.put("features", new String[]{
+            "check_my_todos: 检查当前AI助手的待办事项",
             "search_experience: 搜索经验库中相关经验",
             "get_experience_detail: 获取经验的详细内容",
-            "get_template: 获取创建经验的模板格式",
-            "create_experience: 创建新经验记录"
+            "get_template: 获取创建经验的模板格式（7种模板可选）",
+            "create_experience: 创建新经验记录",
+            "update_experience: 更新已有经验内容",
+            "update_experience_status: 更新经验状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED）"
         });
 
         // 使用指南 - 让AI在连接后第一时间读取
         info.put("usageGuidelines", new String[]{
-            "1. **首次连接必须**：先调用 get_experience_detail 工具查看 ID=4 的《ExpHub使用指南》经验",
-            "2. 开始任务前：用 search_experience 搜索是否已有相关经验可借鉴",
-            "3. 完成任务后：用 create_experience 将学到的新方法记录下来",
-            "4. 发现错误时：用 create_experience 创建新版本或更新已有经验"
+            "1. **每次会话开始**：先调用 check_my_todos() 检查待办事项",
+            "2. **首次连接必须**：调用 get_experience_detail(id=4) 查看完整使用指南",
+            "3. **开始任务前**：用 search_experience 搜索是否已有相关经验可借鉴",
+            "4. **创建经验前**：先调 get_template() 选择模板，再调 get_template(type=xxx) 获取格式",
+            "5. **完成任务后**：用 create_experience 记录新学到的方法",
+            "6. **维护经验时**：用 update_experience 修正错误，用 update_experience_status 标记状态"
         });
 
         // 快速开始 - 简明步骤
         info.put("quickStart", Map.of(
-            "step1", "调用 get_experience_detail(id=4) 获取详细使用指南",
-            "step2", "调用 search_experience 搜索当前任务相关的经验",
-            "step3", "完成任务后调用 create_experience 记录新学到的方法"
+            "step1", "调用 check_my_todos() 检查待办事项",
+            "step2", "调用 get_experience_detail(id=4) 获取完整使用指南",
+            "step3", "调用 search_experience 搜索当前任务相关的经验",
+            "step4", "完成任务后按模板格式调用 create_experience 记录经验"
         ));
 
         // 重要提示
-        info.put("important", "请务必先阅读 ID=4 的使用指南经验，了解如何在ExpHub中记录和管理经验！");
+        info.put("important", "请务必先阅读 ID=4 的《ExpHub 经验阁系统使用指南 v3》，了解完整的 7 个 MCP 工具和 7 种模板的正确用法！");
 
         return info;
     }
