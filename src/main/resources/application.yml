@@ -47,7 +47,7 @@ spring:
         version: 1.0.0
         type: SYNC
         stdio: false
-        sse-endpoint: /exphub/mcp/sse
+        sse-endpoint: /mcp/sse
         sse-message-endpoint: /exphub/mcp/message
 
 mybatis-plus:
