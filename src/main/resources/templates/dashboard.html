@@ -134,7 +134,7 @@
                     <tbody>
                         <tr th:each="doc, stat : ${hotDocs}">
                             <td th:text="${stat.count}">1</td>
-                            <td><a th:href="@{/exphub/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a></td>
+                            <td><a th:href="@{/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a></td>
                             <td th:text="${doc.authorName}">-</td>
                             <td th:text="${doc.callCount}">0</td>
                             <td>
