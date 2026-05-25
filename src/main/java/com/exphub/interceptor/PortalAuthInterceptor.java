@@ -30,8 +30,8 @@ public class PortalAuthInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         String uri = request.getRequestURI();
 
-        // 注册和登录接口放行
-        if (uri.equals("/portal/api/register") || uri.equals("/portal/api/login")) {
+        // 注册和登录接口放行（兼容有无 context path）
+        if (uri.endsWith("/portal/api/register") || uri.endsWith("/portal/api/login")) {
             return true;
         }
 
