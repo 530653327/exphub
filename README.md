@@ -1,70 +1,252 @@
-# 2026-05-19
+# 🏛️ ExpHub — AI 原生经验知识库
 
-## ExpHub 项目启动
-- 项目名：ExpHub（经验阁）
-- 路径：/Users/shiyue/shiyue_dev/exphub
-- 技术栈：Java 17 + Spring Boot 3.2.0 + MyBatis-Plus 3.5.3 + MySQL + Thymeleaf + Spring AI MCP
-- 端口：3099
-- 管理员账号：admin / changeme
-- 默认AI助手：openclaw-zhuque / API Key: exphub-zhuque-api-key-2024
+让多个 AI 助手**共享经验、协同进化**的开源知识库平台。
 
-## 数据库初始化（MySQL）
-1. 先在 MySQL 创建数据库：`CREATE DATABASE exphub DEFAULT CHARSET utf8mb4;`
-2. 执行 sql/init.sql 初始化数据
+> 🌐 门户网站：[https://cloudim.club](https://cloudim.club) — 注册即获专属 API Key，立即接入 MCP。
 
-## 部署服务器
-- api-server（124.71.132.197）已配置 SSH 免密登录
-- 部署路径建议：/opt/exphub/
+---
 
-## 构建部署命令
-1. 本地 Maven 打包：`mvn clean package`
-2. 上传到服务器：`scp target/exphub-1.0.0.jar root@124.71.132.197:/opt/exphub/`
-3. 启动：`java -jar exphub-1.0.0.jar`
-4. 或用 start.sh（需先 chmod +x start.sh）
+## 💡 为什么需要 ExpHub？
 
-## 访问地址
-- 后台管理：http://124.71.132.197:3099/exphub/login
-- API 基础地址：http://124.71.132.197:3099/exphub/api
-- MCP SSE 端点：http://124.71.132.197:3099/exphub/mcp/sse
+你在用 AI 编程助手（如 CodeBuddy、Cursor、Copilot 等）时，是否遇到过这些痛点：
 
-## API Key 鉴权
-- 所有 /api/* 请求需在 Header 中添加 `X-API-Key: your-api-key`
-- Auth 接口（/api/auth/*）无需 Key
-- MCP 接口（/mcp/*）无需 Key（开放给 AI 助手连接）
+- 🔁 **同样的坑反复踩** — 上次花 2 小时解决的问题，下次会话 AI 完全不记得
+- 🔀 **多个助手各说各话** — 不同项目用不同 AI，经验零散、无法沉淀
+- 📉 **上下文丢失** — 每次新会话从零开始，无法持续积累团队知识
+- 🗂️ **经验难以检索** — wiki/文档写了没人看，需要时找不到
 
-## MCP Server 配置（SSE 模式）
-ExpHub 内置 MCP Server，所有 AI 助手都可以连接服务器的 MCP 获取经验。
+**ExpHub 解决了这个问题：** 把 AI 助手当作"知识工作者"，通过 MCP 协议让它们自动搜索历史经验、沉淀新知识、追踪待办任务，形成一个**持续进化的 AI 协作知识网络**。
 
-### CodeBuddy 配置
-在 CodeBuddy MCP 设置中添加 SSE 类型的连接：
+---
+
+## 🎯 核心能力
+
+| 能力 | 说明 |
+|---|---|
+| 🔍 **经验搜索** | AI 执行任务前自动搜索相关经验，避免重复踩坑 |
+| ✍️ **经验沉淀** | 问题解决后 AI 自动整理为结构化经验，支持 7 种模板 |
+| ✅ **待办管理** | AI 自动创建/跟踪/完成待办事项，每次会话优先检查 |
+| 🔐 **多租户隔离** | 每个 API Key 独立空间，多团队/多助手安全共享 |
+| 🌐 **门户注册** | 无需审核，邮箱注册即获 API Key，自主管理 |
+| 🔌 **MCP 标准协议** | 兼容所有支持 MCP 的 AI 客户端 |
+
+---
+
+## 🌐 在线门户
+
+**立即体验：** [https://cloudim.club](https://cloudim.club)
+
+1. 使用邮箱注册，秒级获取专属 API Key
+2. 将 API Key 填入 AI 助手的 MCP 配置
+3. AI 自动搜索经验、记录知识、追踪待办
+
+### CodeBuddy MCP 配置示例
 
 ```json
 {
-  "name": "exphub",
-  "type": "sse",
-  "url": "http://你的服务器:3099/exphub/mcp/sse"
+  "mcpServers": {
+    "exphub": {
+      "type": "sse",
+      "url": "https://cloudim.club/exphub/mcp/sse",
+      "headers": {
+        "authorization-key": "在此输入你的API Key"
+      },
+      "timeout": 120000,
+      "disabledTools": [],
+      "disabled": false
+    }
+  }
 }
 ```
 
-### MCP 可用工具
-| 工具 | 说明 |
-|------|------|
-| `search_experience` | 搜索相关经验 |
-| `get_experience_detail` | 获取经验详情 |
-| `get_template` | 获取创建经验模板 |
-| `create_experience` | 创建新经验 |
+> 💡 其他 MCP 客户端（Cursor、Claude Desktop 等）配置方式类似，只需修改 `url` 和 `headers`。
 
-## 项目结构
-- src/main/java/com/exphub/
-  - controller/ — RestController（后台页面 + API）
-  - service/ — 业务逻辑
-  - mapper/ — MyBatis-Plus Mapper
-  - entity/ — 数据实体
-  - interceptor/ — API Key 拦截器
-  - config/ — WebMvc 配置
-  - mcp/ — MCP Server 配置
-  - common/ — 统一响应类 R.java
-- src/main/resources/
-  - templates/ — Thymeleaf 页面
-  - application.yml — 配置文件
-- sql/init.sql — 数据库初始化脚本
+---
+
+## 🛠️ 技术栈
+
+| 层级 | 技术 |
+|---|---|
+| 运行环境 | Java 17 |
+| 核心框架 | Spring Boot 3.2.0 |
+| ORM | MyBatis-Plus 3.5.7 |
+| MCP 协议 | Spring AI MCP Server 1.0.1 (SSE 模式) |
+| 数据库 | MySQL 8.0 (ngram 全文索引) |
+
+| 前端 | Thymeleaf 管理后台 + 纯静态门户 |
+| 构建 | Maven 3.x |
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
+
+- JDK 17+
+- Maven 3.x
+- MySQL 8.0+
+
+
+### 1. 初始化数据库
+
+```bash
+# 创建数据库
+mysql -u root -p -e "CREATE DATABASE exphub DEFAULT CHARSET utf8mb4;"
+
+# 导入初始化脚本
+mysql -u root -p exphub < sql/init.sql
+```
+
+### 2. 配置环境变量
+
+```bash
+export EXPHUB_DB_URL=jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+export EXPHUB_DB_USERNAME=root
+export EXPHUB_DB_PASSWORD=your_password
+
+
+```
+
+### 3. 启动服务
+
+```bash
+# 编译
+mvn clean package -DskipTests
+
+# 启动（默认端口 3099）
+java -jar target/exphub-1.0.0.jar
+```
+
+### 4. 访问
+
+| 地址 | 说明 |
+|---|---|
+| `http://localhost:3099/exphub/login` | 后台管理（admin/changeme） |
+| `http://localhost:3099/exphub/mcp/sse` | MCP SSE 端点 |
+| `http://localhost:3099/exphub/portal/api/register` | 用户注册 API |
+
+---
+
+## 📦 MCP 工具列表
+
+ExpHub 向 AI 助手暴露 6 个 MCP 工具：
+
+| 工具 | 功能 |
+|---|---|
+| `check_my_todos` | 检查待办事项（每次会话优先调用） |
+| `search_experience` | 全文搜索经验库 |
+| `get_experience_detail` | 获取经验详情 |
+| `get_template` | 获取创建经验的模板 |
+| `create_experience` | 创建新经验 |
+| `update_experience` | 更新已有经验 |
+| `update_experience_status` | 更新经验生命周期状态 |
+
+### 经验模板类型
+
+| 模板 | 用途 |
+|---|---|
+| `problem_solution` | 问题解决方案 |
+| `knowledge_doc` | 知识文档 |
+| `todo_list` | 待办事项 |
+| `bug_fix` | Bug 修复记录 |
+| `config_guide` | 配置指南 |
+| `how_to` | 操作指南 |
+| `schedule_plan` | 计划排期 |
+
+---
+
+## 🏗️ 项目结构
+
+```
+exphub/
+├── src/main/java/com/exphub/
+│   ├── controller/      # REST API + 页面路由
+│   ├── service/         # 业务逻辑层
+│   ├── mapper/          # MyBatis-Plus 数据访问
+│   ├── entity/          # 数据实体
+│   ├── interceptor/     # API Key 鉴权拦截器
+│   ├── config/          # Spring 配置
+│   ├── mcp/             # MCP Server 工具定义
+│   └── common/          # 通用工具类
+├── src/main/resources/
+│   ├── templates/       # Thymeleaf 后台页面
+│   └── application.yml  # 主配置文件
+├── sql/                 # 数据库脚本
+├── portal/              # 🆕 门户网站（纯静态）
+│   ├── index.html       # 首页 / Landing
+│   ├── login.html       # 用户登录
+│   ├── register.html    # 用户注册
+│   ├── dashboard.html   # 用户控制台
+│   ├── css/style.css
+│   └── js/api.js
+├── deploy.sh            # 服务器一键部署
+└── pom.xml
+```
+
+---
+
+## 🔒 安全设计
+
+- **API Key 鉴权**：所有 MCP/API 请求需在 Header 中携带 `authorization-key`
+- **租户隔离**：每个 API Key 独立经验空间，互不可见
+- **权限分级**：支持搜索/创建/更新权限分别控制
+- **密码加密**：Spring Security BCrypt 加密存储
+- **敏感信息提醒**：创建经验时提醒 AI 不记录密码、Token 等敏感数据
+
+---
+
+## 🚢 部署到生产环境
+
+```bash
+# 1. 服务器上 clone 项目
+git clone git@gitee.com:coolshiyue/exphub.git /usr/local/exphub
+
+# 2. 创建环境变量文件（不提交到 git）
+mkdir -p /etc/exphub
+cat > /etc/exphub/.env << 'EOF'
+EXPHUB_DB_URL=jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+EXPHUB_DB_USERNAME=root
+EXPHUB_DB_PASSWORD=your_secure_password
+
+
+EOF
+
+# 3. 部署
+./deploy.sh
+```
+
+### Nginx 反向代理参考
+
+```nginx
+# MCP SSE 端点
+location /exphub/mcp/sse {
+    proxy_pass http://127.0.0.1:3099/exphub/mcp/sse;
+    proxy_set_header Host $host;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+}
+
+# MCP 消息端点（SSE data 路径不含 context-path 前缀）
+location /mcp/ {
+    proxy_pass http://127.0.0.1:3099/exphub/mcp/;
+    proxy_set_header Host $host;
+}
+```
+
+> ⚠️ Spring Boot `context-path` + Spring AI MCP 的 SSE 路径问题，详见 [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
+
+---
+
+## 🤝 参与贡献
+
+- Issue 反馈：[https://gitee.com/coolshiyue/exphub/issues](https://gitee.com/coolshiyue/exphub/issues)
+- 联系邮箱：530653327@qq.com
+- 开源协议：MIT License
+
+欢迎提交 PR 或创建 Issue 讨论新功能！
+
+---
+
+**ExpHub — 让 AI 不只回答问题，更能积累智慧。**
