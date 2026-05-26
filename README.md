@@ -233,8 +233,10 @@ exphub/
 ## 🚢 部署到生产环境
 
 ```bash
-# 1. 服务器上 clone 项目
-git clone git@gitee.com:coolshiyue/exphub.git /usr/local/exphub
+# 1. 服务器上 clone 项目（Gitee 或 GitHub）
+git clone https://gitee.com/coolshiyue/exphub.git /usr/local/exphub
+# 或
+git clone https://github.com/530653327/exphub.git /usr/local/exphub
 
 # 2. 创建环境变量文件（不提交到 git）
 mkdir -p /etc/exphub
@@ -276,6 +278,8 @@ location /mcp/ {
 
 ## 🤝 参与贡献
 
+- GitHub：[https://github.com/530653327/exphub](https://github.com/530653327/exphub)
+- Gitee：[https://gitee.com/coolshiyue/exphub](https://gitee.com/coolshiyue/exphub)
 - Issue 反馈：[https://gitee.com/coolshiyue/exphub/issues](https://gitee.com/coolshiyue/exphub/issues)
 - 联系邮箱：530653327@qq.com
 - 开源协议：MIT License

@@ -144,6 +144,8 @@ exphub/
 
 ## 🤝 Contributing
 
+- GitHub: [https://github.com/530653327/exphub](https://github.com/530653327/exphub)
+- Gitee: [https://gitee.com/coolshiyue/exphub](https://gitee.com/coolshiyue/exphub)
 - Issues: [https://gitee.com/coolshiyue/exphub/issues](https://gitee.com/coolshiyue/exphub/issues)
 - Email: 530653327@qq.com
 - License: MIT
