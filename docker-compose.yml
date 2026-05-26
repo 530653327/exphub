@@ -1,0 +1,74 @@
+# ============================================================
+# ExpHub Docker Compose 一键部署
+# 
+# 启动: docker compose up -d
+# 停止: docker compose down
+# 日志: docker compose logs -f exphub
+# ============================================================
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: exphub-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${EXPHUB_DB_PASSWORD}
+      MYSQL_DATABASE: exphub
+      TZ: Asia/Shanghai
+    ports:
+      - "3307:3306"  # 避免与宿主机 MySQL 端口冲突
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --max_allowed_packet=64M
+      - --innodb_buffer_pool_size=256M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${EXPHUB_DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
+
+
+    restart: unless-stopped
+    volumes:
+
+    healthcheck:
+
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  exphub:
+    build: .
+    image: exphub:latest
+    container_name: exphub-app
+    restart: unless-stopped
+    ports:
+      - "3099:3099"
+    environment:
+      EXPHUB_DB_URL: jdbc:mysql://mysql:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
+      EXPHUB_DB_USERNAME: root
+      EXPHUB_DB_PASSWORD: ${EXPHUB_DB_PASSWORD}
+      EXPHUB_DB_HOST: mysql
+
+
+
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+        condition: service_healthy
+    volumes:
+      - app_logs:/app/logs
+
+volumes:
+  mysql_data:
+
+  app_logs:

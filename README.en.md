@@ -97,6 +97,40 @@ java -jar target/exphub-1.0.0.jar
 
 ---
 
+## 🐳 Docker One-Click Deploy (Recommended)
+
+**3 steps, 30 seconds:**
+
+```bash
+# 1. Set your database password
+cp .env.example .env
+# Edit EXPHUB_DB_PASSWORD in .env
+
+# 2. Start (auto init DB, build and run)
+docker compose up -d
+
+# 3. Check logs
+docker compose logs -f exphub
+```
+
+**Services included:**
+| Service | Description |
+|---|---|
+| `exphub` | Spring Boot app, port 3099 |
+| `mysql` | MySQL 8.0, port 3307 (avoids host port conflicts) |
+
+
+**Common commands:**
+```bash
+docker compose up -d           # Start
+docker compose down            # Stop and clean
+docker compose down -v         # Stop and remove volumes (reset database)
+docker compose logs -f exphub  # Live logs
+docker compose restart exphub  # Restart app
+```
+
+---
+
 ## 📦 MCP Tools
 
 | Tool | Function |

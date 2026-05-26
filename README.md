@@ -129,6 +129,40 @@ java -jar target/exphub-1.0.0.jar
 
 ---
 
+## 🐳 Docker 一键部署（推荐）
+
+**只需 3 步，30 秒启动：**
+
+```bash
+# 1. 配置数据库密码
+cp .env.example .env
+# 编辑 .env 中的 EXPHUB_DB_PASSWORD
+
+# 2. 启动（自动建库建表、拉取镜像、编译运行）
+docker compose up -d
+
+# 3. 查看日志
+docker compose logs -f exphub
+```
+
+**包含的服务：**
+| 服务 | 说明 |
+|---|---|
+| `exphub` | Spring Boot 应用，端口 3099 |
+| `mysql` | MySQL 8.0，端口 3307（避免冲突） |
+
+
+**常用命令：**
+```bash
+docker compose up -d         # 启动
+docker compose down          # 停止并清理
+docker compose down -v       # 停止并删除数据卷（重置数据库）
+docker compose logs -f exphub  # 实时日志
+docker compose restart exphub  # 重启应用
+```
+
+---
+
 ## 🖥️ 后台管理系统
 
 自行部署 ExpHub 后，可通过后台管理系统进行可视化管理，无需直接操作数据库。

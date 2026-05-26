@@ -1,0 +1,10 @@
+# Docker 构建忽略
+target/
+*.log
+.git/
+.gitignore
+.env
+.idea/
+*.iml
+.vscode/
+logs/
