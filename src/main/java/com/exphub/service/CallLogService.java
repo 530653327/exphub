@@ -61,6 +61,7 @@ public class CallLogService {
             
             // 更新助手调用统计
             assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
             assistant.setLastCallAt(LocalDateTime.now());
             assistantMapper.updateById(assistant);
         } else {
@@ -89,6 +90,7 @@ public class CallLogService {
             log.setCallerName(assistant.getAssistantName());
             
             assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
             assistant.setLastCallAt(LocalDateTime.now());
             assistantMapper.updateById(assistant);
         } else {
@@ -116,6 +118,7 @@ public class CallLogService {
             log.setCallerName(assistant.getAssistantName());
             
             assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
             assistant.setLastCallAt(LocalDateTime.now());
             assistantMapper.updateById(assistant);
         } else {
@@ -143,6 +146,7 @@ public class CallLogService {
             log.setCallerName(assistant.getAssistantName());
             
             assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
             assistant.setLastCallAt(LocalDateTime.now());
             assistantMapper.updateById(assistant);
         } else {
@@ -152,6 +156,15 @@ public class CallLogService {
         
         callLogMapper.insert(log);
         return log;
+    }
+
+    // 记录失败调用（MCP/API 异常时递增 failCalls）
+    public void incrementFailCalls() {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        if (assistant != null) {
+            assistant.setFailCalls(assistant.getFailCalls() + 1);
+            assistantMapper.updateById(assistant);
+        }
     }
 
     public Page<CallLog> list(int page, int size, String action, String callerName,

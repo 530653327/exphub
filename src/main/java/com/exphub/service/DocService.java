@@ -118,7 +118,7 @@ public class DocService {
                 
                 callLogService.logSearch(keyword, (int) total, records);
                 if (assistant != null) {
-                    for (Doc doc : records) incrementCallCount(doc.getId());
+                    for (Doc doc : records) updateCallResult(doc.getId(), true);
                 }
                 return result;
             }
@@ -187,7 +187,7 @@ public class DocService {
         
         if (assistant != null) {
             for (Doc doc : result.getRecords()) {
-                incrementCallCount(doc.getId());
+                updateCallResult(doc.getId(), true);
             }
         }
         
@@ -258,7 +258,7 @@ public class DocService {
                     return null; // 不可见
                 }
                 // MCP/API 调用查看详情时，增加调用计数
-                incrementCallCount(id);
+                updateCallResult(id, true);
             }
         }
         return doc;
