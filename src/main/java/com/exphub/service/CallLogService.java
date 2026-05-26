@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -245,7 +244,7 @@ public class CallLogService {
     }
 
     public List<Map<String, Object>> getCallTrend(int days) {
-        return Collections.emptyList();
+        return callLogMapper.getCallTrend(days);
     }
 
     public List<Map<String, Object>> getAssistantRanking(int limit) {

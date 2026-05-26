@@ -73,6 +73,12 @@ public class StatsController {
         }).collect(Collectors.toList()));
     }
 
+    // 调用趋势
+    @GetMapping("/call-trend")
+    public R<List<Map<String, Object>>> callTrend(@RequestParam(defaultValue = "7") int days) {
+        return R.ok(callLogService.getCallTrend(days));
+    }
+
     // 助手贡献排行
     @GetMapping("/assistant-ranking")
     public R<List<Map<String, Object>>> assistantRanking(@RequestParam(defaultValue = "10") int limit) {
