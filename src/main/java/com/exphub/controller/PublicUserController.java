@@ -193,6 +193,20 @@ public class PublicUserController {
     }
 
     /**
+     * 获取我的经验详情
+     */
+    @GetMapping("/my-docs/{id}")
+    public R<Doc> getMyDoc(@PathVariable Long id) {
+        PublicUser user = PortalAuthInterceptor.getCurrentPortalUser();
+        if (user == null) return R.fail(401, "未登录");
+
+        Doc doc = docMapper.selectById(id);
+        if (doc == null) return R.fail("经验不存在");
+        if (!user.getApiKey().equals(doc.getApiKey())) return R.fail("无权操作此经验");
+        return R.ok(doc);
+    }
+
+    /**
      * 更新我的经验
      */
     @PutMapping("/my-docs/{id}")
