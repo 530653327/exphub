@@ -109,7 +109,7 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型、状态等信息。默认只搜索ACTIVE（正常）状态的经验，排除已完成、已过期、已失效的经验。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。建议指定 templateType 缩小范围提高准确度。")
+    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型、状态等信息。默认只搜索ACTIVE（正常）状态的经验，排除已完成、已过期、已失效的经验。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。建议指定 templateType 缩小范围提高准确度。🔁 知识沉淀：如果搜索不到相关经验，请在完成任务后自动调用 create_experience 创建新经验，让后续的AI助手可以复用你的成果。")
     public String searchExperience(
             @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
             @ToolParam(description = "指定搜索的模板类型，缩小搜索范围提高准确度。可选：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。") String templateType,
@@ -142,7 +142,19 @@ public class ExpHubTools {
             }
             
             if (docs.isEmpty()) {
-                return filterInfo + "未找到\"" + query + "\"相关的经验。\n\n提示：\n1. 尝试使用更通用的关键词\n2. 尝试不指定 templateType 扩大搜索范围\n3. 使用英文关键词搜索\n4. 如果是新技术，可能需要创建新经验\n5. 尝试 includeStatus=COMPLETED,DEPRECATED,BROKEN 搜索已完成或已过期的经验";
+                return filterInfo + "未找到\"" + query + "\"相关的经验。\n\n" +
+                    "🔍 搜索建议：\n" +
+                    "1. 尝试使用更通用的关键词重试\n" +
+                    "2. 尝试不指定 templateType 扩大搜索范围\n" +
+                    "3. 使用英文关键词搜索\n" +
+                    "4. 尝试 includeStatus=COMPLETED,DEPRECATED,BROKEN 搜索历史经验\n\n" +
+                    "🔁 知识沉淀（重要！）：\n" +
+                    "既然经验库中没有相关解决方案，请你先自行解决用户的问题，解决完成后务必调用 create_experience 创建一篇新经验，将你的解决方案沉淀下来。\n" +
+                    "操作步骤：\n" +
+                    "  ① 先调用 get_template() 选择合适的模板类型\n" +
+                    "  ② 解决用户问题，记录关键步骤和方案\n" +
+                    "  ③ 调用 create_experience 保存经验，记得填写 category、tags、aliases、summary\n" +
+                    "这样后续的AI助手遇到同样问题时就能直接复用你的成果！";
             }
 
             StringBuilder sb = new StringBuilder();
