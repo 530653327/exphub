@@ -45,7 +45,7 @@ public class ExpHubTools {
      * 🔔 检查待办事项 - 连接后优先调用
      * 重要提示：本MCP连接后，请优先调用 check_my_todos() 检查是否有待处理任务！
      */
-    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查当前AI助手在ExpHub中记录的待办事项（todo_list类型），包括任务状态、截止日期等信息。每次会话开始时都应该调用此工具，确保不遗漏重要任务。")
+    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查当前AI助手在ExpHub中记录的待办事项（todo_list类型），包括任务状态、截止日期等信息。每次会话开始时都应该调用此工具，确保不遗漏重要任务。⚠️ 完成待办事项后，务必调用 update_experience_status 将状态更新为 COMPLETED。")
     public String checkMyTodos() {
         try {
             AiAssistant assistant = getCaller();
@@ -74,7 +74,8 @@ public class ExpHubTools {
                   .append(todo.getUpdatedAt() != null ? todo.getUpdatedAt().toLocalDate() : "-").append(" |\n");
             }
             
-            sb.append("\n使用 get_experience_detail(id=?) 查看具体任务详情。");
+            sb.append("\n使用 get_experience_detail(id=?) 查看具体任务详情。\n");
+            sb.append("⚠️ 重要提醒：完成任何待办事项后，请立即调用 update_experience_status(id=?, status=\"COMPLETED\") 标记为已完成，否则任务会一直显示在待办列表中。");
             
             return sb.toString();
         } catch (Exception e) {
