@@ -32,18 +32,6 @@ services:
       timeout: 5s
       retries: 10
 
-
-
-
-    restart: unless-stopped
-    volumes:
-
-    healthcheck:
-
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   exphub:
     build: .
     image: exphub:latest
@@ -56,19 +44,13 @@ services:
       EXPHUB_DB_USERNAME: root
       EXPHUB_DB_PASSWORD: ${EXPHUB_DB_PASSWORD}
       EXPHUB_DB_HOST: mysql
-
-
-
       TZ: Asia/Shanghai
     depends_on:
       mysql:
-        condition: service_healthy
-
         condition: service_healthy
     volumes:
       - app_logs:/app/logs
 
 volumes:
   mysql_data:
-
   app_logs:

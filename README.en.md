@@ -66,7 +66,6 @@ When using AI coding assistants (CodeBuddy, Cursor, Copilot, etc.), do you face:
 | ORM | MyBatis-Plus 3.5.7 |
 | MCP | Spring AI MCP Server 1.0.1 (SSE) |
 | Database | MySQL 8.0 (ngram full-text index) |
-
 | Frontend | Thymeleaf + Static Portal |
 | Build | Maven 3.x |
 
@@ -76,7 +75,7 @@ When using AI coding assistants (CodeBuddy, Cursor, Copilot, etc.), do you face:
 
 ### Prerequisites
 
-
+- JDK 17+, Maven 3.x, MySQL 8.0+
 
 ### Setup
 
@@ -118,7 +117,6 @@ docker compose logs -f exphub
 |---|---|
 | `exphub` | Spring Boot app, port 3099 |
 | `mysql` | MySQL 8.0, port 3307 (avoids host port conflicts) |
-
 
 **Common commands:**
 ```bash

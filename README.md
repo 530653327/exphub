@@ -72,7 +72,6 @@
 | ORM | MyBatis-Plus 3.5.7 |
 | MCP 协议 | Spring AI MCP Server 1.0.1 (SSE 模式) |
 | 数据库 | MySQL 8.0 (ngram 全文索引) |
-
 | 前端 | Thymeleaf 管理后台 + 纯静态门户 |
 | 构建 | Maven 3.x |
 
@@ -85,7 +84,6 @@
 - JDK 17+
 - Maven 3.x
 - MySQL 8.0+
-
 
 ### 1. 初始化数据库
 
@@ -103,8 +101,6 @@ mysql -u root -p exphub < sql/init.sql
 export EXPHUB_DB_URL=jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
 export EXPHUB_DB_USERNAME=root
 export EXPHUB_DB_PASSWORD=your_password
-
-
 ```
 
 ### 3. 启动服务
@@ -150,7 +146,6 @@ docker compose logs -f exphub
 |---|---|
 | `exphub` | Spring Boot 应用，端口 3099 |
 | `mysql` | MySQL 8.0，端口 3307（避免冲突） |
-
 
 **常用命令：**
 ```bash
@@ -278,8 +273,6 @@ cat > /etc/exphub/.env << 'EOF'
 EXPHUB_DB_URL=jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
 EXPHUB_DB_USERNAME=root
 EXPHUB_DB_PASSWORD=your_secure_password
-
-
 EOF
 
 # 3. 部署

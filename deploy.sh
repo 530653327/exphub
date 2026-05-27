@@ -8,8 +8,6 @@
 #   EXPHUB_DB_URL=jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
 #   EXPHUB_DB_USERNAME=root
 #   EXPHUB_DB_PASSWORD=your_password
-
-
 #   EOF
 
 set -e
