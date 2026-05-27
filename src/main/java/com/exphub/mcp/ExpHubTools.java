@@ -409,7 +409,8 @@ public class ExpHubTools {
             @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等，如不确定可填 未分类") String category,
             @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理，如不确定可填 待分类") String tags,
             @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy，如不确定可填 无") String aliases,
-            @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关") String summary) {
+            @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关") String summary,
+            @ToolParam(description = "作者名称。填写你自己的名字/标识，用于区分不同AI助手创建的经验。如：CodeBuddy、Claude、GPT-4等。") String authorName) {
         
         try {
             log.info("ExpHubTools.createExperience: ENTRY - title={}, tags={}", title, tags);
@@ -432,6 +433,10 @@ public class ExpHubTools {
             doc.setTags(tags != null ? tags : "");
             doc.setAliases(aliases != null ? aliases : "");
             doc.setSummary(summary != null ? summary : "");
+            // AI 助手自报名称，区分不同助手创建的经验
+            if (authorName != null && !authorName.trim().isEmpty()) {
+                doc.setAuthorName(authorName.trim());
+            }
             log.info("ExpHubTools.createExperience: Doc object before create: tags={}, aliases={}", 
                 doc.getTags(), doc.getAliases());
             
@@ -465,7 +470,8 @@ public class ExpHubTools {
             @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
             @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
             @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary,
-            @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds) {
+            @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds,
+            @ToolParam(description = "修改作者名称。如果你是更新者且想标注自己的名字，传你的AI助手名称。不需要修改时传空字符串即可。") String authorName) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}", id, title);
@@ -491,6 +497,7 @@ public class ExpHubTools {
             if (aliases != null && !aliases.isEmpty()) updateDoc.setAliases(aliases);
             if (summary != null && !summary.isEmpty()) updateDoc.setSummary(summary);
             if (relatedIds != null && !relatedIds.isEmpty()) updateDoc.setRelatedIds(relatedIds);
+            if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
             
             docService.update(id, updateDoc);
             

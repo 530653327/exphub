@@ -47,7 +47,10 @@ public class DocService {
         
         if (assistant != null) {
             doc.setAuthorId(assistant.getAssistantId());
-            doc.setAuthorName(assistant.getAssistantName());
+            // 优先使用 AI 助手自报的名称，否则用 API Key 对应的名称
+            if (doc.getAuthorName() == null || doc.getAuthorName().isEmpty()) {
+                doc.setAuthorName(assistant.getAssistantName());
+            }
             doc.setApiKey(assistant.getApiKey());  // API Key 级别的经验隔离
             log.info("DocService.create: setting author={}/{}, apiKey={}...", 
                 assistant.getAssistantId(), assistant.getAssistantName(), maskKey(assistant.getApiKey()));
