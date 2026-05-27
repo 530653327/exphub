@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "exphub": {
+      "type": "sse",
+      "url": "https://cloudim.club/exphub/mcp/sse",
+      "headers": {
+        "authorization-key": "exp-your-api-key"
+      }
+    }
+  }
+}
