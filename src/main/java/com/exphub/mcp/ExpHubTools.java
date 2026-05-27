@@ -91,20 +91,47 @@ public class ExpHubTools {
     @Tool(name = "get_experience_detail", description = "获取经验的详细内容。")
     public String getExperienceDetail(
             @ToolParam(description = "经验ID。") Long id) {
-        
+
         Doc doc = docService.getById(id);
-        
+
         if (doc == null) {
             return "未找到ID为" + id + "的经验";
         }
 
-        return "# " + doc.getTitle() + "\n\n" +
-               "**分类**: " + doc.getCategory() + "\n" +
-               "**作者**: " + doc.getAuthorName() + "\n" +
-               "**版本**: v" + doc.getVersion() + "\n" +
-               "**标签**: " + (doc.getTags() != null ? doc.getTags() : "无") + "\n\n" +
-               "---\n\n" +
-               doc.getContent();
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ").append(doc.getTitle()).append("\n\n");
+        sb.append("**分类**: ").append(doc.getCategory()).append("\n");
+        sb.append("**作者**: ").append(doc.getAuthorName()).append("\n");
+        sb.append("**版本**: v").append(doc.getVersion()).append("\n");
+        sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+
+        // 显示关联经验
+        if (doc.getRelatedIds() != null && !doc.getRelatedIds().isEmpty()) {
+            sb.append("**关联经验**: ").append(doc.getRelatedIds()).append("\n");
+        }
+
+        sb.append("\n---\n\n");
+        sb.append(doc.getContent());
+
+        // 关联经验详情
+        if (doc.getRelatedIds() != null && !doc.getRelatedIds().isEmpty()) {
+            sb.append("\n\n---\n\n## 📎 关联经验\n\n");
+            String[] ids = doc.getRelatedIds().split(",");
+            for (String rid : ids) {
+                rid = rid.trim();
+                if (rid.isEmpty()) continue;
+                try {
+                    Doc related = docService.getById(Long.parseLong(rid));
+                    if (related != null) {
+                        sb.append("- **ID:").append(related.getId()).append("** ").append(related.getTitle());
+                        sb.append("（").append(getStatusLabel(related.getStatus())).append("）\n");
+                        sb.append("  摘要: ").append(related.getSummary() != null ? related.getSummary() : "无").append("\n");
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        return sb.toString();
     }
 
     /**
@@ -246,6 +273,66 @@ public class ExpHubTools {
     }
 
     /**
+     * AI 反馈经验是否有帮助
+     * 这是 ExpHub 核心价值指标：经验是否真正帮助了 AI 助手解决问题
+     */
+    @Tool(name = "report_experience_result", description = "反馈经验是否有帮助。当你参考了某条经验去执行任务后，无论成功还是失败都应该调用此工具反馈结果。⚠️ 重要：如果经验没有帮助，必须填写 feedback 说明原因（如方案过时、环境不匹配、步骤缺失等），并且你应该用自己找到的正确方案完成任务后，创建一篇新经验并通过 newExperienceId 参数关联起来，这样后续的 AI 助手就能同时看到新旧两篇经验，获得更完整的参考。")
+    public String reportExperienceResult(
+            @ToolParam(description = "经验ID（必填），你参考过的经验ID") Long id,
+            @ToolParam(description = "该经验是否有帮助。true=成功帮助你解决了问题，false=没有帮助") boolean helpful,
+            @ToolParam(description = "反馈说明。helpful=true 时可选（可简述哪个部分有用）；helpful=false 时必填！必须说明为什么没用（如：方案过时、环境不匹配、缺少关键步骤、命令报错等），这样管理员可以优化经验内容。") String feedback,
+            @ToolParam(description = "当 helpful=false 时，如果你已经创建了一篇新的经验记录了正确的解决方案，填写新经验的ID。系统会自动将新旧两篇经验互相关联，后续 AI 可以同时参考。注意：需要先调用 create_experience 创建新经验获取 ID，再调用本工具传入 newExperienceId。") Long newExperienceId) {
+
+        try {
+            // 检查经验是否存在
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+
+            // helpful=false 时 feedback 必填
+            if (!helpful && (feedback == null || feedback.trim().isEmpty())) {
+                return "❌ 反馈失败：当经验没有帮助时，必须填写 feedback 说明原因（方案过时、环境不匹配、缺少步骤等）";
+            }
+
+            Doc updated = docService.reportResult(id, helpful, feedback);
+
+            StringBuilder sb = new StringBuilder();
+            if (helpful) {
+                sb.append("✅ 感谢反馈！经验 ID:").append(id).append("「").append(existing.getTitle()).append("」\n");
+                sb.append("已记录为「有帮助」，成功次数 +1。");
+            } else {
+                sb.append("📝 反馈已记录。经验 ID:").append(id).append("「").append(existing.getTitle()).append("」\n");
+                sb.append("已记录为「没有帮助」，失败次数 +1。\n");
+                sb.append("**原因**: ").append(feedback).append("\n\n");
+
+                if (newExperienceId != null) {
+                    Doc newDoc = docService.getById(newExperienceId);
+                    if (newDoc != null) {
+                        docService.linkExperiences(id, newExperienceId);
+                        sb.append("🔗 已将旧经验（ID:").append(id).append("）和新经验（ID:").append(newExperienceId)
+                          .append("「").append(newDoc.getTitle()).append("」）互相关联。\n");
+                        sb.append("后续 AI 查看任一经验时都能看到另一篇，获得更完整的参考。");
+                    } else {
+                        sb.append("⚠️ 未找到 newExperienceId:").append(newExperienceId).append("，关联未建立。请确认新经验ID是否正确。");
+                    }
+                } else {
+                    sb.append("💡 建议下一步：\n");
+                    sb.append("1. 用你找到的正确方案完成任务\n");
+                    sb.append("2. 调用 get_template() 选择模板，然后 create_experience() 创建新经验\n");
+                    sb.append("3. 再次调用 report_experience_result()，传入 newExperienceId 参数关联新旧经验");
+                }
+            }
+
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.reportExperienceResult: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "反馈失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /**
      * 获取创建经验模板
      */
     @Tool(name = "get_template", description = "【创建经验前必须调用】获取经验模板。不传type时返回所有可用模板列表（含适用场景），传type时返回指定模板的完整结构和填写指南。")
@@ -377,7 +464,8 @@ public class ExpHubTools {
             @ToolParam(description = "分类，如：服务器、开发、运维、部署等，不需要修改时传空字符串即可") String category,
             @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
             @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
-            @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary) {
+            @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary,
+            @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}", id, title);
@@ -402,6 +490,7 @@ public class ExpHubTools {
             if (tags != null && !tags.isEmpty()) updateDoc.setTags(tags);
             if (aliases != null && !aliases.isEmpty()) updateDoc.setAliases(aliases);
             if (summary != null && !summary.isEmpty()) updateDoc.setSummary(summary);
+            if (relatedIds != null && !relatedIds.isEmpty()) updateDoc.setRelatedIds(relatedIds);
             
             docService.update(id, updateDoc);
             

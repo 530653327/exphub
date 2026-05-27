@@ -147,7 +147,7 @@ public class DocService {
 
         callLogService.logSearch(originalKeyword, (int) total, records);
         if (assistant != null) {
-            for (Doc doc : records) updateCallResult(doc.getId(), true);
+            for (Doc doc : records) incrementCallCount(doc.getId());
         }
         return result;
     }
@@ -210,7 +210,7 @@ public class DocService {
         
         if (assistant != null) {
             for (Doc doc : result.getRecords()) {
-                updateCallResult(doc.getId(), true);
+                incrementCallCount(doc.getId());
             }
         }
         
@@ -366,8 +366,8 @@ public class DocService {
                 if (doc.getApiKey() != null && !assistant.getApiKey().equals(doc.getApiKey())) {
                     return null; // 不可见
                 }
-                // MCP/API 调用查看详情时，增加调用计数
-                updateCallResult(id, true);
+                // MCP/API 调用查看详情时，增加引用计数
+                incrementCallCount(id);
             }
         }
         return doc;
@@ -449,6 +449,50 @@ public class DocService {
             doc.setFailCount(doc.getFailCount() + 1);
         }
         docMapper.updateById(doc);
+    }
+
+    /**
+     * AI 反馈经验是否有帮助（核心价值指标）
+     * success/fail 计数完全由 AI 助手主动反馈决定，而非代码逻辑判断
+     */
+    @Transactional
+    public Doc reportResult(Long docId, boolean helpful, String feedback) {
+        if (docId == null) return null;
+        Doc doc = docMapper.selectById(docId);
+        if (doc == null) return null;
+        if (helpful) {
+            doc.setSuccessCount(doc.getSuccessCount() + 1);
+        } else {
+            doc.setFailCount(doc.getFailCount() + 1);
+        }
+        docMapper.updateById(doc);
+        callLogService.logFeedback(doc, helpful, feedback);
+        return doc;
+    }
+
+    /**
+     * 双向关联两篇经验（互相引用）
+     * 在 docs 的 related_ids 字段中互相添加对方的 ID
+     */
+    @Transactional
+    public void linkExperiences(Long docId1, Long docId2) {
+        if (docId1 == null || docId2 == null) return;
+        // 给 doc1 加上 doc2
+        addRelatedId(docId1, docId2);
+        // 给 doc2 加上 doc1
+        addRelatedId(docId2, docId1);
+    }
+
+    private void addRelatedId(Long targetId, Long relatedId) {
+        Doc target = docMapper.selectById(targetId);
+        if (target == null) return;
+        String current = target.getRelatedIds();
+        if (current == null || current.isEmpty()) {
+            target.setRelatedIds(String.valueOf(relatedId));
+        } else if (!current.contains(String.valueOf(relatedId))) {
+            target.setRelatedIds(current + "," + relatedId);
+        }
+        docMapper.updateById(target);
     }
 
     /**

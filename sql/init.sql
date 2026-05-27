@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS docs (
     rating          DECIMAL(3,2) DEFAULT 5.00 COMMENT '平均评分 1-5',
     rating_count    INT DEFAULT 0 COMMENT '评分次数',
     status          VARCHAR(20) DEFAULT 'ACTIVE' COMMENT 'ACTIVE / COMPLETED / BROKEN / DEPRECATED',
+    related_ids     VARCHAR(500) COMMENT '关联经验ID，逗号分隔（互相引用的替代经验）',
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_category (category),

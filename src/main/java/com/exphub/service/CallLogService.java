@@ -133,17 +133,17 @@ public class CallLogService {
     @Transactional
     public CallLog logDelete(Long docId, String docTitle) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
-        
+
         CallLog log = new CallLog();
         log.setAction("DELETE");
         log.setDocId(docId);
         log.setDocTitle(docTitle);
         log.setDetail("删除经验");
-        
+
         if (assistant != null) {
             log.setApiKey(assistant.getApiKey());
             log.setCallerName(assistant.getAssistantName());
-            
+
             assistant.setTotalCalls(assistant.getTotalCalls() + 1);
             assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
             assistant.setLastCallAt(LocalDateTime.now());
@@ -152,7 +152,35 @@ public class CallLogService {
             log.setApiKey("MANUAL");
             log.setCallerName("后台管理");
         }
-        
+
+        callLogMapper.insert(log);
+        return log;
+    }
+
+    // 记录 AI 反馈（经验是否有帮助）
+    @Transactional
+    public CallLog logFeedback(Doc doc, boolean helpful, String feedback) {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+
+        CallLog log = new CallLog();
+        log.setAction(helpful ? "HELPFUL" : "NOT_HELPFUL");
+        log.setDocId(doc.getId());
+        log.setDocTitle(doc.getTitle());
+        log.setDetail(feedback != null ? feedback : "");
+
+        if (assistant != null) {
+            log.setApiKey(assistant.getApiKey());
+            log.setCallerName(assistant.getAssistantName());
+
+            assistant.setTotalCalls(assistant.getTotalCalls() + 1);
+            assistant.setSuccessCalls(assistant.getSuccessCalls() + 1);
+            assistant.setLastCallAt(LocalDateTime.now());
+            assistantMapper.updateById(assistant);
+        } else {
+            log.setApiKey("MANUAL");
+            log.setCallerName("后台管理");
+        }
+
         callLogMapper.insert(log);
         return log;
     }

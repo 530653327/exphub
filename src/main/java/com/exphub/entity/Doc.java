@@ -26,6 +26,7 @@ public class Doc {
     private Integer failCount;      // 失败次数
     private BigDecimal rating;       // 评分
     private Integer ratingCount;     // 评分次数
+    private String relatedIds;       // 关联经验ID，逗号分隔（互相引用的替代经验）
     private String status;           // ACTIVE/BROKEN/DEPRECATED
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
