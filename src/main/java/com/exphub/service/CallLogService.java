@@ -194,6 +194,35 @@ public class CallLogService {
         return callLogMapper.selectPage(p, wrapper);
     }
 
+    /**
+     * 删除单条日志
+     */
+    @Transactional
+    public boolean deleteLog(Long id) {
+        return callLogMapper.deleteById(id) > 0;
+    }
+
+    /**
+     * 批量删除日志
+     */
+    @Transactional
+    public boolean deleteBatch(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return false;
+        return callLogMapper.deleteBatchIds(ids) > 0;
+    }
+
+    /**
+     * 按条件清理日志（支持按时间范围清理）
+     */
+    @Transactional
+    public int cleanLogs(String beforeTime) {
+        QueryWrapper<CallLog> wrapper = new QueryWrapper<>();
+        if (beforeTime != null && !beforeTime.isEmpty()) {
+            wrapper.lt("created_at", beforeTime);
+        }
+        return callLogMapper.delete(wrapper);
+    }
+
     public Map<String, Object> getStats() {
         Map<String, Object> stats = new HashMap<>();
         long total = callLogMapper.selectCount(null);

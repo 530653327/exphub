@@ -6,6 +6,7 @@ import com.exphub.entity.CallLog;
 import com.exphub.service.CallLogService;
 import org.springframework.beans.factory.annotation.Autowired;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,5 +43,26 @@ public class CallLogController {
         data.put("pageSize", result.getSize());
         data.put("list", result.getRecords());
         return R.ok(data);
+    }
+
+    // 删除单条日志
+    @DeleteMapping("/{id}")
+    public R<Void> delete(@PathVariable Long id) {
+        callLogService.deleteLog(id);
+        return R.ok(null);
+    }
+
+    // 批量删除日志（body 传 id 列表）
+    @DeleteMapping("/batch")
+    public R<Void> deleteBatch(@RequestBody List<Long> ids) {
+        callLogService.deleteBatch(ids);
+        return R.ok(null);
+    }
+
+    // 按时间清理日志（删除指定时间之前的日志）
+    @DeleteMapping("/clean")
+    public R<Integer> clean(@RequestParam String beforeTime) {
+        int deleted = callLogService.cleanLogs(beforeTime);
+        return R.ok(deleted);
     }
 }
