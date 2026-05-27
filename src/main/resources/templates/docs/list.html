@@ -60,6 +60,16 @@
         <div class="topbar">
             <h4 class="mb-0">经验管理</h4>
             <div class="d-flex align-items-center">
+                <select class="form-control mr-2" id="templateTypeFilter" onchange="doFilter()" style="width:160px;border-radius:20px;height:42px;">
+                    <option value="">全部类型</option>
+                    <option value="problem_solution" th:selected="${templateType == 'problem_solution'}">🛠️ 问题方案</option>
+                    <option value="knowledge_doc" th:selected="${templateType == 'knowledge_doc'}">📚 知识文档</option>
+                    <option value="todo_list" th:selected="${templateType == 'todo_list'}">✅ 待办事项</option>
+                    <option value="bug_fix" th:selected="${templateType == 'bug_fix'}">🐛 Bug修复</option>
+                    <option value="config_guide" th:selected="${templateType == 'config_guide'}">⚙️ 配置指南</option>
+                    <option value="how_to" th:selected="${templateType == 'how_to'}">📖 操作指南</option>
+                    <option value="schedule_plan" th:selected="${templateType == 'schedule_plan'}">📅 计划排期</option>
+                </select>
                 <div class="input-group" style="width: 300px;">
                     <input type="text" class="form-control search-box" placeholder="搜索经验或输入ID精确查找..." id="searchInput" th:value="${keyword}">
                     <div class="input-group-append">
@@ -79,7 +89,19 @@
                 <span th:if="${keyword != null && keyword != ''}">
                     搜索 "<strong th:text="${keyword}"></strong>" 的结果：共 <span th:text="${totalRows}">0</span> 条
                 </span>
-                <span th:unless="${keyword != null && keyword != ''}">全部经验，共 <span th:text="${totalRows}">0</span> 条</span>
+                <span th:if="${templateType != null && templateType != ''}">
+                    <span th:if="${keyword != null && keyword != ''}">，</span>类型：<strong th:switch="${templateType}">
+                        <span th:case="'problem_solution'">🛠️ 问题方案</span>
+                        <span th:case="'knowledge_doc'">📚 知识文档</span>
+                        <span th:case="'todo_list'">✅ 待办事项</span>
+                        <span th:case="'bug_fix'">🐛 Bug修复</span>
+                        <span th:case="'config_guide'">⚙️ 配置指南</span>
+                        <span th:case="'how_to'">📖 操作指南</span>
+                        <span th:case="'schedule_plan'">📅 计划排期</span>
+                        <span th:case="*">其他</span>
+                    </strong>
+                </span>
+                <span th:if="${keyword == null || keyword == ''}"><span th:if="${templateType == null || templateType == ''}">全部经验，共 <span th:text="${totalRows}">0</span> 条</span></span>
             </div>
             <div class="card-body p-0" id="docList">
                 <div class="doc-item" th:each="doc : ${docs}">
@@ -131,14 +153,14 @@
                 <nav>
                     <ul class="pagination justify-content-center mb-0">
                         <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, page=${currentPage - 1})}">&laquo; 上一页</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, page=${currentPage - 1})}">&laquo; 上一页</a>
                         </li>
                         <li class="page-item" th:each="i : ${#numbers.sequence(1, totalPages)}"
                             th:classappend="${i == currentPage} ? 'active'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, page=${i})}" th:text="${i}">1</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, page=${i})}" th:text="${i}">1</a>
                         </li>
                         <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, page=${currentPage + 1})}">下一页 &raquo;</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, page=${currentPage + 1})}">下一页 &raquo;</a>
                         </li>
                     </ul>
                 </nav>
@@ -153,7 +175,21 @@
 
         function doSearch() {
             var keyword = document.getElementById('searchInput').value.trim();
-            window.location.href = contextPath + '/docs?keyword=' + encodeURIComponent(keyword);
+            var templateType = document.getElementById('templateTypeFilter').value;
+            var url = contextPath + '/docs?keyword=' + encodeURIComponent(keyword);
+            if (templateType) url += '&templateType=' + encodeURIComponent(templateType);
+            window.location.href = url;
+        }
+
+        function doFilter() {
+            var templateType = document.getElementById('templateTypeFilter').value;
+            var keyword = document.getElementById('searchInput').value.trim();
+            var url = contextPath + '/docs';
+            var params = [];
+            if (keyword) params.push('keyword=' + encodeURIComponent(keyword));
+            if (templateType) params.push('templateType=' + encodeURIComponent(templateType));
+            if (params.length > 0) url += '?' + params.join('&');
+            window.location.href = url;
         }
 
         document.getElementById('searchInput').addEventListener('keyup', function(e) {

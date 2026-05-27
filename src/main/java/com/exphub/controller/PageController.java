@@ -86,6 +86,7 @@ public class PageController extends BaseController {
     @GetMapping("/docs")
     public String docs(HttpSession session,
                        @RequestParam(required = false) String keyword,
+                       @RequestParam(required = false) String templateType,
                        @RequestParam(defaultValue = "1") int page,
                        Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
@@ -95,6 +96,7 @@ public class PageController extends BaseController {
         model.addAttribute("active", "docs");
         model.addAttribute("pageTitle", "经验管理");
         model.addAttribute("keyword", keyword != null ? keyword : "");
+        model.addAttribute("templateType", templateType != null ? templateType : "");
 
         Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -112,12 +114,17 @@ public class PageController extends BaseController {
                 }
             } catch (NumberFormatException e) {
                 // 不是纯数字，走模糊搜索
-                result = docService.search(keyword, page, 20);
+                String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
+                result = docService.search(keyword, tt, page, 20);
             }
         } else {
-            result = docMapper.selectPage(new Page<>(page, 20),
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc> wrapper =
                 new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
-                    .orderByDesc("updated_at"));
+                    .orderByDesc("updated_at");
+            if (templateType != null && !templateType.trim().isEmpty()) {
+                wrapper.eq("template_type", templateType.trim());
+            }
+            result = docMapper.selectPage(new Page<>(page, 20), wrapper);
         }
         model.addAttribute("docs", result.getRecords());
         model.addAttribute("currentPage", result.getCurrent());
