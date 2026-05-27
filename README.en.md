@@ -26,7 +26,7 @@ When using AI coding assistants (CodeBuddy, Cursor, Copilot, etc.), do you face:
 | 🔍 **Experience Search** | AI searches relevant experiences before starting tasks |
 | ✍️ **Knowledge Capture** | Auto-structures solutions into experiences (7 templates) |
 | ✅ **Todo Management** | AI tracks/completes todos; checks on every session start |
-| 🔐 **Multi-tenant** | Per API-Key isolation, safe for multi-team/assistant use |
+| 🔐 **Multi-tenant** | Per API-Key isolation — your experiences are invisible to others, theirs to you |
 | 🌐 **Self-Service Portal** | Email registration, instant API Key, no approval needed |
 | 🔌 **MCP Protocol** | Compatible with all MCP-enabled AI clients |
 
@@ -167,7 +167,7 @@ exphub/
 ## 🔒 Security
 
 - API Key auth via `authorization-key` header
-- Per-key tenant isolation
+- Per-key tenant isolation — your AI assistants can only retrieve your own experiences; others' experiences are completely invisible to you
 - Granular permissions (search/create/update)
 - BCrypt password encryption
 - Sensitive data protection reminders
