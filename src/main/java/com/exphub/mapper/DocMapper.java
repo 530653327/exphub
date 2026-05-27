@@ -16,6 +16,8 @@ public interface DocMapper extends BaseMapper<Doc> {
 
     /**
      * FULLTEXT 搜索（BOOLEAN MODE），按相关性 + 调用次数排序
+     * @param keyword  BOOLEAN MODE 查询词（含 + 前缀等操作符）
+     * @param sortKeyword  NATURAL LANGUAGE MODE 排序词（纯净关键词，不含操作符）
      */
     @Select("<script>" +
         "SELECT * FROM docs " +
@@ -23,11 +25,12 @@ public interface DocMapper extends BaseMapper<Doc> {
         "<if test='apiKey != null'>AND (api_key = #{apiKey} OR api_key IS NULL)</if> " +
         "<if test='templateType != null and templateType != \"\"'>AND template_type = #{templateType}</if> " +
         "<if test='statusList != null and statusList.size() > 0'>AND status IN <foreach item='s' collection='statusList' open='(' separator=',' close=')'>#{s}</foreach></if> " +
-        "ORDER BY MATCH(title, content, aliases, summary, tags) AGAINST(#{keyword} IN NATURAL LANGUAGE MODE) DESC, call_count DESC " +
+        "ORDER BY MATCH(title, content, aliases, summary, tags) AGAINST(#{sortKeyword} IN NATURAL LANGUAGE MODE) DESC, call_count DESC " +
         "LIMIT #{offset}, #{limit}" +
         "</script>")
     List<Doc> searchByFulltext(
         @Param("keyword") String keyword,
+        @Param("sortKeyword") String sortKeyword,
         @Param("apiKey") String apiKey,
         @Param("templateType") String templateType,
         @Param("statusList") List<String> statusList,

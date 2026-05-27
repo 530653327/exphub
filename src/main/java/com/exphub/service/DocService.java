@@ -101,32 +101,55 @@ public class DocService {
         if (includeStatus != null && !includeStatus.trim().isEmpty()) {
             statusList = Arrays.asList(includeStatus.split(","));
         }
-        
-        // ===== 有搜索关键词：优先使用 FULLTEXT，命中率更高、性能更好 =====
+
+        // ===== 有搜索关键词：三级降级策略 =====
         if (keyword != null && !keyword.trim().isEmpty()) {
-            String ftQuery = toFulltextQuery(keyword.trim());
+            String kw = keyword.trim();
+            String sortKeyword = toCleanKeyword(kw);
+
+            // 第一级：原始关键词 FULLTEXT 搜索（向后兼容，对短关键词效果良好）
+            String ftQuery = toFulltextQuery(kw);
             long total = docMapper.countByFulltext(ftQuery, apiKey, tt, statusList);
-            
+
             if (total > 0) {
-                // FULLTEXT 命中 → 按相关性 + 调用次数排序
-                long offset = (long) (page - 1) * size;
-                List<Doc> records = docMapper.searchByFulltext(ftQuery, apiKey, tt, statusList, offset, (long) size);
-                
-                Page<Doc> result = new Page<>(page, size);
-                result.setRecords(records);
-                result.setTotal(total);
-                
-                callLogService.logSearch(keyword, (int) total, records);
-                if (assistant != null) {
-                    for (Doc doc : records) updateCallResult(doc.getId(), true);
-                }
-                return result;
+                return buildFulltextResult(kw, ftQuery, sortKeyword, apiKey, tt, statusList, page, size, total, assistant);
             }
-            // FULLTEXT 无结果 → 降级到 LIKE 兜底（处理特殊字符/极短词等场景）
+
+            // 第二级：ngram 2-gram 拆分后重试 FULLTEXT（解决长中文短语被当整体匹配的问题）
+            String ngramQuery = toNgramFulltextQuery(kw);
+            if (!ngramQuery.equals(ftQuery)) {
+                log.debug("FULLTEXT 原始查询无结果，尝试 ngram 重试: '{}' -> '{}'", kw, ngramQuery);
+                total = docMapper.countByFulltext(ngramQuery, apiKey, tt, statusList);
+                if (total > 0) {
+                    return buildFulltextResult(kw, ngramQuery, sortKeyword, apiKey, tt, statusList, page, size, total, assistant);
+                }
+            }
+
+            // 第三级：LIKE 兜底（处理特殊字符/极短词等 FULLTEXT 无法覆盖的场景）
         }
-        
+
         // ===== LIKE 兜底或空关键词 =====
         return searchWithLike(keyword, templateType, includeStatus, page, size);
+    }
+
+    /**
+     * 构建 FULLTEXT 搜索结果
+     */
+    private Page<Doc> buildFulltextResult(String originalKeyword, String ftQuery, String sortKeyword,
+                                          String apiKey, String tt, List<String> statusList,
+                                          int page, int size, long total, AiAssistant assistant) {
+        long offset = (long) (page - 1) * size;
+        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, tt, statusList, offset, (long) size);
+
+        Page<Doc> result = new Page<>(page, size);
+        result.setRecords(records);
+        result.setTotal(total);
+
+        callLogService.logSearch(originalKeyword, (int) total, records);
+        if (assistant != null) {
+            for (Doc doc : records) updateCallResult(doc.getId(), true);
+        }
+        return result;
     }
     
     /**
@@ -203,28 +226,114 @@ public class DocService {
         // 移除 BOOLEAN MODE 特殊字符（+ -> < ( ) ~ * " @），替换为空格分词
         String cleaned = keyword.replaceAll("[+\\-><\\(\\)~\\*\"@]", " ");
         String[] tokens = cleaned.split("[\\s,，、]+");
-        
+
         List<String> parts = new ArrayList<>();
         for (String token : tokens) {
             String t = token.trim();
             if (t.isEmpty()) continue;
             parts.add(t);
         }
-        
+
         if (parts.isEmpty()) {
             // 全是特殊字符，返回原始内容去掉符号
             return keyword.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5]", " ");
         }
-        
+
         if (parts.size() == 1) {
             return parts.get(0);
         }
-        
+
         // 多关键词：+前缀 = AND 逻辑
         StringBuilder sb = new StringBuilder();
         for (String part : parts) {
             if (sb.length() > 0) sb.append(" ");
             sb.append("+").append(part);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 生成纯净关键词（不含 BOOLEAN MODE 操作符），用于 NATURAL LANGUAGE MODE 排序
+     */
+    private String toCleanKeyword(String keyword) {
+        return keyword.replaceAll("[+\\-><\\(\\)~\\*\"@]", " ")
+                .replaceAll("[\\s,，、]+", " ")
+                .trim();
+    }
+
+    /**
+     * ngram 2-gram 滑动窗口分词版 FULLTEXT 查询
+     * 对连续中文字符串（>2字符）按 2 字符滑动窗口拆分为 OR 组，
+     * 解决长中文短语在 BOOLEAN MODE 下被当整体匹配导致零命中问题。
+     *
+     * 示例：
+     *   "ExpHub 开发部署完整流程" → "+ExpHub +(开发 发部 部署 署完 完整 整流 流程)"
+     *   "搜索优化" → "搜索 优化" (各2字符，无需拆分)
+     *   "MySQL8配置" → "+MySQL8 +配置" (中英分离)
+     */
+    private String toNgramFulltextQuery(String keyword) {
+        String cleaned = keyword.replaceAll("[+\\-><\\(\\)~\\*\"@]", " ");
+        String[] rawTokens = cleaned.split("[\\s,，、]+");
+
+        List<String> andParts = new ArrayList<>();
+
+        for (String token : rawTokens) {
+            String t = token.trim();
+            if (t.isEmpty()) continue;
+
+            // 提取中文和非中文部分
+            String chinesePart = extractChinese(t);
+            String nonChinesePart = t.replaceAll("[\\u4e00-\\u9fa5]", "").trim();
+
+            // 非中文部分（英文、数字等）作为独立 AND 条件
+            if (!nonChinesePart.isEmpty()) {
+                andParts.add(nonChinesePart);
+            }
+
+            // 中文部分处理
+            if (chinesePart.length() == 1) {
+                andParts.add(chinesePart);
+            } else if (chinesePart.length() == 2) {
+                // 2 字符中文无需拆分，直接使用
+                andParts.add(chinesePart);
+            } else if (chinesePart.length() > 2) {
+                // >2 字符中文：2-gram 滑动窗口，用 OR 组合
+                List<String> ngrams = new ArrayList<>();
+                for (int i = 0; i <= chinesePart.length() - 2; i++) {
+                    ngrams.add(chinesePart.substring(i, i + 2));
+                }
+                // +(token1 token2 token3) = 至少命中一个 2-gram（OR 逻辑），同时作为整体参与 AND
+                andParts.add("(" + String.join(" ", ngrams) + ")");
+            }
+        }
+
+        if (andParts.isEmpty()) {
+            return keyword.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5]", " ");
+        }
+
+        if (andParts.size() == 1) {
+            return andParts.get(0);
+        }
+
+        // 多部分：AND 逻辑
+        StringBuilder sb = new StringBuilder();
+        for (String part : andParts) {
+            if (sb.length() > 0) sb.append(" ");
+            sb.append("+").append(part);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 提取字符串中的中文字符
+     */
+    private String extractChinese(String str) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            if (c >= '\u4e00' && c <= '\u9fa5') {
+                sb.append(c);
+            }
         }
         return sb.toString();
     }
