@@ -4,7 +4,7 @@
       "type": "sse",
       "url": "https://cloudim.club/exphub/mcp/sse",
       "headers": {
-        "authorization-key": "exp-your-api-key"
+        "authorization-key": "exp-your-api-key-免费注册获取: https://cloudim.club"
       }
     }
   }
