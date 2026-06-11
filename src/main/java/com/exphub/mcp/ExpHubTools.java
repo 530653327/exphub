@@ -88,7 +88,12 @@ public class ExpHubTools {
     /**
      * 获取经验详情
      */
-    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。")
+    /**
+     * 经验详情内容最大字符数（约 4k tokens），防止 AI 助手输出超限
+     */
+    private static final int DETAIL_CONTENT_MAX_CHARS = 4000;
+
+    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。注意：超长内容会被截断以保持 AI 输出在合理范围内。")
     public String getExperienceDetail(
             @ToolParam(description = "经验ID。") Long id) {
 
@@ -111,7 +116,22 @@ public class ExpHubTools {
         }
 
         sb.append("\n---\n\n");
-        sb.append(doc.getContent());
+
+        // 截断超长内容，防止 AI 助手输出超限
+        String content = doc.getContent();
+        boolean truncated = false;
+        if (content != null && content.length() > DETAIL_CONTENT_MAX_CHARS) {
+            content = content.substring(0, DETAIL_CONTENT_MAX_CHARS);
+            truncated = true;
+        }
+        if (content != null) {
+            sb.append(content);
+        }
+        if (truncated) {
+            sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
+                    .append(DETAIL_CONTENT_MAX_CHARS)
+                    .append(" 字），如需完整内容请分段说明具体关注的部分。");
+        }
 
         // 关联经验详情
         if (doc.getRelatedIds() != null && !doc.getRelatedIds().isEmpty()) {
