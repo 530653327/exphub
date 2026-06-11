@@ -4,7 +4,7 @@ server:
     context-path: /exphub
   forward-headers-strategy: native
   tomcat:
-    max-http-form-post-size: 2MB
+    max-http-form-post-size: 5MB
     connection-timeout: 120000
 
 spring:
