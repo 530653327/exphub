@@ -229,18 +229,6 @@ public class PageController extends BaseController {
         return "logs/list";
     }
 
-    // 待办看板
-    @GetMapping("/kanban")
-    public String kanban(HttpSession session, Model model, HttpServletRequest request) {
-        User user = (User) session.getAttribute("user");
-        if (user == null) return "redirect:/login";
-
-        addContextPath(model, request);
-        model.addAttribute("active", "kanban");
-        model.addAttribute("pageTitle", "待办看板");
-        return "kanban/index";
-    }
-
     // 模板管理
     @GetMapping("/templates")
     public String templates(HttpSession session, Model model, HttpServletRequest request) {
