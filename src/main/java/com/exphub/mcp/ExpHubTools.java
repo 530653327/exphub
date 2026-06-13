@@ -131,7 +131,9 @@ public class ExpHubTools {
         if (truncated) {
             sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
                     .append(DETAIL_CONTENT_MAX_CHARS)
-                    .append(" 字），如需完整内容请分段说明具体关注的部分。");
+                    .append(" 字）。如需完整内容请使用 export_document(id=")
+                    .append(id)
+                    .append(") 导出完整文档，或分段说明具体关注的部分。");
         }
 
         // 关联经验详情
@@ -153,6 +155,78 @@ public class ExpHubTools {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * 导出完整文档内容（无截断，适合长文档维护）
+     */
+    @Tool(name = "export_document", description = "【文档维护专用】将经验完整导出为Markdown内容（无字符限制截断）。适用于超长文档（如项目需求文档、规格说明书等）。返回的内容可以直接保存为本地.md文件进行编辑。注意：短经验（≤4000字）请直接使用 get_experience_detail 查看。")
+    public String exportDocument(
+            @ToolParam(description = "经验ID（必填）") Long id) {
+
+        try {
+            Doc doc = docService.getById(id);
+            if (doc == null) {
+                return "未找到ID为" + id + "的经验";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("📄 文档导出成功！经验 ID:").append(id).append("「").append(doc.getTitle()).append("」\n\n");
+            sb.append("内容已完整导出（共 ").append(doc.getContent() != null ? doc.getContent().length() : 0).append(" 字）。\n\n");
+            sb.append("---\n\n");
+
+            String content = doc.getContent();
+            if (content != null) {
+                sb.append(content);
+            }
+
+            sb.append("\n\n---\n").append("📌 文档结尾");
+
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.exportDocument: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "导出文档失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 导入完整文档内容（信任式，无截断检测，与 export_document 配对使用）
+     */
+    @Tool(name = "import_document", description = "【文档维护专用】将本地编辑好的完整Markdown内容上传并替换指定经验的内容。与 export_document 配对使用。上传后自动创建版本历史快照。此工具不做内容截断检测，适合用于大型文档的全量替换。对于小修改，仍可使用 update_experience。")
+    public String importDocument(
+            @ToolParam(description = "经验ID（必填）") Long id,
+            @ToolParam(description = "完整的Markdown正文内容，将替换整个经验内容") String content,
+            @ToolParam(description = "修改作者名称（可选）。如果是本地编辑后上传，可以备注修改者。") String authorName) {
+
+        try {
+            log.info("ExpHubTools.importDocument: ENTRY - id={}, contentLength={}", id, content != null ? content.length() : 0);
+
+            // 权限验证
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+
+            // 检查经验是否存在
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+
+            Doc updateDoc = new Doc();
+            updateDoc.setId(id);
+            updateDoc.setContent(content);
+            if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
+
+            docService.update(id, updateDoc);
+
+            return "✅ 文档导入成功！\n\n**ID**: " + id + "\n**标题**: " + existing.getTitle() + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n**内容长度**: " + content.length() + " 字\n\n文档已更新，当前版本保留了完整内容。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.importDocument: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "导入文档失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
     }
 
     /**
@@ -211,11 +285,13 @@ public class ExpHubTools {
                     sb.append(content);
                 }
                 if (truncated) {
-                    sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
-                            .append(DETAIL_CONTENT_MAX_CHARS)
-                            .append(" 字），如需完整内容请分段说明具体关注的部分。");
-                }
-                sb.append("\n\n---\n> 📌 此为历史版本 v").append(version).append(" 的内容，当前最新版本为 v").append(doc.getVersion())
+                sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
+                        .append(DETAIL_CONTENT_MAX_CHARS)
+                        .append(" 字）。如需完整内容请使用 export_document(id=")
+                        .append(id)
+                        .append(") 导出完整文档，或分段说明具体关注的部分。");
+            }
+            sb.append("\n\n---\n> 📌 此为历史版本 v").append(version).append(" 的内容，当前最新版本为 v").append(doc.getVersion())
                   .append("。如需查看最新内容请使用 get_experience_detail(id=").append(id).append(")。");
 
                 return sb.toString();
@@ -577,20 +653,21 @@ public class ExpHubTools {
     /**
      * 更新经验
      */
-    @Tool(name = "update_experience", description = "更新已有经验。当发现经验有错误或需要补充内容时，使用此工具更新。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
+    @Tool(name = "update_experience", description = "更新已有经验。用于修正错误或补充短内容。如果是要整体更新长篇文档（>4000字），建议使用 export_document + import_document 流程以避免内容丢失。如果确定要覆盖长文档，请设置 force=true。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
             @ToolParam(description = "经验标题，不需要修改时传空字符串即可") String title,
-            @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可。🔒 严禁包含账号密码、API密钥、Token等敏感信息") String content,
+            @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可。注意：对于长文档（>4000字），如果提供的内容明显比原文档短，系统会自动检测并提示改用 export/import 流程，除非设置 force=true。🔒 严禁包含账号密码、API密钥、Token等敏感信息") String content,
             @ToolParam(description = "分类，如：服务器、开发、运维、部署等，不需要修改时传空字符串即可") String category,
             @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
             @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
             @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary,
             @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds,
-            @ToolParam(description = "修改作者名称。如果你是更新者且想标注自己的名字，传你的AI助手名称。不需要修改时传空字符串即可。") String authorName) {
+            @ToolParam(description = "修改作者名称。如果你是更新者且想标注自己的名字，传你的AI助手名称。不需要修改时传空字符串即可。") String authorName,
+            @ToolParam(description = "强制覆盖开关。设为true可跳过截断检测，允许用较短的内容覆盖长文档（当确认丢失不用的部分时使用）。默认false。") Boolean force) {
         
         try {
-            log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}", id, title);
+            log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
             
             // 权限验证
             AiAssistant assistant = getCaller();
@@ -602,6 +679,38 @@ public class ExpHubTools {
             Doc existing = docService.getById(id);
             if (existing == null) {
                 return "❌ 未找到ID为" + id + "的经验";
+            }
+            
+            // === 截断更新检测（策略二：自动拦截+引导） ===
+            String storedContent = existing.getContent();
+            if (content != null && !content.isEmpty() && storedContent != null
+                    && storedContent.length() > DETAIL_CONTENT_MAX_CHARS) {
+                
+                String contentHead = content.substring(0, Math.min(100, content.length()));
+                boolean isPrefixMatch = storedContent.startsWith(contentHead);
+                boolean isShorter = content.length() < storedContent.length();
+                
+                if (isShorter && isPrefixMatch) {
+                    if (force != null && force) {
+                        // force=true 逃生门：用户确认要覆盖
+                        log.info("ExpHubTools.updateExperience: truncation detected but force=true, proceeding. id={}", id);
+                    } else {
+                        // 拦截并引导到正确的文档维护流程
+                        log.warn("ExpHubTools.updateExperience: truncation detected, blocked. id={}, contentLen={}, storedLen={}",
+                                id, content.length(), storedContent.length());
+                        return "⚠️ **检测到截断更新风险！**\n\n"
+                             + "你提供的 content（" + content.length() + "字）比现有文档（" + storedContent.length() + "字）短了很多，\n"
+                             + "且新内容是旧文档的开头部分，这很可能是因为 get_experience_detail 只返回了前 " + DETAIL_CONTENT_MAX_CHARS + " 字，\n"
+                             + "你只看到了部分内容，直接 update 会丢失未展示的部分。\n\n"
+                             + "📋 **请改用文档维护专用流程：**\n"
+                             + "1. export_document(id=" + id + ") → 导出完整文档（无截断）\n"
+                             + "2. 将返回的内容保存为本地 .md 文件\n"
+                             + "3. 修改 .md 文件（人类或AI均可编辑）\n"
+                             + "4. 用 read_file 读取修改后的文件内容\n"
+                             + "5. import_document(id=" + id + ", content=...) → 上传完整版本\n\n"
+                             + "⚡ **如果确认要覆盖**（例如想精简文档为短版本），请设置 force=true 跳过此检查。";
+                    }
+                }
             }
             
             Doc updateDoc = new Doc();
