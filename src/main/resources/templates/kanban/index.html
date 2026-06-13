@@ -323,11 +323,12 @@
                 </div>
                 <div class="kanban-card-list" id="list-done"></div>
             </div>
-        </div>
-    </div>
 
-    <script>
-    // ===== 看板 JavaScript =====
+            <script th:inline="javascript">
+            /*<![CDATA[*/
+            var contextPath = /*[[${contextPath}]]*/ '/exphub';
+            /*]]>*/
+            // ===== 看板 JavaScript =====
     let tasks = [];
 
     // Priority ordering
@@ -558,5 +559,7 @@
         });
     });
     </script>
+        </div>
+    </div>
 </body>
 </html>
