@@ -3,6 +3,7 @@ package com.exphub.mcp;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.DocTemplate;
+import com.exphub.entity.DocVersion;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
@@ -152,6 +153,101 @@ public class ExpHubTools {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * 获取经验的历史版本内容
+     */
+    @Tool(name = "get_experience_history", description = "获取经验的某个历史版本内容。不传version时返回所有历史版本列表（含版本号、更新者、更新时间），传version时返回该版本的完整内容。当 get_experience_detail 返回的当前版本引用了历史版本时，可通过此工具读取被引用的历史版本内容。")
+    public String getExperienceHistory(
+            @ToolParam(description = "经验ID。") Long id,
+            @ToolParam(description = "可选。要读取的特定版本号，如 7 表示读取 v7 的历史内容。不传则返回所有历史版本列表。") Integer version) {
+
+        try {
+            // 检查经验是否存在
+            Doc doc = docService.getById(id);
+            if (doc == null) {
+                return "未找到ID为" + id + "的经验";
+            }
+
+            List<DocVersion> versions = docService.getVersions(id);
+
+            if (version != null) {
+                // 查找指定版本
+                DocVersion target = null;
+                for (DocVersion v : versions) {
+                    if (v.getVersion() == version) {
+                        target = v;
+                        break;
+                    }
+                }
+                if (target == null) {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("未找到经验 ID:").append(id).append(" 的 v").append(version).append(" 历史版本。\n\n");
+                    sb.append("当前最新版本: v").append(doc.getVersion()).append("\n");
+                    if (!versions.isEmpty()) {
+                        sb.append("可用历史版本: ");
+                        for (DocVersion v : versions) {
+                            sb.append("v").append(v.getVersion()).append(" ");
+                        }
+                        sb.append("\n");
+                    }
+                    return sb.toString();
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("# ").append(doc.getTitle()).append("（v").append(version).append(" 历史版本）\n\n");
+                sb.append("**更新者**: ").append(target.getUpdatedName() != null ? target.getUpdatedName() : "未知").append("\n");
+                sb.append("**更新时间**: ").append(target.getCreatedAt() != null ? target.getCreatedAt() : "未知").append("\n");
+                sb.append("**当前最新版本**: v").append(doc.getVersion()).append("\n\n---\n\n");
+
+                String content = target.getContent();
+                boolean truncated = false;
+                if (content != null && content.length() > DETAIL_CONTENT_MAX_CHARS) {
+                    content = content.substring(0, DETAIL_CONTENT_MAX_CHARS);
+                    truncated = true;
+                }
+                if (content != null) {
+                    sb.append(content);
+                }
+                if (truncated) {
+                    sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
+                            .append(DETAIL_CONTENT_MAX_CHARS)
+                            .append(" 字），如需完整内容请分段说明具体关注的部分。");
+                }
+                sb.append("\n\n---\n> 📌 此为历史版本 v").append(version).append(" 的内容，当前最新版本为 v").append(doc.getVersion())
+                  .append("。如需查看最新内容请使用 get_experience_detail(id=").append(id).append(")。");
+
+                return sb.toString();
+            }
+
+            // 不传 version → 列出所有历史版本
+            if (versions.isEmpty()) {
+                return "经验 ID:" + id + "「" + doc.getTitle() + "」没有历史版本。当前仅有 v" + doc.getVersion() + "。";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("# ").append(doc.getTitle()).append(" — 历史版本列表\n\n");
+            sb.append("**当前版本**: v").append(doc.getVersion());
+            sb.append(" | **状态**: ").append(getStatusLabel(doc.getStatus())).append("\n\n");
+            sb.append("| 版本号 | 更新者 | 更新时间 |\n");
+            sb.append("|--------|--------|----------|\n");
+            for (DocVersion v : versions) {
+                sb.append("| v").append(v.getVersion())
+                  .append(" | ").append(v.getUpdatedName() != null ? v.getUpdatedName() : "未知")
+                  .append(" | ").append(v.getCreatedAt() != null ? v.getCreatedAt() : "未知")
+                  .append(" |\n");
+            }
+            sb.append("\n需要查看某个历史版本的内容，请调用 get_experience_history(id=").append(id)
+              .append(", version=版本号)。\n");
+            sb.append("如需查看当前最新版本内容，请调用 get_experience_detail(id=").append(id).append(")。");
+
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.getExperienceHistory: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "获取历史版本失败: " + e.getMessage();
+        }
     }
 
     /**
