@@ -32,6 +32,7 @@ public class SecurityConfig {
                 .requestMatchers("/login", "/").permitAll()
                 .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
                 .requestMatchers("/mcp/**", "/api/**").permitAll()
+                .requestMatchers("/share/**").permitAll()
                 .requestMatchers("/portal/**").permitAll()
                 .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()

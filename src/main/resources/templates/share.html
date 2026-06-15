@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${doc != null ? doc.title + ' - ExpHub 分享' : '分享链接无效 - ExpHub'}">经验分享 - ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5.2.0/github-markdown.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .share-header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            padding: 20px 0;
+            text-align: center;
+        }
+        .share-header .brand { font-size: 1.6rem; font-weight: bold; }
+        .share-header .brand span { color: #e94560; }
+        .share-header .subtitle { font-size: 0.85rem; opacity: 0.7; margin-top: 4px; }
+        .share-container { max-width: 900px; margin: 30px auto; padding: 0 20px; }
+        .doc-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
+        .doc-card .card-body { padding: 40px; }
+        .doc-title { font-size: 1.6rem; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
+        .doc-meta { font-size: 0.85rem; color: #999; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #f0f0f0; }
+        .doc-meta i { width: 16px; }
+        .doc-meta span { margin-right: 18px; }
+        .markdown-body { font-size: 0.95rem; line-height: 1.7; }
+        .tag-color {
+            display: inline-block; padding: 4px 12px; border-radius: 15px;
+            font-size: 0.8rem; font-weight: 500; margin-right: 4px; margin-bottom: 4px;
+        }
+        .tag-color:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
+        .tag-color:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
+        .tag-color:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
+        .tag-color:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
+        .tag-color:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
+        .tag-color:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
+        .expire-badge {
+            display: inline-block; padding: 4px 12px; border-radius: 12px;
+            font-size: 0.8rem; font-weight: 500;
+        }
+        .expire-never { background: #e8f5e9; color: #2e7d32; }
+        .expire-has { background: #fff3e0; color: #e65100; }
+        .error-container { text-align: center; padding: 80px 20px; }
+        .error-container i { font-size: 4rem; color: #e94560; opacity: 0.5; margin-bottom: 20px; }
+        .error-container h4 { color: #333; margin-bottom: 10px; }
+        .error-container p { color: #999; }
+    </style>
+</head>
+<body>
+    <!-- 头部 -->
+    <div class="share-header">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <div class="subtitle">分享的经验文档</div>
+    </div>
+
+    <div class="share-container">
+        <!-- 错误页面 -->
+        <div th:if="${error != null}" class="doc-card">
+            <div class="card-body error-container">
+                <i class="fas fa-link"></i>
+                <h4 th:text="${error}">分享链接无效</h4>
+                <p>该分享链接可能已过期或已被删除，请联系分享者获取最新链接。</p>
+            </div>
+        </div>
+
+        <!-- 正常文档 -->
+        <div th:if="${doc != null}" class="doc-card">
+            <div class="card-body">
+                <div class="doc-title" th:text="${doc.title}">文档标题</div>
+                <div class="doc-meta">
+                    <span><i class="fas fa-user mr-1"></i><span th:text="${doc.authorName}">作者</span></span>
+                    <span><i class="fas fa-folder mr-1"></i><span th:text="${doc.category ?: '未分类'}">分类</span></span>
+                    <span><i class="fas fa-clock mr-1"></i><span th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}">时间</span></span>
+                    <span>
+                        <i class="fas fa-hourglass-half mr-1"></i>
+                        <span th:if="${share.expireAt == null}" class="expire-badge expire-never">永不过期</span>
+                        <span th:if="${share.expireAt != null}" class="expire-badge expire-has">
+                            到期 <span th:text="${#temporals.format(share.expireAt, 'yyyy-MM-dd')}">日期</span>
+                        </span>
+                    </span>
+                </div>
+
+                <!-- 标签 -->
+                <div th:if="${doc.tags != null}" class="mb-3">
+                    <span th:each="tag : ${#strings.listSplit(doc.tags, ',')}"
+                          class="tag-color" th:text="${tag}">标签</span>
+                </div>
+
+                <!-- Markdown 内容 -->
+                <div class="markdown-body" id="docContent" th:data-content="${doc.content}"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@5.1.0/marked.min.js"></script>
+    <script>
+        var content = document.getElementById('docContent');
+        if (content) {
+            var raw = content.getAttribute('data-content');
+            if (raw) {
+                content.innerHTML = marked.parse(raw);
+            }
+        }
+    </script>
+</body>
+</html>

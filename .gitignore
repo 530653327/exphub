@@ -21,3 +21,6 @@ application-dev.yml
 application-prod.yml
 .env.local
 .env.production
+
+# 本地工作记忆文件
+.codebuddy/

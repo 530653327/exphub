@@ -4,12 +4,17 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.exphub.common.R;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
+import com.exphub.entity.DocShare;
 import com.exphub.entity.DocVersion;
+import com.exphub.entity.User;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.DocService;
+import com.exphub.service.DocShareService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpSession;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -20,6 +25,9 @@ public class DocController {
 
     @Autowired
     private DocService docService;
+
+    @Autowired
+    private DocShareService docShareService;
 
     // 创建文档（需校验 canCreate 权限）
     @PostMapping
@@ -153,5 +161,67 @@ public class DocController {
     @GetMapping("/categories")
     public R<List<String>> categories() {
         return R.ok(docService.getCategories());
+    }
+
+    // ========== 分享链接管理（需登录） ==========
+
+    /**
+     * 创建分享链接
+     * @param id 经验ID
+     * @param body {days: 7} 过期天数，-1=永不过期，0=当天过期
+     */
+    @PostMapping("/{id}/shares")
+    public R<Map<String, Object>> createShare(@PathVariable Long id,
+                                               @RequestBody Map<String, Object> body,
+                                               HttpSession session) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) {
+            return R.fail(401, "未登录");
+        }
+        Doc doc = docService.getById(id);
+        if (doc == null) {
+            return R.fail(404, "经验不存在");
+        }
+
+        int days = -1; // 默认永不过期
+        if (body.containsKey("days")) {
+            days = ((Number) body.get("days")).intValue();
+        }
+
+        String token = docShareService.createShare(id, days, user.getId());
+        String shareUrl = "/share/" + token;
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("token", token);
+        result.put("shareUrl", shareUrl);
+        result.put("days", days);
+        return R.ok(result);
+    }
+
+    /**
+     * 列出经验的分享链接
+     */
+    @GetMapping("/{id}/shares")
+    public R<List<DocShare>> listShares(@PathVariable Long id, HttpSession session) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) {
+            return R.fail(401, "未登录");
+        }
+        return R.ok(docShareService.listByDocId(id));
+    }
+
+    // ========== 分享链接删除（独立路径，跨经验） ==========
+
+    /**
+     * 删除分享链接
+     */
+    @DeleteMapping("/shares/{shareId}")
+    public R<Void> deleteShare(@PathVariable Long shareId, HttpSession session) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) {
+            return R.fail(401, "未登录");
+        }
+        docShareService.deleteShare(shareId);
+        return R.ok();
     }
 }
