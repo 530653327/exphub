@@ -137,10 +137,12 @@
                             <span th:if="${doc.status == 'COMPLETED'}" class="badge badge-completed">已完成</span>
                             <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">已失效</span>
                             <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已过期</span>
-                            <button class="btn btn-sm btn-outline-info ml-2" th:onclick="'shareDoc(' + ${doc.id} + ', \'' + ${#strings.escapeJava(doc.title)} + '\')'" title="分享">
+                            <button class="btn btn-sm btn-outline-info ml-2 share-btn"
+                                    th:attr="data-doc-id=${doc.id}, data-doc-title=${doc.title}" title="分享">
                                 <i class="fas fa-share-alt"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-danger ml-2" th:onclick="'deleteDoc(' + ${doc.id} + ')'" title="删除">
+                            <button class="btn btn-sm btn-outline-danger ml-2 delete-btn"
+                                    th:attr="data-doc-id=${doc.id}" title="删除">
                                 <i class="fas fa-trash"></i>
                             </button>
                         </div>
@@ -198,6 +200,22 @@
         document.getElementById('searchInput').addEventListener('keyup', function(e) {
             if (e.key === 'Enter') {
                 doSearch();
+            }
+        });
+
+        // 事件委托：分享按钮
+        document.getElementById('docList').addEventListener('click', function(e) {
+            var btn = e.target.closest('.share-btn');
+            if (btn) {
+                shareDoc(btn.getAttribute('data-doc-id'), btn.getAttribute('data-doc-title'));
+            }
+        });
+
+        // 事件委托：删除按钮
+        document.getElementById('docList').addEventListener('click', function(e) {
+            var btn = e.target.closest('.delete-btn');
+            if (btn) {
+                deleteDoc(btn.getAttribute('data-doc-id'));
             }
         });
 

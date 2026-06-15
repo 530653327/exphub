@@ -58,7 +58,8 @@
         <div class="topbar">
             <h4 class="mb-0" th:text="${doc.title}">经验详情</h4>
             <div>
-                <button class="btn btn-outline-info btn-sm mr-2" th:onclick="'shareDoc(' + ${doc.id} + ', \'' + ${#strings.escapeJava(doc.title)} + '\')'">
+                <button class="btn btn-outline-info btn-sm mr-2 share-btn"
+                        th:attr="data-doc-id=${doc.id}, data-doc-title=${doc.title}">
                     <i class="fas fa-share-alt mr-1"></i> 分享
                 </button>
                 <a th:href="@{/docs/edit?id={id}(id=${doc.id})}" class="btn btn-outline-secondary btn-sm mr-2">
@@ -188,6 +189,11 @@
                     versionBadge.title = '查看版本 v' + v;
                 }
             });
+        });
+
+        // 分享按钮事件绑定（改用 data-* 属性替代 th:onclick）
+        document.querySelector('.share-btn').addEventListener('click', function() {
+            shareDoc(this.getAttribute('data-doc-id'), this.getAttribute('data-doc-title'));
         });
 
         // ===== 分享功能 =====
