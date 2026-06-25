@@ -74,11 +74,17 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Spring AI MCP Server (SSE 模式) -->
+        <!-- Spring AI MCP Server (SSE 模式 - WebFlux 非阻塞传输) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+            <artifactId>spring-ai-starter-mcp-server-webflux</artifactId>
             <version>${spring-ai.version}</version>
+        </dependency>
+
+        <!-- WebFlux（单独 Netty 服务器运行 MCP，不阻塞 Tomcat 线程） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
         <!-- Jackson Java 8 时间模块 -->

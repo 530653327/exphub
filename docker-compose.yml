@@ -39,6 +39,7 @@ services:
     restart: unless-stopped
     ports:
       - "3099:3099"
+      - "3098:3098"   # MCP SSE 服务器（非阻塞 WebFlux）
     environment:
       EXPHUB_DB_URL: jdbc:mysql://mysql:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
       EXPHUB_DB_USERNAME: root

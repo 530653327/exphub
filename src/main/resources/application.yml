@@ -11,6 +11,10 @@ spring:
   application:
     name: ExpHub
 
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.mcp.server.autoconfigure.McpWebFluxServerAutoConfiguration
+
   datasource:
     url: ${EXPHUB_DB_URL:jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
     username: ${EXPHUB_DB_USERNAME:root}
@@ -38,10 +42,7 @@ spring:
       server:
         name: exphub
         version: 1.0.0
-        type: SYNC
         stdio: false
-        sse-endpoint: /mcp/sse
-        sse-message-endpoint: /mcp/message
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml

@@ -22,6 +22,6 @@ COPY --from=builder /build/target/exphub-1.0.0.jar app.jar
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
-EXPOSE 3099
+EXPOSE 3099 3098
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

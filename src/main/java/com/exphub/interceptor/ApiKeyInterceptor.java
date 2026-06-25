@@ -29,6 +29,20 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
      */
     private static final InheritableThreadLocal<AiAssistant> currentAssistantHolder = new InheritableThreadLocal<>();
 
+    /**
+     * 供 WebFlux MCP 服务器设置当前助手信息（非阻塞模式不使用 HandlerInterceptor）
+     */
+    public static void setCurrentAssistant(AiAssistant assistant) {
+        currentAssistantHolder.set(assistant);
+    }
+
+    /**
+     * 移除当前助手信息（WebFlux 过滤器 finally 中调用）
+     */
+    public static void removeCurrentAssistant() {
+        currentAssistantHolder.remove();
+    }
+
     @Autowired
     private AiAssistantMapper assistantMapper;
 
