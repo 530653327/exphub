@@ -118,6 +118,18 @@ public class ExpHubTools {
 
         sb.append("\n---\n\n");
 
+        // 📚 历史导读：有历史版本时自动引导 AI 查看历史版本了解来龙去脉
+        List<DocVersion> versions = docService.getVersions(id);
+        if (!versions.isEmpty()) {
+            sb.append("> 📚 **历史导读**：本文档经历多次迭代，当前为 v").append(doc.getVersion())
+              .append("，共保存 ").append(versions.size()).append(" 个历史版本（v1 ~ v")
+              .append(doc.getVersion() - 1).append("）。\n");
+            sb.append("> 如需了解本文档的**来龙去脉、演进过程或历史解决方案**，请调用\n");
+            sb.append("> `get_experience_history(id=").append(id).append(")` 查看历史版本列表；\n");
+            sb.append("> `get_experience_history(id=").append(id).append(", version=版本号)` 查看指定版本完整内容（如 version=1 可看最初版本）。\n\n");
+            sb.append("---\n\n");
+        }
+
         // 截断超长内容，防止 AI 助手输出超限
         String content = doc.getContent();
         boolean truncated = false;
@@ -388,7 +400,14 @@ public class ExpHubTools {
                 sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel).append(" | 分类: ").append(doc.getCategory()).append(" | 调用: ").append(doc.getCallCount()).append("次\n");
                 sb.append("   摘要: ").append(doc.getSummary() != null ? doc.getSummary() : "无").append("\n");
                 sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
-                sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n\n");
+                sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n");
+                // 📚 历史版本标识：引导 AI 搜索阶段就意识到可深挖历史
+                List<DocVersion> docVersions = docService.getVersions(doc.getId());
+                if (!docVersions.isEmpty()) {
+                    sb.append("   📚 历史版本: 共 ").append(docVersions.size()).append(" 个（v1 ~ v").append(doc.getVersion() - 1)
+                      .append("），如需了解演进过程请调用 get_experience_history(id=").append(doc.getId()).append(", version=版本号)").append("\n");
+                }
+                sb.append("\n");
             }
 
             return sb.toString();
