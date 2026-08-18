@@ -41,11 +41,17 @@ mvn clean package -DskipTests -q
 
 # 3. 重启应用
 echo "[3/4] 重启应用..."
-PID=$(netstat -tlnp 2>/dev/null | grep ':3099' | awk '{print $7}' | cut -d'/' -f1)
-if [ -n "$PID" ]; then
-    kill -9 $PID 2>/dev/null || true
-    sleep 2
-fi
+# 杀掉所有旧实例：应用为双端口（3098 MCP SSE + 3099 Web），同一 JVM 占用
+# 按 jar 名 pkill 最稳妥，避免漏杀只监听 3098 的旧进程
+pkill -f 'exphub-1.0.0.jar' 2>/dev/null || true
+# 兜底：按端口确认释放（双端口都清）
+for PORT in 3098 3099; do
+    PID=$(netstat -tlnp 2>/dev/null | grep ":$PORT " | awk '{print $7}' | cut -d'/' -f1 | head -1)
+    if [ -n "$PID" ]; then
+        kill -9 $PID 2>/dev/null || true
+    fi
+done
+sleep 2
 nohup $JAVA_HOME/bin/java -jar target/exphub-1.0.0.jar > app.log 2>&1 &
 
 echo "[4/4] 部署完成 → https://cloudim.club/exphub"
