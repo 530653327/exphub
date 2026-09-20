@@ -8,6 +8,8 @@ import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.mapper.AiAssistantMapper;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.ProjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +21,8 @@ import java.util.List;
  */
 @Service
 public class ProjectService {
+
+    private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
 
     @Autowired
     private ProjectMapper projectMapper;
@@ -34,6 +38,10 @@ public class ProjectService {
 
     private String currentKey() {
         AiAssistant a = ApiKeyInterceptor.getCurrentAssistant();
+        if (a == null) {
+            log.warn("currentKey: CURRENT_ASSISTANT is NULL（身份缺失，隔离校验将被跳过）, thread={}",
+                    Thread.currentThread().getName());
+        }
         return a != null ? a.getApiKey() : null;
     }
 
