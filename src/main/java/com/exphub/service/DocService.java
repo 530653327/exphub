@@ -97,6 +97,14 @@ public class DocService {
     }
 
     public Page<Doc> search(String keyword, String templateType, String includeStatus, int page, int size) {
+        return search(keyword, templateType, includeStatus, null, page, size);
+    }
+
+    /**
+     * 搜索经验
+     * @param projectId 项目ID。null=只搜全局经验（自动排除项目专属经验）；有值=只搜该项目内经验
+     */
+    public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId, int page, int size) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
@@ -112,19 +120,19 @@ public class DocService {
 
             // 第一级：原始关键词 FULLTEXT 搜索（向后兼容，对短关键词效果良好）
             String ftQuery = toFulltextQuery(kw);
-            long total = docMapper.countByFulltext(ftQuery, apiKey, tt, statusList);
+            long total = docMapper.countByFulltext(ftQuery, apiKey, projectId, tt, statusList);
 
             if (total > 0) {
-                return buildFulltextResult(kw, ftQuery, sortKeyword, apiKey, tt, statusList, page, size, total, assistant);
+                return buildFulltextResult(kw, ftQuery, sortKeyword, apiKey, projectId, tt, statusList, page, size, total, assistant);
             }
 
             // 第二级：ngram 2-gram 拆分后重试 FULLTEXT（解决长中文短语被当整体匹配的问题）
             String ngramQuery = toNgramFulltextQuery(kw);
             if (!ngramQuery.equals(ftQuery)) {
                 log.debug("FULLTEXT 原始查询无结果，尝试 ngram 重试: '{}' -> '{}'", kw, ngramQuery);
-                total = docMapper.countByFulltext(ngramQuery, apiKey, tt, statusList);
+                total = docMapper.countByFulltext(ngramQuery, apiKey, projectId, tt, statusList);
                 if (total > 0) {
-                    return buildFulltextResult(kw, ngramQuery, sortKeyword, apiKey, tt, statusList, page, size, total, assistant);
+                    return buildFulltextResult(kw, ngramQuery, sortKeyword, apiKey, projectId, tt, statusList, page, size, total, assistant);
                 }
             }
 
@@ -132,17 +140,17 @@ public class DocService {
         }
 
         // ===== LIKE 兜底或空关键词 =====
-        return searchWithLike(keyword, templateType, includeStatus, page, size);
+        return searchWithLike(keyword, templateType, includeStatus, projectId, page, size);
     }
 
     /**
      * 构建 FULLTEXT 搜索结果
      */
     private Page<Doc> buildFulltextResult(String originalKeyword, String ftQuery, String sortKeyword,
-                                          String apiKey, String tt, List<String> statusList,
+                                          String apiKey, Long projectId, String tt, List<String> statusList,
                                           int page, int size, long total, AiAssistant assistant) {
         long offset = (long) (page - 1) * size;
-        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, tt, statusList, offset, (long) size);
+        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size);
 
         Page<Doc> result = new Page<>(page, size);
         result.setRecords(records);
@@ -158,13 +166,23 @@ public class DocService {
     /**
      * LIKE 搜索兜底（FULLTEXT 无结果或空关键词时使用）
      */
-    private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, int page, int size) {
+    private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
-            wrapper.and(w -> w.eq("api_key", assistant.getApiKey()).or().isNull("api_key"));
+            // 可见性：PUBLIC 公开可见，或同一 API Key 下的私有经验
+            wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", assistant.getApiKey()));
+            // 项目隔离：未指定项目时只返回全局经验，项目专属经验不进全局搜索
+            if (projectId != null) {
+                wrapper.eq("project_id", projectId);
+            } else {
+                wrapper.isNull("project_id");
+            }
+        } else if (projectId != null) {
+            // 后台调用（无 assistant）：按项目过滤
+            wrapper.eq("project_id", projectId);
         }
         
         if (templateType != null && !templateType.trim().isEmpty()) {
@@ -365,8 +383,10 @@ public class DocService {
         if (doc != null) {
             AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
             if (assistant != null) {
-                // 管理员创建的经验（api_key 为空）对所有助手可见
-                if (doc.getApiKey() != null && !assistant.getApiKey().equals(doc.getApiKey())) {
+                // 可见性：PUBLIC 对所有 Key 可见；PRIVATE 仅同 API Key 可见
+                boolean isPublic = "PUBLIC".equalsIgnoreCase(doc.getVisibility());
+                boolean sameKey = doc.getApiKey() != null && assistant.getApiKey().equals(doc.getApiKey());
+                if (!isPublic && !sameKey) {
                     return null; // 不可见
                 }
                 // MCP/API 调用查看详情时，增加引用计数
@@ -578,7 +598,8 @@ public class DocService {
         // API Key 级别隔离
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
-            wrapper.and(w -> w.eq("api_key", assistant.getApiKey()).or().isNull("api_key"));
+            wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", assistant.getApiKey()));
+            wrapper.isNull("project_id"); // 待办等列表只列全局经验
         }
         wrapper.eq("template_type", templateType)
                .eq("status", "ACTIVE")

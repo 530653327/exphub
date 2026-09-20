@@ -4,10 +4,12 @@ import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.DocTemplate;
 import com.exphub.entity.DocVersion;
+import com.exphub.entity.Project;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import com.exphub.service.DocTemplateService;
+import com.exphub.service.ProjectService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
@@ -34,6 +36,9 @@ public class ExpHubTools {
 
     @Autowired
     private CallLogService callLogService;
+
+    @Autowired
+    private ProjectService projectService;
 
     /**
      * 获取当前调用者权限信息
@@ -345,13 +350,33 @@ public class ExpHubTools {
     public String searchExperience(
             @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
             @ToolParam(description = "指定搜索的模板类型，缩小搜索范围提高准确度。可选：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。") String templateType,
-            @ToolParam(description = "指定搜索的状态，默认只搜索ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。") String includeStatus) {
+            @ToolParam(description = "指定搜索的状态，默认只搜索ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。") String includeStatus,
+            @ToolParam(description = "可选。限定在某个项目内搜索，填项目名称或别名（如'回金算'、'huijinsuan'）。不传则只搜索全局经验——项目专属经验不会出现在全局搜索结果中。", required = false) String projectName) {
         
         try {
             // 权限验证
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanSearch())) {
                 return "❌ 权限不足：该API Key没有查询经验的权限";
+            }
+            
+            // 解析项目范围（支持项目名称 / 别名 / 编码）
+            Long projectId = null;
+            if (projectName != null && !projectName.trim().isEmpty()) {
+                var candidates = projectService.resolveProject(projectName);
+                if (candidates.isEmpty()) {
+                    return "❌ 未找到名为「" + projectName + "」的项目。可用 list_projects 查看你的项目列表。";
+                }
+                if (candidates.size() > 1) {
+                    StringBuilder cb = new StringBuilder();
+                    cb.append("⚠️ 匹配到 ").append(candidates.size()).append(" 个项目，请用更精确的名称重试：\n\n");
+                    for (Project p : candidates) {
+                        cb.append("- 【ID:").append(p.getId()).append("】").append(p.getName())
+                          .append("（编码: ").append(p.getProjectCode()).append("）\n");
+                    }
+                    return cb.toString();
+                }
+                projectId = candidates.get(0).getId();
             }
             
             // 默认只搜索 ACTIVE 状态
@@ -362,10 +387,13 @@ public class ExpHubTools {
                 statusFilter = null;
             }
             
-            var result = docService.search(query, templateType, statusFilter, 1, 20);
+            var result = docService.search(query, templateType, statusFilter, projectId, 1, 20);
             var docs = result.getRecords();
             
             String filterInfo = "";
+            if (projectId != null) {
+                filterInfo += "【项目范围: " + projectName + "】";
+            }
             if (templateType != null && !templateType.isEmpty()) {
                 filterInfo += "【类型过滤: " + templateType + "】";
             }
@@ -750,6 +778,314 @@ public class ExpHubTools {
             log.error("ExpHubTools.updateExperience: FAILED", e);
             callLogService.incrementFailCalls();
             return "更新失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    // ==================== 项目空间工具（2026-09-20 新增）====================
+
+    @Tool(name = "create_project", description = "创建一个项目（项目空间）。项目归集该项目的 AGENTS.md、进度记录和专属经验，这些数据默认隔离、不会出现在全局搜索中。")
+    public String createProject(
+            @ToolParam(description = "项目名称，如'回金算'") String name,
+            @ToolParam(description = "项目编码，英文唯一标识，如'huijinsuan'") String projectCode,
+            @ToolParam(description = "项目别名，逗号分隔，用于模糊搜索，如'废旧件系统,HJS'。可留空", required = false) String aliases,
+            @ToolParam(description = "项目描述，可留空", required = false) String description,
+            @ToolParam(description = "默认测试命令，工作流模板用，如'mvn test'。可留空", required = false) String defaultTestCmd,
+            @ToolParam(description = "默认约束，工作流模板用。可留空", required = false) String defaultConstraints) {
+        try {
+            Project p = new Project();
+            p.setName(name);
+            p.setProjectCode(projectCode);
+            p.setAliases(aliases);
+            p.setDescription(description);
+            p.setDefaultTestCmd(defaultTestCmd);
+            p.setDefaultConstraints(defaultConstraints);
+            Project saved = projectService.createProject(p);
+            return "✅ 项目创建成功！\n\n**ID**: " + saved.getId() + "\n**名称**: " + saved.getName()
+                 + "\n**编码**: " + saved.getProjectCode() + "\n\n"
+                 + "接下来：update_project_agents_main 建立索引 → update_project_agents_chapter 逐章写入。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.createProject: FAILED", e);
+            return "创建失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "list_projects", description = "列出当前API Key下的所有项目。")
+    public String listProjects() {
+        try {
+            var list = projectService.listProjects();
+            if (list.isEmpty()) {
+                return "当前没有项目。可用 create_project 创建。";
+            }
+            StringBuilder sb = new StringBuilder("共 " + list.size() + " 个项目：\n\n");
+            for (Project p : list) {
+                sb.append("- 【ID:").append(p.getId()).append("】").append(p.getName())
+                  .append("（编码: ").append(p.getProjectCode()).append("）");
+                if (p.getAliases() != null && !p.getAliases().isEmpty()) {
+                    sb.append(" | 别名: ").append(p.getAliases());
+                }
+                sb.append("\n");
+            }
+            sb.append("\n提示：搜索项目内经验用 search_experience 的 projectName 参数，填项目名称或别名即可。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listProjects: FAILED", e);
+            return "查询失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "get_project", description = "获取项目详情，含默认测试命令与约束。")
+    public String getProject(
+            @ToolParam(description = "项目ID") Long projectId) {
+        try {
+            Project p = projectService.getProject(projectId);
+            if (p == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("# ").append(p.getName()).append("\n\n");
+            sb.append("**ID**: ").append(p.getId()).append("\n");
+            sb.append("**编码**: ").append(p.getProjectCode()).append("\n");
+            sb.append("**别名**: ").append(p.getAliases() != null ? p.getAliases() : "无").append("\n");
+            sb.append("**描述**: ").append(p.getDescription() != null ? p.getDescription() : "无").append("\n");
+            sb.append("**默认测试命令**: ").append(p.getDefaultTestCmd() != null ? p.getDefaultTestCmd() : "未设置").append("\n");
+            sb.append("**默认约束**: ").append(p.getDefaultConstraints() != null ? p.getDefaultConstraints() : "未设置").append("\n");
+            sb.append("**状态**: ").append(p.getStatus()).append("\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.getProject: FAILED", e);
+            return "查询失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "update_project", description = "更新项目信息（名称、别名、描述、默认测试命令、默认约束）。不需要修改的字段留空即可。")
+    public String updateProject(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "新名称，留空表示不修改", required = false) String name,
+            @ToolParam(description = "新别名，留空表示不修改", required = false) String aliases,
+            @ToolParam(description = "新描述，留空表示不修改", required = false) String description,
+            @ToolParam(description = "默认测试命令，留空表示不修改", required = false) String defaultTestCmd,
+            @ToolParam(description = "默认约束，留空表示不修改", required = false) String defaultConstraints) {
+        try {
+            Project patch = new Project();
+            patch.setName(name);
+            patch.setAliases(aliases);
+            patch.setDescription(description);
+            patch.setDefaultTestCmd(defaultTestCmd);
+            patch.setDefaultConstraints(defaultConstraints);
+            Project updated = projectService.updateProject(projectId, patch);
+            if (updated == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            return "✅ 项目已更新！\n\n**ID**: " + updated.getId() + "\n**名称**: " + updated.getName();
+        } catch (Exception e) {
+            log.error("ExpHubTools.updateProject: FAILED", e);
+            return "更新失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "get_project_agents", description = "读取项目的 AGENTS.md。不传 chapterNo 返回 MAIN 索引（含章节目录与绝对红线）；传 chapterNo 返回该章全文。建议先读索引再按需读章节，避免浪费上下文。")
+    public String getProjectAgents(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "可选。章节号，如'1'、'14'。不传则返回 MAIN 索引", required = false) String chapterNo) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+
+            if (chapterNo != null && !chapterNo.trim().isEmpty()) {
+                Doc ch = projectService.getAgentsChapter(projectId, chapterNo.trim());
+                if (ch == null) {
+                    var chapters = projectService.listAgentsChapters(projectId);
+                    StringBuilder sb = new StringBuilder("❌ 项目「" + proj.getName() + "」没有第 " + chapterNo + " 章。\n\n可用章节：\n");
+                    for (Doc c : chapters) {
+                        sb.append("- 第 ").append(c.getChapterNo()).append(" 章 · ").append(c.getChapterTitle()).append("\n");
+                    }
+                    return sb.toString();
+                }
+                StringBuilder sb = new StringBuilder();
+                sb.append("# 第 ").append(ch.getChapterNo()).append(" 章 · ").append(ch.getChapterTitle()).append("\n\n");
+                sb.append("> 加载策略: ").append(ch.getLoadStrategy()).append(" | 版本: v").append(ch.getVersion()).append("\n\n");
+                sb.append(ch.getContent());
+                return sb.toString();
+            }
+
+            Doc main = projectService.getAgentsMain(projectId);
+            if (main == null) {
+                return "⚠️ 项目「" + proj.getName() + "」还没有 AGENTS.md 索引。请用 update_project_agents_main 创建。";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("# ").append(proj.getName()).append(" · AGENTS.md 索引\n\n");
+            sb.append("> 版本: v").append(main.getVersion()).append(" | 项目ID: ").append(projectId).append("\n\n");
+            sb.append(main.getContent());
+            var chapters = projectService.listAgentsChapters(projectId);
+            if (!chapters.isEmpty()) {
+                sb.append("\n\n---\n\n## 章节目录\n\n");
+                sb.append("用 get_project_agents 传 chapterNo 读取指定章节全文：\n\n");
+                for (Doc c : chapters) {
+                    sb.append("- 第 ").append(c.getChapterNo()).append(" 章 · ").append(c.getChapterTitle())
+                      .append(" [").append(c.getLoadStrategy()).append("]");
+                    if (c.getSummary() != null && !c.getSummary().isEmpty()) {
+                        sb.append(" —— ").append(c.getSummary());
+                    }
+                    sb.append("\n");
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.getProjectAgents: FAILED", e);
+            return "读取失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "update_project_agents_main", description = "写入或更新项目 AGENTS.md 的 MAIN 索引。索引必须包含：项目一句话定位、章节目录、以及3-5条绝对红线（内联，确保AI每次都能看到）。控制在2000字以内。")
+    public String updateProjectAgentsMain(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "索引正文（Markdown）：项目定位 + 章节目录 + 绝对红线") String content) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            Doc saved = projectService.updateAgentsMain(projectId, content);
+            return "✅ MAIN 索引已更新！\n\n**项目**: " + proj.getName() + "\n**版本**: v" + saved.getVersion()
+                 + "\n\n提示：红线内联在这里，AI 每次读索引都会看到。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.updateProjectAgentsMain: FAILED", e);
+            return "更新失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "update_project_agents_chapter", description = "写入或更新项目 AGENTS.md 的某一章。按章独立更新，不触发长文档覆盖保护，每章独立保留版本快照。建议单章3000字以内。")
+    public String updateProjectAgentsChapter(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "章节号，如'1'、'14'") String chapterNo,
+            @ToolParam(description = "章节标题，如'项目概述'") String chapterTitle,
+            @ToolParam(description = "章节正文（Markdown）") String content,
+            @ToolParam(description = "加载策略：ALWAYS(每次会话必读) / ON_DEMAND(按需)。默认 ON_DEMAND", required = false) String loadStrategy,
+            @ToolParam(description = "排序号，默认0", required = false) Integer sortOrder) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            if (loadStrategy != null && !"ALWAYS".equalsIgnoreCase(loadStrategy) && !"ON_DEMAND".equalsIgnoreCase(loadStrategy)) {
+                return "❌ loadStrategy 只能是 ALWAYS 或 ON_DEMAND。";
+            }
+            Doc saved = projectService.updateAgentsChapter(projectId, chapterNo, chapterTitle, content, loadStrategy, sortOrder);
+            return "✅ 章节已更新！\n\n**项目**: " + proj.getName() + "\n**章节**: 第 " + chapterNo + " 章 · " + chapterTitle
+                 + "\n**版本**: v" + saved.getVersion() + " | 加载策略: " + saved.getLoadStrategy();
+        } catch (Exception e) {
+            log.error("ExpHubTools.updateProjectAgentsChapter: FAILED", e);
+            return "更新失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "export_project_agents", description = "导出项目完整的 AGENTS.md（MAIN索引 + 所有章节按序拼接）。需要全量查看或备份时使用，日常按需读章节即可。")
+    public String exportProjectAgents(
+            @ToolParam(description = "项目ID") Long projectId) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            String md = projectService.exportAgents(projectId);
+            if (md.trim().isEmpty()) {
+                return "⚠️ 项目「" + proj.getName() + "」还没有 AGENTS.md 内容。";
+            }
+            return md;
+        } catch (Exception e) {
+            log.error("ExpHubTools.exportProjectAgents: FAILED", e);
+            return "导出失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "append_project_progress", description = "追加一条项目进度/交接记录。一次交接一条，按时间倒序保存，每条独立快照，不会因文件增长而撞上长文档限制。")
+    public String appendProjectProgress(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "进度内容：本次完成了什么、改了哪些文件、下次从哪继续、注意事项/遗留问题") String content,
+            @ToolParam(description = "标题，留空则自动截取内容前30字", required = false) String title) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            String t = (title != null && !title.isEmpty()) ? title
+                     : (content.length() > 30 ? content.substring(0, 30) + "..." : content);
+            Doc saved = projectService.appendProgress(projectId, content, t);
+            return "✅ 进度已记录！\n\n**项目**: " + proj.getName() + "\n**ID**: " + saved.getId() + "\n**标题**: " + t;
+        } catch (Exception e) {
+            log.error("ExpHubTools.appendProjectProgress: FAILED", e);
+            return "记录失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "get_project_progress", description = "读取项目最近的进度/交接记录（按时间倒序）。新会话开场读最近3条即可接续。")
+    public String getProjectProgress(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "读取条数，默认3，最多50", required = false) Integer limit) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            int n = (limit == null || limit <= 0) ? 3 : Math.min(limit, 50);
+            var list = projectService.listProgress(projectId, n);
+            if (list.isEmpty()) {
+                return "项目「" + proj.getName() + "」还没有进度记录。";
+            }
+            StringBuilder sb = new StringBuilder("项目「" + proj.getName() + "」最近 " + list.size() + " 条进度：\n\n");
+            for (Doc d : list) {
+                sb.append("### ").append(d.getTitle()).append("\n");
+                sb.append("**时间**: ").append(d.getCreatedAt()).append(" | **作者**: ").append(d.getAuthorName()).append("\n\n");
+                sb.append(d.getContent()).append("\n\n---\n\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.getProjectProgress: FAILED", e);
+            return "读取失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。")
+    public String listProjectExperiences(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "可选。按模板类型过滤，如 bug_fix、config_guide", required = false) String templateType) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            var list = projectService.listProjectDocs(projectId, templateType);
+            if (list.isEmpty()) {
+                return "项目「" + proj.getName() + "」还没有专属经验。";
+            }
+            StringBuilder sb = new StringBuilder("项目「" + proj.getName() + "」共 " + list.size() + " 条专属经验：\n\n");
+            for (Doc d : list) {
+                sb.append("- 【ID:").append(d.getId()).append("】").append(d.getTitle())
+                  .append(" [").append(getTemplateTypeLabel(d.getTemplateType())).append("]\n");
+                if (d.getSummary() != null) sb.append("   ").append(d.getSummary()).append("\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listProjectExperiences: FAILED", e);
+            return "查询失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "promote_to_global", description = "把项目专属经验提升为全局经验（解除项目归属），之后可被全局 search_experience 搜到。适用于跨项目可复用的经验。")
+    public String promoteToGlobal(
+            @ToolParam(description = "要提升的经验ID") Long docId) {
+        try {
+            Doc updated = projectService.promoteToGlobal(docId);
+            if (updated == null) {
+                return "❌ 未找到经验ID " + docId + "，或你没有访问权限。";
+            }
+            return "✅ 已提升为全局经验！\n\n**ID**: " + docId + "\n**标题**: " + updated.getTitle()
+                 + "\n\n现在它可被全局 search_experience 搜索到（仍遵循 API Key 隔离）。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.promoteToGlobal: FAILED", e);
+            return "提升失败: " + e.getMessage();
         }
     }
 }

@@ -28,6 +28,14 @@ public class Doc {
     private Integer ratingCount;     // 评分次数
     private String relatedIds;       // 关联经验ID，逗号分隔（互相引用的替代经验）
     private String status;           // ACTIVE/BROKEN/DEPRECATED
+    // ===== 项目空间扩展字段（2026-09-20）=====
+    private Long projectId;          // 所属项目ID，NULL=全局经验
+    private String docRole;          // MAIN(索引)/CHAPTER(章节)/NORMAL(普通经验)
+    private String chapterNo;        // 章节号，如 "1"、"14"
+    private String chapterTitle;     // 章节标题，如 "项目概述"
+    private String loadStrategy;     // ALWAYS(每次必读)/ON_DEMAND(按需)
+    private Integer sortOrder;       // 排序
+    private String visibility;       // PRIVATE(仅同Key可见)/PUBLIC(所有Key可见)
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)
