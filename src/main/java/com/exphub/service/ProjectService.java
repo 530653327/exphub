@@ -38,10 +38,9 @@ public class ProjectService {
 
     private String currentKey() {
         AiAssistant a = ApiKeyInterceptor.getCurrentAssistant();
-        if (a == null) {
-            log.warn("currentKey: CURRENT_ASSISTANT is NULL（身份缺失，隔离校验将被跳过）, thread={}",
-                    Thread.currentThread().getName());
-        }
+        // 诊断：记录「业务执行线程」与「读到的身份」，与鉴权日志的线程对比
+        log.info("currentKey: thread={}, assistant={}", Thread.currentThread().getName(),
+                a != null ? a.getAssistantId() : "NULL");
         return a != null ? a.getApiKey() : null;
     }
 
