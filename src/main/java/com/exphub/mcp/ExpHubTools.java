@@ -44,7 +44,12 @@ public class ExpHubTools {
      * 获取当前调用者权限信息
      */
     private AiAssistant getCaller() {
-        return ApiKeyInterceptor.getCurrentAssistant();
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        if (assistant == null) {
+            // 身份丢失诊断：记录线程名，便于定位是否又是跨线程/清理时机问题
+            log.warn("getCaller: CURRENT_ASSISTANT is NULL, thread={}", Thread.currentThread().getName());
+        }
+        return assistant;
     }
 
     /**

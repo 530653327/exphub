@@ -123,10 +123,23 @@ public class McpReactiveServerConfig {
                 }
 
                 ApiKeyInterceptor.setCurrentAssistant(assistant);
-                log.debug("MCP WebFlux: authorized, assistantId={}", assistant.getAssistantId());
+                log.debug("MCP WebFlux: authorized, assistantId={}, path={}, thread={}",
+                        assistant.getAssistantId(), request.path(), Thread.currentThread().getName());
 
-                return handler.handle(request)
-                        .doFinally(signalType -> ApiKeyInterceptor.removeCurrentAssistant());
+                // 【关键修复】SSE 模式下，工具不在「处理 POST /mcp/message 的线程」上执行，
+                // 而是在「SSE 长连接的流线程」上执行（POST 只投递消息并立即返回 202）。
+                // 若在 POST 响应完成时就 removeCurrentAssistant()，当 POST 线程恰好与
+                // SSE 流线程相同（Netty epoll 线程池复用，随机）时，会把 SSE 流线程上的
+                // 身份一并清掉，导致工具执行时 getCurrentAssistant() 为 null →
+                // 报「无法识别调用者身份」。此即该问题的偶发根因。
+                // 因此：身份只能在 SSE 长连接真正关闭时清理。
+                boolean isSseEndpoint = request.path().endsWith("/sse");
+                if (isSseEndpoint) {
+                    return handler.handle(request)
+                            .doFinally(signalType -> ApiKeyInterceptor.removeCurrentAssistant());
+                }
+                // POST /mcp/message：只设置、不清理，保证 SSE 流线程上的身份存活
+                return handler.handle(request);
 
             } catch (Exception e) {
                 log.error("MCP WebFlux: auth filter error", e);
