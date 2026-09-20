@@ -5,6 +5,7 @@ import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.Project;
 import com.exphub.interceptor.ApiKeyInterceptor;
+import com.exphub.mapper.AiAssistantMapper;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.ProjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,9 @@ public class ProjectService {
     @Autowired
     private DocService docService;
 
+    @Autowired
+    private AiAssistantMapper assistantMapper;
+
     private String currentKey() {
         AiAssistant a = ApiKeyInterceptor.getCurrentAssistant();
         return a != null ? a.getApiKey() : null;
@@ -40,11 +44,31 @@ public class ProjectService {
             project.setStatus("ACTIVE");
         }
         String key = currentKey();
+        if (key == null) {
+            // 后台（管理员）创建项目时没有 API Key 上下文，留空会导致该项目
+            // 在 MCP list_projects 中永远不返回（api_key = 当前key 不匹配 NULL），
+            // 成为「孤儿项目」。因此回退归属到主 Key。
+            key = primaryKey();
+        }
         if (key != null) {
             project.setApiKey(key);
         }
         projectMapper.insert(project);
         return project;
+    }
+
+    /**
+     * 主 Key：第一个启用状态的助手 API Key。
+     * 用于「后台创建项目」等无 API Key 上下文的场景，保证项目有明确归属、可被 MCP 列出。
+     */
+    private String primaryKey() {
+        try {
+            AiAssistant a = assistantMapper.selectOne(
+                    new QueryWrapper<AiAssistant>().eq("enabled", 1).orderByAsc("id").last("LIMIT 1"));
+            return a != null ? a.getApiKey() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public List<Project> listProjects() {
