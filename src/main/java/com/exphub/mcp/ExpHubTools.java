@@ -45,10 +45,10 @@ public class ExpHubTools {
      */
     private AiAssistant getCaller() {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
-        // 诊断：记录「工具执行线程」与「读到的身份」，用于定位跨线程/串号
-        // （鉴权拦截器所在线程见日志行方括号，例如 [nio-3099-exec-6]）
-        log.info("getCaller: thread={}, assistant={}", Thread.currentThread().getName(),
-                assistant != null ? assistant.getAssistantId() : "NULL");
+        if (assistant == null) {
+            // 身份缺失意味着隔离校验会被跳过，属安全相关，保留告警
+            log.warn("getCaller: CURRENT_ASSISTANT is NULL, thread={}", Thread.currentThread().getName());
+        }
         return assistant;
     }
 
