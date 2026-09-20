@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>项目管理 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/projects}" class="active"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="margin-top: 20px; padding: 0 20px;">
+            <a th:href="@{/profile/password}"><i class="fas fa-lock mr-2"></i> 修改密码</a>
+        </div>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0">项目管理</h4>
+            <button class="btn btn-primary btn-sm" data-toggle="modal" data-target="#createModal">
+                <i class="fas fa-plus mr-1"></i> 新建项目
+            </button>
+        </div>
+
+        <div th:if="${msg}" class="alert alert-success" th:text="${msg}"></div>
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <div class="card">
+            <div class="card-header"><i class="fas fa-folder-open mr-2"></i> 项目列表（<span th:text="${#lists.size(projects)}">0</span>）</div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="thead-light">
+                        <tr>
+                            <th>ID</th><th>名称</th><th>编码</th><th>别名</th><th>状态</th><th>更新时间</th><th width="160">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="p : ${projects}">
+                            <td th:text="${p.id}">1</td>
+                            <td><a th:href="@{'/projects/' + ${p.id}}" th:text="${p.name}">项目名</a></td>
+                            <td><code th:text="${p.projectCode}">code</code></td>
+                            <td th:text="${p.aliases}">-</td>
+                            <td><span class="badge-active" th:text="${p.status}">ACTIVE</span></td>
+                            <td th:text="${p.updatedAt}">-</td>
+                            <td>
+                                <a th:href="@{'/projects/' + ${p.id}}" class="btn btn-sm btn-outline-primary">详情</a>
+                                <form th:action="@{'/projects/' + ${p.id} + '/archive'}" method="post" style="display:inline;">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">归档</button>
+                                </form>
+                            </td>
+                        </tr>
+                        <tr th:if="${#lists.isEmpty(projects)}">
+                            <td colspan="7" class="text-center text-muted py-4">暂无项目，点击右上角「新建项目」</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建项目 -->
+    <div class="modal fade" id="createModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <form th:action="@{/projects/save}" method="post">
+                    <div class="modal-header">
+                        <h5 class="modal-title">新建项目</h5>
+                        <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>项目名称 *</label>
+                            <input type="text" name="name" class="form-control" required placeholder="如：回金算">
+                        </div>
+                        <div class="form-group">
+                            <label>项目编码 *（英文唯一）</label>
+                            <input type="text" name="projectCode" class="form-control" required placeholder="如：huijinsuan">
+                        </div>
+                        <div class="form-group">
+                            <label>别名（逗号分隔，用于模糊搜索）</label>
+                            <input type="text" name="aliases" class="form-control" placeholder="如：废旧件系统,HJS">
+                        </div>
+                        <div class="form-group">
+                            <label>描述</label>
+                            <textarea name="description" class="form-control" rows="2"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>默认测试命令（工作流模板用）</label>
+                            <input type="text" name="defaultTestCmd" class="form-control" placeholder="如：mvn test">
+                        </div>
+                        <div class="form-group">
+                            <label>默认约束（工作流模板用）</label>
+                            <textarea name="defaultConstraints" class="form-control" rows="2" placeholder="如：不新增第三方依赖"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">创建</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

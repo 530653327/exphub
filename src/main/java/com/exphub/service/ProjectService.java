@@ -297,4 +297,17 @@ public class ProjectService {
                 .set("chapter_title", null));
         return docMapper.selectById(docId);
     }
+
+    /**
+     * 删除项目（其下文档由调用方先清理）
+     */
+    public int deleteProject(Long id) {
+        Project p = projectMapper.selectById(id);
+        if (p == null) return 0;
+        String key = currentKey();
+        if (key != null && p.getApiKey() != null && !key.equals(p.getApiKey())) {
+            return 0; // 非同 Key 不可删
+        }
+        return projectMapper.deleteById(id);
+    }
 }

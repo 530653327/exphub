@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="'项目 - ' + ${project.name}">项目详情</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 15px 25px; font-weight: 500; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+        textarea { font-family: -apple-system, Consolas, monospace; font-size: 0.9rem; }
+        .strategy-always { background: #fff3cd; color: #856404; padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; }
+        .strategy-ondemand { background: #e2e3e5; color: #383d41; padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/projects}" class="active"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="margin-top: 20px; padding: 0 20px;">
+            <a th:href="@{/profile/password}"><i class="fas fa-lock mr-2"></i> 修改密码</a>
+        </div>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <div>
+                <h4 class="mb-0" th:text="${project.name}">项目</h4>
+                <small class="text-muted" th:text="'编码: ' + ${project.projectCode} + ' | ID: ' + ${project.id}"></small>
+            </div>
+            <a th:href="@{/projects}" class="btn btn-sm btn-outline-secondary"><i class="fas fa-arrow-left mr-1"></i> 返回列表</a>
+        </div>
+
+        <div th:if="${msg}" class="alert alert-success" th:text="${msg}"></div>
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <!-- 基本信息 -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-info-circle mr-2"></i> 基本信息</div>
+            <div class="card-body">
+                <form th:action="@{/projects/save}" method="post">
+                    <input type="hidden" name="id" th:value="${project.id}">
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>名称</label>
+                            <input type="text" name="name" class="form-control" th:value="${project.name}" required>
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>编码（不可修改）</label>
+                            <input type="text" name="projectCode" class="form-control" th:value="${project.projectCode}" readonly>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>别名（逗号分隔）</label>
+                        <input type="text" name="aliases" class="form-control" th:value="${project.aliases}">
+                    </div>
+                    <div class="form-group">
+                        <label>描述</label>
+                        <textarea name="description" class="form-control" rows="2" th:text="${project.description}"></textarea>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 form-group">
+                            <label>默认测试命令</label>
+                            <input type="text" name="defaultTestCmd" class="form-control" th:value="${project.defaultTestCmd}">
+                        </div>
+                        <div class="col-md-6 form-group">
+                            <label>默认约束</label>
+                            <textarea name="defaultConstraints" class="form-control" rows="2" th:text="${project.defaultConstraints}"></textarea>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">保存基本信息</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- MAIN 索引 -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-map mr-2"></i> AGENTS.md 索引（MAIN）
+                <span class="text-muted float-right" th:if="${main}" th:text="'v' + ${main.version}"></span>
+            </div>
+            <div class="card-body">
+                <form th:action="@{'/projects/' + ${project.id} + '/agents/main'}" method="post">
+                    <div class="form-group">
+                        <textarea name="content" class="form-control" rows="10" th:text="${main != null} ? ${main.content} : ''"
+                                  placeholder="项目一句话定位 + 章节目录 + 3-5条绝对红线（红线内联在这里，AI 每次必读）"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">保存索引</button>
+                    <small class="text-muted ml-2">建议 2000 字以内</small>
+                </form>
+            </div>
+        </div>
+
+        <!-- 章节 -->
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-book mr-2"></i> 章节（<span th:text="${#lists.size(chapters)}">0</span>）
+                <button class="btn btn-sm btn-primary float-right" data-toggle="modal" data-target="#chapterModal" onclick="resetChapter()">
+                    <i class="fas fa-plus mr-1"></i> 新增章节
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="thead-light">
+                        <tr><th width="60">章号</th><th>标题</th><th width="110">加载策略</th><th width="60">版本</th><th width="150">操作</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="c : ${chapters}">
+                            <td th:text="${c.chapterNo}">1</td>
+                            <td th:text="${c.chapterTitle}">标题</td>
+                            <td>
+                                <span th:class="${c.loadStrategy == 'ALWAYS'} ? 'strategy-always' : 'strategy-ondemand'"
+                                      th:text="${c.loadStrategy}">ON_DEMAND</span>
+                            </td>
+                            <td th:text="'v' + ${c.version}">v1</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary"
+                                        th:attr="data-no=${c.chapterNo},data-title=${c.chapterTitle},data-strategy=${c.loadStrategy},data-sort=${c.sortOrder},data-content=${c.content}"
+                                        onclick="editChapter(this)">编辑</button>
+                                <form th:action="@{'/projects/' + ${project.id} + '/agents/chapter/delete'}" method="post" style="display:inline;">
+                                    <input type="hidden" name="docId" th:value="${c.id}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定删除该章节？')">删除</button>
+                                </form>
+                            </td>
+                        </tr>
+                        <tr th:if="${#lists.isEmpty(chapters)}">
+                            <td colspan="5" class="text-center text-muted py-4">暂无章节</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 进度 -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-tasks mr-2"></i> 进度记录（最近 10 条）</div>
+            <div class="card-body">
+                <form th:action="@{'/projects/' + ${project.id} + '/progress'}" method="post" class="mb-3">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <input type="text" name="title" class="form-control" placeholder="标题（可选）">
+                        </div>
+                        <div class="col-md-7">
+                            <input type="text" name="content" class="form-control" placeholder="本次完成了什么 / 改了哪些文件 / 下次从哪继续" required>
+                        </div>
+                        <div class="col-md-2">
+                            <button type="submit" class="btn btn-primary btn-block btn-sm">添加</button>
+                        </div>
+                    </div>
+                </form>
+                <div th:each="p : ${progress}" class="border-left pl-3 mb-3" style="border-left: 3px solid #e94560 !important;">
+                    <div class="d-flex justify-content-between">
+                        <strong th:text="${p.title}">标题</strong>
+                        <small class="text-muted" th:text="${p.createdAt}">时间</small>
+                    </div>
+                    <div class="text-muted" style="white-space: pre-wrap; font-size: 0.9rem;" th:text="${p.content}">内容</div>
+                </div>
+                <div th:if="${#lists.isEmpty(progress)}" class="text-muted">暂无进度记录</div>
+            </div>
+        </div>
+
+        <!-- 项目专属经验 -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-lightbulb mr-2"></i> 项目专属经验（<span th:text="${#lists.size(docs)}">0</span>，不进全局搜索）</div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                        <tr th:each="d : ${docs}">
+                            <td th:text="'#' + ${d.id}" width="60">#1</td>
+                            <td th:text="${d.title}">标题</td>
+                            <td width="120" th:text="${d.templateType}">类型</td>
+                            <td width="150" th:text="${d.updatedAt}">时间</td>
+                        </tr>
+                        <tr th:if="${#lists.isEmpty(docs)}">
+                            <td colspan="4" class="text-center text-muted py-3">暂无</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 工作流模板 -->
+        <div class="card">
+            <div class="card-header"><i class="fas fa-magic mr-2"></i> 生成工作流提示词</div>
+            <div class="card-body">
+                <div class="row mb-2">
+                    <div class="col-md-8"><input type="text" id="wfTask" class="form-control" placeholder="本次任务，如：实现订单导出 Excel 接口"></div>
+                    <div class="col-md-2">
+                        <select id="wfLevel" class="form-control">
+                            <option value="M">M 级</option><option value="S">S 级</option><option value="L">L 级</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2"><button class="btn btn-primary btn-block btn-sm" onclick="genWorkflow()">生成</button></div>
+                </div>
+                <textarea id="wfResult" class="form-control" rows="12" placeholder="生成结果可直接整段复制给 AI 助手" readonly></textarea>
+            </div>
+        </div>
+
+        <!-- 危险操作 -->
+        <div class="card border-danger">
+            <div class="card-header text-danger"><i class="fas fa-exclamation-triangle mr-2"></i> 危险操作</div>
+            <div class="card-body">
+                <form th:action="@{'/projects/' + ${project.id} + '/delete'}" method="post" onsubmit="return confirm('确定删除项目及其所有文档？此操作不可恢复！')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm">删除项目（含所有章节、进度、经验）</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 章节编辑 -->
+    <div class="modal fade" id="chapterModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <form th:action="@{'/projects/' + ${project.id} + '/agents/chapter'}" method="post">
+                    <div class="modal-header">
+                        <h5 class="modal-title">章节编辑</h5>
+                        <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-md-3 form-group">
+                                <label>章号</label>
+                                <input type="text" id="cNo" name="chapterNo" class="form-control" required placeholder="1">
+                            </div>
+                            <div class="col-md-5 form-group">
+                                <label>标题</label>
+                                <input type="text" id="cTitle" name="chapterTitle" class="form-control" required placeholder="项目概述">
+                            </div>
+                            <div class="col-md-4 form-group">
+                                <label>加载策略</label>
+                                <select id="cStrategy" name="loadStrategy" class="form-control">
+                                    <option value="ON_DEMAND">ON_DEMAND（按需）</option>
+                                    <option value="ALWAYS">ALWAYS（必读）</option>
+                                </select>
+                            </div>
+                        </div>
+                        <input type="hidden" id="cSort" name="sortOrder" value="0">
+                        <div class="form-group">
+                            <label>正文（Markdown，建议 3000 字以内）</label>
+                            <textarea id="cContent" name="content" class="form-control" rows="14" required></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">保存章节</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function resetChapter() {
+            document.getElementById('cNo').value = '';
+            document.getElementById('cTitle').value = '';
+            document.getElementById('cContent').value = '';
+            document.getElementById('cStrategy').value = 'ON_DEMAND';
+            document.getElementById('cSort').value = '0';
+            document.getElementById('cNo').readOnly = false;
+        }
+        function editChapter(btn) {
+            document.getElementById('cNo').value = btn.getAttribute('data-no');
+            document.getElementById('cNo').readOnly = true;
+            document.getElementById('cTitle').value = btn.getAttribute('data-title');
+            document.getElementById('cStrategy').value = btn.getAttribute('data-strategy');
+            document.getElementById('cSort').value = btn.getAttribute('data-sort') || '0';
+            document.getElementById('cContent').value = btn.getAttribute('data-content') || '';
+            $('#chapterModal').modal('show');
+        }
+        function genWorkflow() {
+            var task = document.getElementById('wfTask').value;
+            if (!task) { alert('请填写本次任务'); return; }
+            fetch(location.pathname + '/workflow', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'task=' + encodeURIComponent(task) + '&level=' + document.getElementById('wfLevel').value
+            }).then(r => r.json()).then(d => {
+                document.getElementById('wfResult').value = d.success ? d.prompt : ('生成失败: ' + d.message);
+            });
+        }
+    </script>
+</body>
+</html>
