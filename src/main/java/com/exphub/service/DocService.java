@@ -174,15 +174,13 @@ public class DocService {
         if (assistant != null) {
             // 可见性：PUBLIC 公开可见，或同一 API Key 下的私有经验
             wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", assistant.getApiKey()));
-            // 项目隔离：未指定项目时只返回全局经验，项目专属经验不进全局搜索
-            if (projectId != null) {
-                wrapper.eq("project_id", projectId);
-            } else {
-                wrapper.isNull("project_id");
-            }
-        } else if (projectId != null) {
-            // 后台调用（无 assistant）：按项目过滤
+        }
+        // 项目隔离：未指定项目时只返回全局经验，项目专属经验永不进全局搜索
+        // 注意：不能依赖 assistant 是否存在——WebFlux 下 ThreadLocal 可能丢失
+        if (projectId != null) {
             wrapper.eq("project_id", projectId);
+        } else {
+            wrapper.isNull("project_id");
         }
         
         if (templateType != null && !templateType.trim().isEmpty()) {
@@ -599,8 +597,8 @@ public class DocService {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
             wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", assistant.getApiKey()));
-            wrapper.isNull("project_id"); // 待办等列表只列全局经验
         }
+        wrapper.isNull("project_id"); // 待办等列表只列全局经验，项目内容不泄漏到全局
         wrapper.eq("template_type", templateType)
                .eq("status", "ACTIVE")
                .orderByDesc("updated_at");
