@@ -77,7 +77,7 @@
         <!-- Spring AI MCP Server (SSE 模式 - WebFlux 非阻塞传输) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-server-webflux</artifactId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
             <version>${spring-ai.version}</version>
         </dependency>
 
