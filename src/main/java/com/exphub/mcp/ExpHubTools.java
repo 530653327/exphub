@@ -1088,4 +1088,91 @@ public class ExpHubTools {
             return "提升失败: " + e.getMessage();
         }
     }
+
+    /** 内置工作流模板正文：exphub 未配置 workflow_template 时的兜底 */
+    private static final String BUILTIN_WORKFLOW_TEMPLATE =
+            "阶段 0：会话开场（S 级跳过）\n" +
+            "1. 读项目 AGENTS.md 索引（get_project_agents）\n" +
+            "2. 读最近 3 条进度（get_project_progress）\n" +
+            "3. 复述你准备从哪里开始，先不要写代码\n\n" +
+            "阶段 0.5：查既有经验（S 级跳过）\n" +
+            "用 exphub 搜这个问题有没有现成方案：search_experience（中英文各搜一次 + includeStatus=ALL）；\n" +
+            "命中则 get_experience_detail，见「历史导读」再调 get_experience_history；\n" +
+            "搜不到则标记为待沉淀，阶段 5 必须补。这一步不许跳过。\n\n" +
+            "阶段 1：任务定义确认（S 级跳过）\n" +
+            "复述要改哪些文件、为什么、输入输出是什么。说不清涉及文件就告诉我任务太大，不要硬着头皮开写。\n\n" +
+            "阶段 2：探索（S 级跳过）\n" +
+            "读涉及文件及依赖 → 复述职责与关键逻辑 → 列出不确定项，并逐条自己先查，给我结论和依据。\n" +
+            "先不要写代码，等我确认。\n\n" +
+            "阶段 3：实现\n" +
+            "1. 按子步骤推进，每完成一步停下来报告改了什么、下一步做什么\n" +
+            "2. 遵循项目 AGENTS.md 的编码规范和禁忌\n" +
+            "3. 决策分级：架构/技术选型必须问我；影响面大的实现选择先说方案再动手；局部细节你自定\n\n" +
+            "阶段 4：验证\n" +
+            "逐条核对验收标准，给出「满足 / 不满足 + 依据」；运行测试命令，并把实际输出贴出来（不要只说通过）。\n\n" +
+            "阶段 5：收尾\n" +
+            "1. 追加进度记录（append_project_progress）\n" +
+            "2. git diff 自查：确认没有账号密码、API Key、Token、数据库连接串、私钥、证书\n" +
+            "3. 沉淀 exphub：可复用的经验用 create_experience 创建；参考过的经验用 report_experience_result 反馈\n" +
+            "4. 提交代码\n\n" +
+            "红灯规则：说不清涉及文件 → 停下拆分；不停下来一口气写完 → 叫停；跳过阶段 0.5 → 叫停。\n" +
+            "现在开始：S 级从阶段 3 开始，其余从阶段 0 开始。";
+
+    @Tool(name = "generate_workflow_prompt", description = "生成一份填空完成的开发任务提示词：系统工作流模板 + 项目默认变量 + 本次任务变量，拼成可直接整段复制给 AI 助手的完整指令。项目的默认约束和测试命令会自动带入，只需填本次任务相关的几项。")
+    public String generateWorkflowPrompt(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "本次任务，一句话，如'实现采购订单导出Excel接口'") String task,
+            @ToolParam(description = "涉及文件，每行一个，格式：路径 —— 要改什么", required = false) String files,
+            @ToolParam(description = "验收标准，每行一条可测条件", required = false) String criteria,
+            @ToolParam(description = "任务级别：S(小修小补)/M(单点功能)/L(跨模块)。默认 M", required = false) String level,
+            @ToolParam(description = "额外约束，会与项目默认约束合并。可留空", required = false) String constraints) {
+        try {
+            Project proj = projectService.getProject(projectId);
+            if (proj == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
+            }
+            String lv = (level == null || level.trim().isEmpty()) ? "M" : level.trim().toUpperCase();
+            if (!"S".equals(lv) && !"M".equals(lv) && !"L".equals(lv)) {
+                return "❌ level 只能是 S / M / L。";
+            }
+            String testCmd = (proj.getDefaultTestCmd() != null && !proj.getDefaultTestCmd().isEmpty())
+                    ? proj.getDefaultTestCmd() : "（见项目 AGENTS.md）";
+            StringBuilder cons = new StringBuilder();
+            if (proj.getDefaultConstraints() != null && !proj.getDefaultConstraints().isEmpty()) {
+                cons.append(proj.getDefaultConstraints());
+            }
+            if (constraints != null && !constraints.trim().isEmpty()) {
+                if (cons.length() > 0) cons.append("\n");
+                cons.append(constraints.trim());
+            }
+            String body = projectService.getWorkflowTemplate();
+            boolean fromLib = body != null && !body.trim().isEmpty();
+            if (!fromLib) {
+                body = BUILTIN_WORKFLOW_TEMPLATE;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("# 开发任务 · ").append(proj.getName()).append("\n\n");
+            sb.append("> 模板来源：").append(fromLib ? "exphub 系统模板" : "内置默认模板（可在 exphub 建 workflow_template 类型经验覆盖）").append("\n");
+            sb.append("> 用法：整段复制下方代码块内容，粘贴给 AI 助手即可。\n\n");
+            sb.append("```\n");
+            sb.append("我要你按《AI 辅助开发工作流 v2.0》执行本次任务。严格按阶段推进，每阶段结束后停下来等我确认，不要一口气做完。\n\n");
+            sb.append("【本次任务参数】\n");
+            sb.append("- 项目：").append(proj.getName()).append("\n");
+            sb.append("- 任务：").append(task).append("\n");
+            sb.append("- 涉及文件：\n").append(files != null && !files.trim().isEmpty() ? files.trim() : "（待补充）").append("\n");
+            sb.append("- 验收标准：\n").append(criteria != null && !criteria.trim().isEmpty() ? criteria.trim() : "（待补充）").append("\n");
+            sb.append("- 约束：\n").append(cons.length() > 0 ? cons : "（见项目 AGENTS.md）").append("\n");
+            sb.append("- 任务级别：").append(lv).append("S".equals(lv) ? "（跳过阶段 0、0.5、1、2，直接从阶段 3 开始）" : "").append("\n");
+            sb.append("- 测试命令：").append(testCmd).append("\n\n");
+            sb.append(body).append("\n");
+            sb.append("```\n\n");
+            sb.append("提示：读项目上下文用 get_project_agents(project_id=").append(projectId)
+              .append(")；搜项目内既有经验用 search_experience 的 projectName 参数。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.generateWorkflowPrompt: FAILED", e);
+            return "生成失败: " + e.getMessage();
+        }
+    }
 }

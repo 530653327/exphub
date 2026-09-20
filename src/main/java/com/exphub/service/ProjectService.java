@@ -262,6 +262,18 @@ public class ProjectService {
     }
 
     /**
+     * 获取系统工作流模板正文（template_type = workflow_template 的全局经验）
+     * 未配置时返回 null，由调用方用内置模板兜底
+     */
+    public String getWorkflowTemplate() {
+        QueryWrapper<Doc> w = new QueryWrapper<>();
+        w.eq("template_type", "workflow_template").isNull("project_id")
+         .orderByDesc("updated_at").last("LIMIT 1");
+        List<Doc> list = docMapper.selectList(w);
+        return list.isEmpty() ? null : list.get(0).getContent();
+    }
+
+    /**
      * 把项目经验提升为全局经验（清除项目归属）
      */
     public Doc promoteToGlobal(Long docId) {
