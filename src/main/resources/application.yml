@@ -11,10 +11,12 @@ spring:
   application:
     name: ExpHub
 
-  # 说明：MCP 已从 WebFlux(Netty:3098) 切换为 WebMvc(Servlet:3099)，
-  # 目的：让「鉴权拦截器」与「工具执行」处于同一 Tomcat 线程，
-  # 使 ThreadLocal 身份传递可靠（原 WebFlux 下工具在别的线程执行，
-  # 导致身份为 null 或读到其它请求的残留值，隔离失效）。
+  # MCP 走独立 WebFlux(Netty:3098)，需排除自动配置以便手动搭建该服务器。
+  # ⚠️ 不可改回 WebMvc(Servlet)：Servlet 版 SSE 长连接会占满 Tomcat 线程池
+  #    导致应用假死（2026-09-27 实际故障），详见 McpReactiveServerConfig 注释。
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.mcp.server.autoconfigure.McpWebFluxServerAutoConfiguration
 
   datasource:
     url: ${EXPHUB_DB_URL:jdbc:mysql://localhost:3306/exphub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
@@ -44,8 +46,6 @@ spring:
         name: exphub
         version: 1.0.0
         stdio: false
-        # 保持与原 WebFlux 版一致的对外路径（Nginx /exphub/mcp/ 前缀 + context-path /exphub）
-        sse-endpoint: /mcp/sse
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml
