@@ -47,6 +47,16 @@ spring:
         version: 1.0.0
         stdio: false
 
+# MCP SSE 心跳间隔（秒）。
+# MCP 的 SSE 长连接在两次工具调用之间会长时间静默，静默连接会被 Nginx
+# (keepalive_timeout 65s) 以及运营商 / NAT / 防火墙按各自的空闲超时掐断，
+# 客户端只能不断重连（2026-10-09 实测：11 天 3877 次新建连接、日均 350+ 次，
+# 用户体感为「偶尔连不上」）。服务端每 30s 发一个 SSE 注释行保活。
+# ⚠️ 调整时须小于上述各层的最小空闲超时，否则心跳无效。
+exphub:
+  mcp:
+    sse-heartbeat-seconds: 30
+
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml
   configuration:
