@@ -406,43 +406,51 @@ public class ExpHubTools {
                 filterInfo += "【状态过滤: " + statusFilter + "】";
             }
             
+            // 未指定项目时，尝试从查询里识别项目（如 “exphub 架构”）
+            Project detected = null;
+            if (projectName == null || projectName.trim().isEmpty()) {
+                detected = detectProjectInQuery(query);
+            }
+
             if (docs.isEmpty()) {
-                return filterInfo + "未找到\"" + query + "\"相关的经验。\n\n" +
-                    "🔍 搜索建议：\n" +
-                    "1. 尝试使用更通用的关键词重试\n" +
-                    "2. 尝试不指定 templateType 扩大搜索范围\n" +
-                    "3. 使用英文关键词搜索\n" +
-                    "4. 尝试 includeStatus=COMPLETED,DEPRECATED,BROKEN 搜索历史经验\n\n" +
-                    "🔁 知识沉淀（重要！）：\n" +
-                    "既然经验库中没有相关解决方案，请你先自行解决用户的问题，解决完成后务必调用 create_experience 创建一篇新经验，将你的解决方案沉淀下来。\n" +
-                    "操作步骤：\n" +
-                    "  ① 先调用 get_template() 选择合适的模板类型\n" +
-                    "  ② 解决用户问题，记录关键步骤和方案\n" +
-                    "  ③ 调用 create_experience 保存经验，记得填写 category、tags、aliases、summary\n" +
-                    "这样后续的AI助手遇到同样问题时就能直接复用你的成果！";
+                // 1) 识别到项目时，先在该项目内再搜一次（项目经验默认不进全局搜索）
+                if (detected != null) {
+                    var inProject = docService.search(query, templateType, statusFilter, detected.getId(), 1, 20);
+                    if (!inProject.getRecords().isEmpty()) {
+                        return filterInfo + "🔎 自动定位到项目「" + detected.getName() + "」（"
+                                + detected.getProjectCode() + "），以下为项目内资料：\n\n"
+                                + renderDocs(inProject.getRecords());
+                    }
+                }
+
+                // 2) 相近经验兜底：避免 AI 误判“没有经验”而重复创建
+                var similar = docService.findSimilar(query, templateType, statusFilter, projectId, 3);
+                StringBuilder sb = new StringBuilder();
+                sb.append(filterInfo).append("未找到\"").append(query).append("\"的精确匹配。\n\n");
+                if (!similar.isEmpty()) {
+                    sb.append("🔍 相近经验（可能相关，请先确认再决定是否新建）：\n\n");
+                    sb.append(renderDocs(similar));
+                }
+                sb.append("💡 排查建议：\n");
+                if (projectId == null) {
+                    sb.append("1. **未指定项目时，项目专属经验不参与全局搜索**；如果这是某个项目的问题，请加 projectName 参数重试\n");
+                } else {
+                    sb.append("1. 尝试减少关键词（保留 2-3 个核心词），或换用更通用的说法\n");
+                }
+                sb.append("2. 换用同义词/英文缩写（如：部署 ↔ 上线、连不上 ↔ 连接失败/超时）\n");
+                sb.append("3. includeStatus=COMPLETED,DEPRECATED,BROKEN 可查历史或已归档经验\n");
+                sb.append("4. 确认确实没有可用经验后，再 create_experience 沉淀\n");
+                return sb.toString();
             }
 
             StringBuilder sb = new StringBuilder();
             sb.append(filterInfo).append("找到 ").append(docs.size()).append(" 条相关经验：\n\n");
-            
-            int i = 1;
-            for (Doc doc : docs) {
-                sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
-                String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
-                String statusLabel = getStatusLabel(doc.getStatus());
-                sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel).append(" | 分类: ").append(doc.getCategory()).append(" | 调用: ").append(doc.getCallCount()).append("次\n");
-                sb.append("   摘要: ").append(doc.getSummary() != null ? doc.getSummary() : "无").append("\n");
-                sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
-                sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n");
-                // 📚 历史版本标识：引导 AI 搜索阶段就意识到可深挖历史
-                List<DocVersion> docVersions = docService.getVersions(doc.getId());
-                if (!docVersions.isEmpty()) {
-                    sb.append("   📚 历史版本: 共 ").append(docVersions.size()).append(" 个（v1 ~ v").append(doc.getVersion() - 1)
-                      .append("），如需了解演进过程请调用 get_experience_history(id=").append(doc.getId()).append(", version=版本号)").append("\n");
-                }
-                sb.append("\n");
+            sb.append(renderDocs(docs));
+            if (detected != null) {
+                sb.append("---\n💡 检测到项目「").append(detected.getName())
+                  .append("」：以上为全局经验；项目内资料请用 projectName=")
+                  .append(detected.getProjectCode()).append(" 重试。\n");
             }
-
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.searchExperience: FAILED", e);
@@ -451,6 +459,48 @@ public class ExpHubTools {
         }
     }
     
+    private String renderDocs(List<Doc> docs) {
+        StringBuilder sb = new StringBuilder();
+        int i = 1;
+        for (Doc doc : docs) {
+            sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
+            String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
+            String statusLabel = getStatusLabel(doc.getStatus());
+            sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel)
+              .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
+            sb.append("   摘要: ").append(doc.getSummary() != null ? doc.getSummary() : "无").append("\n");
+            sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+            sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n");
+            // 📚 历史版本标识：引导 AI 搜索阶段就意识到可深挖历史
+            List<DocVersion> docVersions = docService.getVersions(doc.getId());
+            if (!docVersions.isEmpty()) {
+                sb.append("   📚 历史版本: 共 ").append(docVersions.size()).append(" 个（v1 ~ v").append(doc.getVersion() - 1)
+                  .append("），如需了解演进过程请调用 get_experience_history(id=").append(doc.getId()).append(", version=版本号)").append("\n");
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 从查询词里识别项目名/别名/编码。
+     * 项目经验默认不参与全局搜索，识别到项目时会在 0 结果场景自动补搜该项目。
+     */
+    private Project detectProjectInQuery(String query) {
+        if (query == null || query.trim().isEmpty()) return null;
+        for (String raw : query.split("[\\s,，、;；]+")) {
+            String token = raw.trim();
+            if (token.length() < 2) continue;
+            try {
+                var candidates = projectService.resolveProject(token);
+                if (candidates.size() == 1) return candidates.get(0);
+            } catch (Exception e) {
+                log.debug("detectProjectInQuery: '{}' 解析失败: {}", token, e.getMessage());
+            }
+        }
+        return null;
+    }
+
     private String getTemplateTypeLabel(String type) {
         if (type == null) return "通用";
         return switch (type) {

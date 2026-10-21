@@ -22,7 +22,7 @@ public interface DocMapper extends BaseMapper<Doc> {
     @Select("<script>" +
         "SELECT * FROM docs " +
         "WHERE MATCH(title, content, aliases, summary, tags) AGAINST(#{keyword} IN BOOLEAN MODE) " +
-        "<if test='apiKey != null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
+        "<if test='apiKey != null and projectId == null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
         "<if test='projectId != null'>AND project_id = #{projectId}</if> " +
         "<if test='projectId == null'>AND project_id IS NULL</if> " +
         "<if test='templateType != null and templateType != \"\"'>AND template_type = #{templateType}</if> " +
@@ -47,7 +47,7 @@ public interface DocMapper extends BaseMapper<Doc> {
     @Select("<script>" +
         "SELECT COUNT(*) FROM docs " +
         "WHERE MATCH(title, content, aliases, summary, tags) AGAINST(#{keyword} IN BOOLEAN MODE) " +
-        "<if test='apiKey != null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
+        "<if test='apiKey != null and projectId == null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
         "<if test='projectId != null'>AND project_id = #{projectId}</if> " +
         "<if test='projectId == null'>AND project_id IS NULL</if> " +
         "<if test='templateType != null and templateType != \"\"'>AND template_type = #{templateType}</if> " +

@@ -5,8 +5,10 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.DocVersion;
+import com.exphub.entity.Project;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.DocVersionMapper;
+import com.exphub.mapper.ProjectMapper;
 import com.exphub.entity.User;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import org.slf4j.Logger;
@@ -20,9 +22,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class DocService {
@@ -34,6 +39,9 @@ public class DocService {
 
     @Autowired
     private DocVersionMapper versionMapper;
+
+    @Autowired
+    private ProjectMapper projectMapper;
 
     @Autowired
     private CallLogService callLogService;
@@ -107,40 +115,75 @@ public class DocService {
     public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId, int page, int size) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+
+        // 项目域鉴权：项目必须归属当前 Key（后台无 Key 上下文时放行）。
+        // 校验通过后，项目本身即为隔离边界，不再对项目内文档重复做 api_key 过滤
+        // （项目文档常由后台/系统创建，api_key 为空，重复过滤会把所有者自己也挡掉）。
+        if (projectId != null && !canAccessProject(projectId, apiKey)) {
+            log.warn("DocService.search: 无权访问项目 {}, key={}", projectId, maskKey(apiKey));
+            return emptyPage(page, size);
+        }
+
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
-        List<String> statusList = null;
-        if (includeStatus != null && !includeStatus.trim().isEmpty()) {
-            statusList = Arrays.asList(includeStatus.split(","));
+        List<String> statusList = parseStatusList(includeStatus);
+
+        if (keyword == null || keyword.trim().isEmpty()) {
+            return searchWithLike(keyword, templateType, includeStatus, projectId, page, size);
         }
 
-        // ===== 有搜索关键词：三级降级策略 =====
-        if (keyword != null && !keyword.trim().isEmpty()) {
-            String kw = keyword.trim();
-            String sortKeyword = toCleanKeyword(kw);
+        String kw = keyword.trim();
+        String cleanKeyword = toCleanKeyword(kw);
+        SearchTerms terms = buildSearchTerms(kw);
 
-            // 第一级：原始关键词 FULLTEXT 搜索（向后兼容，对短关键词效果良好）
-            String ftQuery = toFulltextQuery(kw);
-            long total = docMapper.countByFulltext(ftQuery, apiKey, projectId, tt, statusList);
-
-            if (total > 0) {
-                return buildFulltextResult(kw, ftQuery, sortKeyword, apiKey, projectId, tt, statusList, page, size, total, assistant);
-            }
-
-            // 第二级：ngram 2-gram 拆分后重试 FULLTEXT（解决长中文短语被当整体匹配的问题）
-            String ngramQuery = toNgramFulltextQuery(kw);
-            if (!ngramQuery.equals(ftQuery)) {
-                log.debug("FULLTEXT 原始查询无结果，尝试 ngram 重试: '{}' -> '{}'", kw, ngramQuery);
-                total = docMapper.countByFulltext(ngramQuery, apiKey, projectId, tt, statusList);
-                if (total > 0) {
-                    return buildFulltextResult(kw, ngramQuery, sortKeyword, apiKey, projectId, tt, statusList, page, size, total, assistant);
-                }
-            }
-
-            // 第三级：LIKE 兜底（处理特殊字符/极短词等 FULLTEXT 无法覆盖的场景）
+        // ===== 第 1 级：严格 AND（精确优先，能命中就不放宽）=====
+        String strictQuery = toFulltextQuery(kw);
+        long strictTotal = docMapper.countByFulltext(strictQuery, apiKey, projectId, tt, statusList);
+        if (strictTotal > 0) {
+            log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
+            return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
         }
 
-        // ===== LIKE 兜底或空关键词 =====
+        // ===== 第 2 级：OR 召回 + 覆盖率重排（真正的放宽：不再要求所有词同时命中）=====
+        if (!terms.expanded.isEmpty()) {
+            String orQuery = terms.toOrQuery();
+            List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT);
+            List<Doc> ranked = rankAndFilter(candidates, terms, true);
+            if (!ranked.isEmpty()) {
+                log.info("search tier=relaxed kw='{}' projectId={} candidates={} accepted={}",
+                        kw, projectId, candidates.size(), ranked.size());
+                return pagedResult(kw, ranked, page, size);
+            }
+            log.info("search tier=relaxed-empty kw='{}' projectId={} candidates={} concepts={}",
+                    kw, projectId, candidates.size(), terms.concepts.size());
+        }
+
+        // ===== 第 3 级：LIKE 兜底（单字/标点等全文索引覆盖不到的场景）=====
         return searchWithLike(keyword, templateType, includeStatus, projectId, page, size);
+    }
+
+    /**
+     * 相近经验：不做覆盖率门槛，按同一套评分取 TopN。
+     * 用于“0 结果”时给调用方兜底参考，避免 AI 误判“没有经验”而重复创建。
+     */
+    public List<Doc> findSimilar(String keyword, String templateType, String includeStatus, Long projectId, int limit) {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+        if (projectId != null && !canAccessProject(projectId, apiKey)) {
+            return new ArrayList<>();
+        }
+        String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
+        List<String> statusList = parseStatusList(includeStatus);
+        SearchTerms terms = buildSearchTerms(keyword);
+        if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Doc> candidates = docMapper.searchByFulltext(terms.toOrQuery(), toCleanKeyword(keyword == null ? "" : keyword),
+                apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT);
+        List<Doc> ranked = rankAndFilter(candidates, terms, false);
+        if (ranked.size() > limit) {
+            return new ArrayList<>(ranked.subList(0, Math.max(0, limit)));
+        }
+        return ranked;
     }
 
     /**
@@ -148,7 +191,7 @@ public class DocService {
      */
     private Page<Doc> buildFulltextResult(String originalKeyword, String ftQuery, String sortKeyword,
                                           String apiKey, Long projectId, String tt, List<String> statusList,
-                                          int page, int size, long total, AiAssistant assistant) {
+                                          int page, int size, long total) {
         long offset = (long) (page - 1) * size;
         List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size);
 
@@ -156,10 +199,23 @@ public class DocService {
         result.setRecords(records);
         result.setTotal(total);
 
+        // 注意：列表曝光不再计入 call_count。
+        // 旧逻辑“每展示一条就 +1”会让越常被搜到的文档越靠前（马太效应），
+        // 并把真实使用量（打开详情）淹没在曝光里；调用日志已由 logSearch 记录。
         callLogService.logSearch(originalKeyword, (int) total, records);
-        if (assistant != null) {
-            for (Doc doc : records) incrementCallCount(doc.getId());
+        return result;
+    }
+
+    private Page<Doc> pagedResult(String originalKeyword, List<Doc> ranked, int page, int size) {
+        Page<Doc> result = new Page<>(page, size);
+        result.setTotal(ranked.size());
+        int from = Math.max(0, (page - 1) * size);
+        if (from >= ranked.size()) {
+            result.setRecords(new ArrayList<>());
+        } else {
+            result.setRecords(new ArrayList<>(ranked.subList(from, Math.min(ranked.size(), from + size))));
         }
+        callLogService.logSearch(originalKeyword, ranked.size(), result.getRecords());
         return result;
     }
     
@@ -167,73 +223,52 @@ public class DocService {
      * LIKE 搜索兜底（FULLTEXT 无结果或空关键词时使用）
      */
     private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId, int page, int size) {
-        Page<Doc> p = new Page<>(page, size);
-        QueryWrapper<Doc> wrapper = new QueryWrapper<>();
-        
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
-        if (assistant != null) {
-            // 可见性：PUBLIC 公开可见，或同一 API Key 下的私有经验
-            wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", assistant.getApiKey()));
+        String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+        String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
+        List<String> statusList = parseStatusList(includeStatus);
+
+        QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        // 与全文检索保持一致：项目域已鉴权，不再叠加文档级 Key 过滤
+        if (apiKey != null && projectId == null) {
+            wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", apiKey));
         }
-        // 项目隔离：未指定项目时只返回全局经验，项目专属经验永不进全局搜索
-        // 注意：不能依赖 assistant 是否存在——WebFlux 下 ThreadLocal 可能丢失
         if (projectId != null) {
             wrapper.eq("project_id", projectId);
         } else {
             wrapper.isNull("project_id");
         }
-        
-        if (templateType != null && !templateType.trim().isEmpty()) {
-            wrapper.eq("template_type", templateType.trim());
+        if (tt != null) {
+            wrapper.eq("template_type", tt);
         }
-        
-        if (includeStatus != null && !includeStatus.trim().isEmpty()) {
-            String[] statuses = includeStatus.split(",");
-            wrapper.in("status", (Object[]) statuses);
+        if (statusList != null && !statusList.isEmpty()) {
+            wrapper.in("status", statusList);
         }
-        
-        long total = 0;
-        if (keyword != null && !keyword.trim().isEmpty()) {
-            String kw = keyword.trim();
-            String[] tokens = kw.split("[\\s,，、]+");
-            if (tokens.length == 1) {
-                String t = tokens[0].trim();
-                wrapper.and(w -> w.like("title", t)
-                        .or().like("content", t)
-                        .or().like("aliases", t)
-                        .or().like("summary", t)
-                        .or().like("tags", t));
-            } else {
-                // 多关键词 AND 逻辑：每个词必须在至少一个字段中出现
-                // 使用 MyBatis-Plus like() 参数化查询，防止 SQL 注入
-                for (String token : tokens) {
-                    String t = token.trim();
-                    if (t.isEmpty()) continue;
-                    wrapper.and(w -> w.like("title", t)
-                            .or().like("content", t)
-                            .or().like("aliases", t)
-                            .or().like("summary", t)
-                            .or().like("tags", t));
-                }
-            }
-            total = docMapper.selectCount(wrapper);
+
+        SearchTerms terms = buildSearchTerms(keyword);
+        if (terms.concepts.isEmpty()) {
+            long total = docMapper.selectCount(wrapper);
             wrapper.orderByDesc("updated_at");
-        } else {
-            wrapper.orderByDesc("updated_at");
-            total = docMapper.selectCount(null);
+            Page<Doc> result = docMapper.selectPage(new Page<>(page, size), wrapper);
+            result.setTotal(total);
+            callLogService.logSearch(keyword, (int) total, result.getRecords());
+            return result;
         }
-        Page<Doc> result = docMapper.selectPage(p, wrapper);
-        result.setTotal(total);
-        
-        callLogService.logSearch(keyword, (int) total, result.getRecords());
-        
-        if (assistant != null) {
-            for (Doc doc : result.getRecords()) {
-                incrementCallCount(doc.getId());
+
+        // LIKE 兜底同样放宽为“任一关键词命中”，再按覆盖率排序
+        List<String> tokens = terms.concepts;
+        wrapper.and(outer -> {
+            for (int i = 0; i < tokens.size(); i++) {
+                String t = tokens.get(i);
+                if (i > 0) outer.or();
+                outer.like("title", t).or().like("content", t).or().like("aliases", t)
+                     .or().like("summary", t).or().like("tags", t);
             }
-        }
-        
-        return result;
+        });
+        wrapper.last("LIMIT " + CANDIDATE_LIMIT);
+        List<Doc> candidates = docMapper.selectList(wrapper);
+        List<Doc> ranked = rankAndFilter(candidates, terms, false);
+        return pagedResult(keyword, ranked, page, size);
     }
     
     /**
@@ -280,67 +315,223 @@ public class DocService {
                 .trim();
     }
 
+    // ==================== 检索：召回与排序 ====================
+
+    /** 候选池上限：先宽松召回，再在内存里按覆盖率/字段权重重排 */
+    private static final int CANDIDATE_LIMIT = 200;
+    /** 查询词上限，避免长句导致召回/评分退化 */
+    private static final int MAX_QUERY_TOKENS = 10;
+
+    private static final Set<String> STOPWORDS = Set.of(
+            "的", "了", "和", "与", "及", "或", "怎么", "如何", "什么", "为什么", "哪些",
+            "是否", "可以", "需要", "一下", "我们", "你们", "他们", "这个", "那个",
+            "请问", "帮我", "看看", "相关", "关于", "现在", "进行");
+
+    /** 一次检索的两种视图：concepts 用于评分/LIKE，expanded 用于全文召回 */
+    private static class SearchTerms {
+        /** 原始概念（用户输入的关键词，去停用词后） */
+        final List<String> concepts = new ArrayList<>();
+        /** 每个概念的可匹配变体：原词 + 中文 2-gram + 英文片段（用于覆盖率/字段命中判断） */
+        final List<List<String>> variants = new ArrayList<>();
+        /** 全文召回用的扁平词表 */
+        final List<String> expanded = new ArrayList<>();
+
+        String toOrQuery() {
+            if (expanded.isEmpty()) return "";
+            return "+(" + String.join(" ", expanded) + ")";
+        }
+    }
+
+    private static class ScoredDoc {
+        final Doc doc;
+        final double score;
+
+        ScoredDoc(Doc doc, double score) {
+            this.doc = doc;
+            this.score = score;
+        }
+    }
+
     /**
-     * ngram 2-gram 滑动窗口分词版 FULLTEXT 查询
-     * 对连续中文字符串（>2字符）按 2 字符滑动窗口拆分为 OR 组，
-     * 解决长中文短语在 BOOLEAN MODE 下被当整体匹配导致零命中问题。
-     *
-     * 示例：
-     *   "ExpHub 开发部署完整流程" → "+ExpHub +(开发 发部 部署 署完 完整 整流 流程)"
-     *   "搜索优化" → "搜索 优化" (各2字符，无需拆分)
-     *   "MySQL8配置" → "+MySQL8 +配置" (中英分离)
+     * 构建检索词：
+     * - concepts：去掉停用词后的原始概念，用于覆盖率和字段命中判断
+     * - expanded：全文召回用。中文按 2-gram 展开（ngram_token_size=2），
+     *   英文/数字按非字母数字切分后取长度>=2 的片段；单字中文不进全文索引，只保留在 concepts 里
      */
-    private String toNgramFulltextQuery(String keyword) {
-        String cleaned = keyword.replaceAll("[+\\-><\\(\\)~\\*\"@]", " ");
-        String[] rawTokens = cleaned.split("[\\s,，、]+");
+    private SearchTerms buildSearchTerms(String keyword) {
+        SearchTerms terms = new SearchTerms();
+        if (keyword == null) return terms;
 
-        List<String> andParts = new ArrayList<>();
-
-        for (String token : rawTokens) {
-            String t = token.trim();
-            if (t.isEmpty()) continue;
-
-            // 提取中文和非中文部分
-            String chinesePart = extractChinese(t);
-            String nonChinesePart = t.replaceAll("[\\u4e00-\\u9fa5]", "").trim();
-
-            // 非中文部分（英文、数字等）作为独立 AND 条件
-            if (!nonChinesePart.isEmpty()) {
-                andParts.add(nonChinesePart);
+        String cleaned = keyword.replaceAll("[+\\-><\\(\\)~\\*\"@]", " ").trim();
+        for (String raw : cleaned.split("[\\s,，、;；]+")) {
+            String token = raw.trim();
+            if (token.isEmpty()) continue;
+            if (STOPWORDS.contains(token.toLowerCase())) continue;
+            if (!terms.concepts.contains(token)) {
+                terms.concepts.add(token);
             }
+            if (terms.concepts.size() >= MAX_QUERY_TOKENS) break;
+        }
 
-            // 中文部分处理
-            if (chinesePart.length() == 1) {
-                andParts.add(chinesePart);
-            } else if (chinesePart.length() == 2) {
-                // 2 字符中文无需拆分，直接使用
-                andParts.add(chinesePart);
-            } else if (chinesePart.length() > 2) {
-                // >2 字符中文：2-gram 滑动窗口，用 OR 组合
-                List<String> ngrams = new ArrayList<>();
-                for (int i = 0; i <= chinesePart.length() - 2; i++) {
-                    ngrams.add(chinesePart.substring(i, i + 2));
+        for (String concept : terms.concepts) {
+            List<String> variants = new ArrayList<>();
+            variants.add(concept);
+            addExpandedTerms(variants, concept);
+            terms.variants.add(variants);
+            for (String v : variants) {
+                if (!terms.expanded.contains(v)) terms.expanded.add(v);
+            }
+            if (terms.expanded.size() >= 32) break;
+        }
+        return terms;
+    }
+
+    private void addExpandedTerms(List<String> out, String token) {
+        String chinese = extractChinese(token);
+        String nonChinese = token.replaceAll("[\\u4e00-\\u9fa5]", " ").trim();
+
+        if (!nonChinese.isEmpty()) {
+            for (String part : nonChinese.split("[^A-Za-z0-9]+")) {
+                if (part.length() >= 2 && !out.contains(part)) {
+                    out.add(part);
                 }
-                // +(token1 token2 token3) = 至少命中一个 2-gram（OR 逻辑），同时作为整体参与 AND
-                andParts.add("(" + String.join(" ", ngrams) + ")");
             }
         }
-
-        if (andParts.isEmpty()) {
-            return keyword.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5]", " ");
+        if (chinese.length() == 2) {
+            if (!out.contains(chinese)) out.add(chinese);
+        } else if (chinese.length() > 2) {
+            for (int i = 0; i <= chinese.length() - 2; i++) {
+                String gram = chinese.substring(i, i + 2);
+                if (!out.contains(gram)) out.add(gram);
+            }
         }
+    }
 
-        if (andParts.size() == 1) {
-            return andParts.get(0);
+    /**
+     * 按覆盖率 + 字段权重 + 时效 + 热度排序。
+     * @param applyThreshold true=只保留达到最低覆盖率的结果（正常搜索）；
+     *                       false=全部保留，用于“相近经验”兜底
+     */
+    private List<Doc> rankAndFilter(List<Doc> candidates, SearchTerms terms, boolean applyThreshold) {
+        List<Doc> empty = new ArrayList<>();
+        if (candidates == null || candidates.isEmpty() || terms.concepts.isEmpty()) {
+            return empty;
         }
+        List<ScoredDoc> scored = new ArrayList<>();
+        for (Doc doc : candidates) {
+            int matched = 0;
+            for (List<String> variants : terms.variants) {
+                if (matchesConcept(doc, variants)) matched++;
+            }
+            if (matched == 0) continue;
+            if (applyThreshold && !passesThreshold(matched, terms.variants.size())) continue;
+            scored.add(new ScoredDoc(doc, score(doc, terms.variants, matched)));
+        }
+        scored.sort((a, b) -> Double.compare(b.score, a.score));
+        List<Doc> ranked = new ArrayList<>(scored.size());
+        for (ScoredDoc s : scored) ranked.add(s.doc);
+        return ranked;
+    }
 
-        // 多部分：AND 逻辑
-        StringBuilder sb = new StringBuilder();
-        for (String part : andParts) {
-            if (sb.length() > 0) sb.append(" ");
-            sb.append("+").append(part);
+    private boolean passesThreshold(int matched, int total) {
+        if (matched <= 0) return false;
+        return matched >= requiredMatches(total);
+    }
+
+    /**
+     * 放宽召回的最低命中概念数：
+     * 单概念全命中；多概念至少 2 个，且不低于 40%（避免长 query 只命中一两个泛词就进来）。
+     */
+    private int requiredMatches(int total) {
+        if (total <= 1) return 1;
+        return Math.min(total, Math.max(2, (int) Math.ceil(total * 0.4)));
+    }
+
+    private double score(Doc doc, List<List<String>> variants, int matched) {
+        double coverage = (double) matched / Math.max(1, variants.size());
+
+        double fieldSum = 0;
+        for (List<String> conceptVariants : variants) {
+            fieldSum += fieldWeight(doc, conceptVariants);
         }
-        return sb.toString();
+        double fieldScore = Math.min(1.0, fieldSum / Math.max(1, variants.size()) / 3.0);
+
+        double recency = recencyScore(doc.getUpdatedAt());
+        int calls = doc.getCallCount() == null ? 0 : doc.getCallCount();
+        double popularity = Math.min(1.0, Math.log1p(calls) / Math.log1p(50));
+
+        return 0.55 * coverage + 0.25 * fieldScore + 0.12 * recency + 0.08 * popularity;
+    }
+
+    /** 一个概念的最佳字段权重：概念内任一 2-gram 命中该字段即算命中 */
+    private double fieldWeight(Doc doc, List<String> variants) {
+        double best = 0;
+        for (String v : variants) {
+            best = Math.max(best, fieldWeight(doc, v));
+            if (best >= 3.0) break;
+        }
+        return best;
+    }
+
+    private double fieldWeight(Doc doc, String term) {
+        if (containsIgnoreCase(doc.getTitle(), term)) return 3.0;
+        if (containsIgnoreCase(doc.getAliases(), term)) return 2.0;
+        if (containsIgnoreCase(doc.getSummary(), term)) return 2.0;
+        if (containsIgnoreCase(doc.getTags(), term)) return 2.0;
+        if (containsIgnoreCase(doc.getContent(), term)) return 1.0;
+        return 0;
+    }
+
+    private boolean matchesConcept(Doc doc, List<String> variants) {
+        for (String v : variants) {
+            if (containsIgnoreCase(doc.getTitle(), v)
+                    || containsIgnoreCase(doc.getAliases(), v)
+                    || containsIgnoreCase(doc.getSummary(), v)
+                    || containsIgnoreCase(doc.getTags(), v)
+                    || containsIgnoreCase(doc.getContent(), v)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsIgnoreCase(String text, String needle) {
+        if (text == null || needle == null || needle.isEmpty()) return false;
+        return text.toLowerCase().contains(needle.toLowerCase());
+    }
+
+    private double recencyScore(LocalDateTime updatedAt) {
+        if (updatedAt == null) return 0;
+        long days = Duration.between(updatedAt, LocalDateTime.now()).toDays();
+        if (days < 0) days = 0;
+        return Math.exp(-days / 90.0);
+    }
+
+    /**
+     * 项目域访问校验：项目必须归属当前 Key。
+     * 后台（无 Key 上下文）放行；项目 api_key 为空时不允许助手访问（避免孤儿项目被任意 Key 读取）。
+     */
+    private boolean canAccessProject(Long projectId, String apiKey) {
+        Project project = projectMapper.selectById(projectId);
+        if (project == null) return false;
+        if (apiKey == null) return true;
+        return apiKey.equals(project.getApiKey());
+    }
+
+    private List<String> parseStatusList(String includeStatus) {
+        if (includeStatus == null || includeStatus.trim().isEmpty()) return null;
+        List<String> list = new ArrayList<>();
+        for (String s : includeStatus.split(",")) {
+            if (!s.trim().isEmpty()) list.add(s.trim());
+        }
+        return list.isEmpty() ? null : list;
+    }
+
+    private Page<Doc> emptyPage(int page, int size) {
+        Page<Doc> p = new Page<>(page, size);
+        p.setRecords(new ArrayList<>());
+        p.setTotal(0);
+        return p;
     }
 
     /**
