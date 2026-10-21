@@ -135,12 +135,22 @@ public class DocService {
         String cleanKeyword = toCleanKeyword(kw);
         SearchTerms terms = buildSearchTerms(kw);
 
-        // ===== 第 1 级：严格 AND（精确优先，能命中就不放宽）=====
+        // ===== 第 1 级：严格 AND（精确优先，但只在“整词覆盖”时直接采用）=====
+        // 若严格命中只是靠 2-gram 泛词凑出来的（如「数据 结构」凑中「数据模型 表结构」），
+        // 直接返回会绕过重排、把真正精确的文档挤掉，此时下沉到第 2 级。
         String strictQuery = toFulltextQuery(kw);
         long strictTotal = docMapper.countByFulltext(strictQuery, apiKey, projectId, tt, statusList);
         if (strictTotal > 0) {
-            log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
-            return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
+            if (page > 1) {
+                log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
+                return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
+            }
+            List<Doc> strictDocs = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, size);
+            if (hasExactCoverage(strictDocs, terms)) {
+                log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
+                return buildResultFromRecords(kw, strictDocs, strictTotal, page, size);
+            }
+            log.info("search tier=strict-weak kw='{}' projectId={} hits={} → 放宽重排", kw, projectId, strictTotal);
         }
 
         // ===== 第 2 级：OR 召回 + 覆盖率重排（真正的放宽：不再要求所有词同时命中）=====
@@ -195,6 +205,10 @@ public class DocService {
         long offset = (long) (page - 1) * size;
         List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size);
 
+        return buildResultFromRecords(originalKeyword, records, total, page, size);
+    }
+
+    private Page<Doc> buildResultFromRecords(String originalKeyword, List<Doc> records, long total, int page, int size) {
         Page<Doc> result = new Page<>(page, size);
         result.setRecords(records);
         result.setTotal(total);
@@ -204,6 +218,25 @@ public class DocService {
         // 并把真实使用量（打开详情）淹没在曝光里；调用日志已由 logSearch 记录。
         callLogService.logSearch(originalKeyword, (int) total, records);
         return result;
+    }
+
+    /**
+     * 严格命中里是否真的存在“覆盖全部概念（整词，而非 2-gram 拼凑）”的文档。
+     * 有则说明严格 AND 的结果可信，直接返回；没有则下沉到重排，避免泛词命中挤掉精确文档。
+     */
+    private boolean hasExactCoverage(List<Doc> docs, SearchTerms terms) {
+        if (docs == null || docs.isEmpty() || terms.concepts.isEmpty()) return false;
+        for (Doc doc : docs) {
+            boolean all = true;
+            for (String concept : terms.concepts) {
+                if (!matchesAnyField(doc, concept)) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all) return true;
+        }
+        return false;
     }
 
     private Page<Doc> pagedResult(String originalKeyword, List<Doc> ranked, int page, int size) {
@@ -419,13 +452,18 @@ public class DocService {
         }
         List<ScoredDoc> scored = new ArrayList<>();
         for (Doc doc : candidates) {
+            double conceptScore = 0;
             int matched = 0;
             for (List<String> variants : terms.variants) {
-                if (matchesConcept(doc, variants)) matched++;
+                double strength = conceptStrength(doc, variants);
+                if (strength > 0) {
+                    matched++;
+                    conceptScore += strength;
+                }
             }
             if (matched == 0) continue;
             if (applyThreshold && !passesThreshold(matched, terms.variants.size())) continue;
-            scored.add(new ScoredDoc(doc, score(doc, terms.variants, matched)));
+            scored.add(new ScoredDoc(doc, score(doc, terms.variants, conceptScore)));
         }
         scored.sort((a, b) -> Double.compare(b.score, a.score));
         List<Doc> ranked = new ArrayList<>(scored.size());
@@ -440,15 +478,16 @@ public class DocService {
 
     /**
      * 放宽召回的最低命中概念数：
-     * 单概念全命中；多概念至少 2 个，且不低于 40%（避免长 query 只命中一两个泛词就进来）。
+     * 单/双概念至少命中 1 个（双词 query 不再退化成严格 AND）；
+     * 3 个以上至少 2 个，且不低于 40%（避免长 query 只命中一两个泛词就进来）。
      */
     private int requiredMatches(int total) {
-        if (total <= 1) return 1;
+        if (total <= 2) return 1;
         return Math.min(total, Math.max(2, (int) Math.ceil(total * 0.4)));
     }
 
-    private double score(Doc doc, List<List<String>> variants, int matched) {
-        double coverage = (double) matched / Math.max(1, variants.size());
+    private double score(Doc doc, List<List<String>> variants, double conceptScore) {
+        double coverage = conceptScore / Math.max(1, variants.size());
 
         double fieldSum = 0;
         for (List<String> conceptVariants : variants) {
@@ -482,17 +521,25 @@ public class DocService {
         return 0;
     }
 
-    private boolean matchesConcept(Doc doc, List<String> variants) {
-        for (String v : variants) {
-            if (containsIgnoreCase(doc.getTitle(), v)
-                    || containsIgnoreCase(doc.getAliases(), v)
-                    || containsIgnoreCase(doc.getSummary(), v)
-                    || containsIgnoreCase(doc.getTags(), v)
-                    || containsIgnoreCase(doc.getContent(), v)) {
-                return true;
-            }
+    /**
+     * 概念命中强度：整词命中记 1.0，仅 2-gram/英文片段命中记 0.5。
+     * 这样「数据模型」这类精确命中，不会被只命中「数据」的泛匹配在覆盖率上压平。
+     */
+    private double conceptStrength(Doc doc, List<String> variants) {
+        if (variants == null || variants.isEmpty()) return 0;
+        if (matchesAnyField(doc, variants.get(0))) return 1.0;
+        for (int i = 1; i < variants.size(); i++) {
+            if (matchesAnyField(doc, variants.get(i))) return 0.5;
         }
-        return false;
+        return 0;
+    }
+
+    private boolean matchesAnyField(Doc doc, String term) {
+        return containsIgnoreCase(doc.getTitle(), term)
+                || containsIgnoreCase(doc.getAliases(), term)
+                || containsIgnoreCase(doc.getSummary(), term)
+                || containsIgnoreCase(doc.getTags(), term)
+                || containsIgnoreCase(doc.getContent(), term);
     }
 
     private boolean containsIgnoreCase(String text, String needle) {
