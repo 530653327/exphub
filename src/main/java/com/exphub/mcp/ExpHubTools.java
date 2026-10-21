@@ -351,11 +351,11 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型、状态等信息。默认只搜索ACTIVE（正常）状态的经验，排除已完成、已过期、已失效的经验。在开始任务前使用此工具查找是否有可借鉴的经验。⚠️ 必须用完整的自然语言描述问题场景，例如：'Nginx HTTPS反向代理Spring Boot配置'，而不是只传单个词如'nginx'。多个关键词用空格分隔，会进行精确匹配。建议指定 templateType 缩小范围提高准确度。🔁 知识沉淀：如果搜索不到相关经验，请在完成任务后自动调用 create_experience 创建新经验，让后续的AI助手可以复用你的成果。")
+    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型、状态等信息。默认只搜 ACTIVE（正常）状态；如需历史/归档经验，传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。检索会做宽松召回并按相关度排序，不必保证每个词都命中；用完整自然语言描述场景效果最好。⚠️ 未传 projectName 时只搜全局经验，项目专属经验不会出现在结果里；问题属于某个项目时请传 projectName。若 0 结果，会返回相近经验与排查建议，请先确认确实没有可复用经验，再考虑 create_experience 沉淀。")
     public String searchExperience(
             @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
-            @ToolParam(description = "指定搜索的模板类型，缩小搜索范围提高准确度。可选：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。") String templateType,
-            @ToolParam(description = "指定搜索的状态，默认只搜索ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。") String includeStatus,
+            @ToolParam(description = "可选。指定搜索的模板类型：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)。不传则搜索所有类型。", required = false) String templateType,
+            @ToolParam(description = "可选。指定搜索的状态，默认只搜索 ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。", required = false) String includeStatus,
             @ToolParam(description = "可选。限定在某个项目内搜索，填项目名称或别名（如'回金算'、'huijinsuan'）。不传则只搜索全局经验——项目专属经验不会出现在全局搜索结果中。", required = false) String projectName) {
         
         try {
