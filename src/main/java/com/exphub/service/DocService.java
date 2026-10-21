@@ -622,10 +622,18 @@ public class DocService {
         if (doc != null) {
             AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
             if (assistant != null) {
-                // 可见性：PUBLIC 对所有 Key 可见；PRIVATE 仅同 API Key 可见
-                boolean isPublic = "PUBLIC".equalsIgnoreCase(doc.getVisibility());
-                boolean sameKey = doc.getApiKey() != null && assistant.getApiKey().equals(doc.getApiKey());
-                if (!isPublic && !sameKey) {
+                boolean allowed;
+                if (doc.getProjectId() != null) {
+                    // 项目文档以项目归属为隔离边界（与搜索口径一致）。
+                    // 项目 api_key 为空时对任何 Key 都不可见，避免“孤儿项目”泄权。
+                    allowed = canAccessProject(doc.getProjectId(), assistant.getApiKey());
+                } else {
+                    // 可见性：PUBLIC 对所有 Key 可见；PRIVATE 仅同 API Key 可见
+                    boolean isPublic = "PUBLIC".equalsIgnoreCase(doc.getVisibility());
+                    boolean sameKey = doc.getApiKey() != null && assistant.getApiKey().equals(doc.getApiKey());
+                    allowed = isPublic || sameKey;
+                }
+                if (!allowed) {
                     return null; // 不可见
                 }
                 // MCP/API 调用查看详情时，增加引用计数

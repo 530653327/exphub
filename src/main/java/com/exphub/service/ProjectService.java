@@ -46,6 +46,20 @@ public class ProjectService {
         return a != null ? a.getApiKey() : null;
     }
 
+    /**
+     * 项目可见性判定（全服务唯一口径）：
+     * <ul>
+     *   <li>无 Key 上下文（后台 Web 会话）→ 放行；</li>
+     *   <li>有 Key 上下文 → 必须与项目 api_key 严格相等；</li>
+     *   <li>项目 api_key 为空（孤儿项目）→ 对任何 Key 都不可见，避免“人人可读”。</li>
+     * </ul>
+     */
+    static boolean canAccess(Project project, String key) {
+        if (project == null) return false;
+        if (key == null) return true;
+        return key.equals(project.getApiKey());
+    }
+
     // ==================== 项目 CRUD ====================
 
     public Project createProject(Project project) {
@@ -61,6 +75,9 @@ public class ProjectService {
         }
         if (key != null) {
             project.setApiKey(key);
+        } else {
+            log.warn("createProject: 没有可用的 API Key 归属，项目「{}」将以孤儿形式创建（MCP 侧不可见）",
+                    project.getName());
         }
         projectMapper.insert(project);
         return project;
@@ -93,9 +110,7 @@ public class ProjectService {
     public Project getProject(Long id) {
         Project p = projectMapper.selectById(id);
         if (p == null) return null;
-        String key = currentKey();
-        // 隔离校验：非同 Key 且非公开项目不可见
-        if (key != null && p.getApiKey() != null && !key.equals(p.getApiKey())) {
+        if (!canAccess(p, currentKey())) {
             return null;
         }
         return p;
@@ -104,8 +119,7 @@ public class ProjectService {
     public Project updateProject(Long id, Project patch) {
         Project old = projectMapper.selectById(id);
         if (old == null) return null;
-        String key = currentKey();
-        if (key != null && old.getApiKey() != null && !key.equals(old.getApiKey())) {
+        if (!canAccess(old, currentKey())) {
             return null;
         }
         if (patch.getName() != null) old.setName(patch.getName());
@@ -316,7 +330,13 @@ public class ProjectService {
         Doc doc = docMapper.selectById(docId);
         if (doc == null) return null;
         String key = currentKey();
-        if (key != null && doc.getApiKey() != null && !key.equals(doc.getApiKey())) {
+        if (doc.getProjectId() != null) {
+            // 项目文档以项目归属为隔离边界；项目 api_key 为空时对任何 Key 都不可见，
+            // 避免任意 Key 把别人的项目文档“提升”为全局经验。
+            if (getProject(doc.getProjectId()) == null) {
+                return null;
+            }
+        } else if (key != null && !key.equals(doc.getApiKey())) {
             return null;
         }
         // 先用 DocService.update 触发版本快照（内容不变，仅 version+1）
@@ -340,8 +360,7 @@ public class ProjectService {
     public int deleteProject(Long id) {
         Project p = projectMapper.selectById(id);
         if (p == null) return 0;
-        String key = currentKey();
-        if (key != null && p.getApiKey() != null && !key.equals(p.getApiKey())) {
+        if (!canAccess(p, currentKey())) {
             return 0; // 非同 Key 不可删
         }
         return projectMapper.deleteById(id);
