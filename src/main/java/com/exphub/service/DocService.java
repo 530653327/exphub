@@ -146,7 +146,10 @@ public class DocService {
                 return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
             }
             List<Doc> strictDocs = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, size);
-            if (hasExactCoverage(strictDocs, terms)) {
+            // 严格命中能填满一页、且存在整词覆盖时，直接采用（精确查询走快路径）；
+            // 若只命中零星几条（常见于“某文档恰好引用了整句 query”），继续走重排补全，
+            // 避免用户只看到 1 条结果。
+            if (hasExactCoverage(strictDocs, terms) && strictTotal >= size) {
                 log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
                 return buildResultFromRecords(kw, strictDocs, strictTotal, page, size);
             }
