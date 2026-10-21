@@ -133,7 +133,7 @@
                             <td th:text="'v' + ${c.version}">v1</td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary"
-                                        th:attr="data-no=${c.chapterNo},data-title=${c.chapterTitle},data-strategy=${c.loadStrategy},data-sort=${c.sortOrder},data-content=${c.content}"
+                                        th:attr="data-no=${c.chapterNo},data-title=${c.chapterTitle},data-strategy=${c.loadStrategy},data-sort=${c.sortOrder},data-summary=${c.summary},data-content=${c.content}"
                                         onclick="editChapter(this)">编辑</button>
                                 <form th:action="@{'/projects/' + ${project.id} + '/agents/chapter/delete'}" method="post" style="display:inline;">
                                     <input type="hidden" name="docId" th:value="${c.id}">
@@ -254,6 +254,10 @@
                         </div>
                         <input type="hidden" id="cSort" name="sortOrder" value="0">
                         <div class="form-group">
+                            <label>目录描述 <small class="text-muted">（AGENTS.md 章节目录里那一行说明，建议 30 字内；留空则保持原值）</small></label>
+                            <input type="text" id="cSummary" name="summary" class="form-control" placeholder="如：双端口(3099 Web / 3098 MCP WebFlux)、SSE 心跳、身份跨线程">
+                        </div>
+                        <div class="form-group">
                             <label>正文（Markdown，建议 3000 字以内）</label>
                             <textarea id="cContent" name="content" class="form-control" rows="14" required></textarea>
                         </div>
@@ -276,6 +280,7 @@
             document.getElementById('cContent').value = '';
             document.getElementById('cStrategy').value = 'ON_DEMAND';
             document.getElementById('cSort').value = '0';
+            document.getElementById('cSummary').value = '';
             document.getElementById('cNo').readOnly = false;
         }
         function editChapter(btn) {
@@ -284,6 +289,7 @@
             document.getElementById('cTitle').value = btn.getAttribute('data-title');
             document.getElementById('cStrategy').value = btn.getAttribute('data-strategy');
             document.getElementById('cSort').value = btn.getAttribute('data-sort') || '0';
+            document.getElementById('cSummary').value = btn.getAttribute('data-summary') || '';
             document.getElementById('cContent').value = btn.getAttribute('data-content') || '';
             $('#chapterModal').modal('show');
         }

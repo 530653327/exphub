@@ -174,7 +174,7 @@ public class ProjectService {
      * 更新（或创建）章节。已存在则走 DocService.update 触发版本快照
      */
     public Doc updateAgentsChapter(Long projectId, String chapterNo, String chapterTitle,
-                                   String content, String loadStrategy, Integer sortOrder) {
+                                   String content, String loadStrategy, Integer sortOrder, String summary) {
         Doc exist = getAgentsChapter(projectId, chapterNo);
         if (exist != null) {
             Doc patch = new Doc();
@@ -183,6 +183,8 @@ public class ProjectService {
             if (chapterTitle != null) patch.setChapterTitle(chapterTitle);
             if (loadStrategy != null) patch.setLoadStrategy(loadStrategy);
             if (sortOrder != null) patch.setSortOrder(sortOrder);
+            // 章节描述（自动生成的 AGENTS.md 目录用它作为一行说明），空则保持原值
+            if (summary != null && !summary.trim().isEmpty()) patch.setSummary(summary.trim());
             return docService.update(exist.getId(), patch);
         }
         Doc doc = new Doc();
@@ -198,7 +200,8 @@ public class ProjectService {
         doc.setCategory("项目文档");
         doc.setTags("AGENTS.md,项目文档,章节");
         doc.setAliases(chapterNo + "章," + (chapterTitle != null ? chapterTitle : ""));
-        doc.setSummary("项目 AGENTS.md 第 " + chapterNo + " 章");
+        doc.setSummary(summary != null && !summary.trim().isEmpty()
+                ? summary.trim() : ("项目 AGENTS.md 第 " + chapterNo + " 章"));
         doc.setVisibility("PRIVATE");
         return docService.create(doc);
     }

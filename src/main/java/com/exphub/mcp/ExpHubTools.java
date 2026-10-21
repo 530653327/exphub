@@ -968,7 +968,8 @@ public class ExpHubTools {
             @ToolParam(description = "章节标题，如'项目概述'") String chapterTitle,
             @ToolParam(description = "章节正文（Markdown）") String content,
             @ToolParam(description = "加载策略：ALWAYS(每次会话必读) / ON_DEMAND(按需)。默认 ON_DEMAND", required = false) String loadStrategy,
-            @ToolParam(description = "排序号，默认0", required = false) Integer sortOrder) {
+            @ToolParam(description = "排序号，默认0", required = false) Integer sortOrder,
+            @ToolParam(description = "目录描述：AGENTS.md 自动生成的章节目录里那一行说明，建议 30 字内。不传则新建时用默认文案、更新时保持原值", required = false) String summary) {
         try {
             Project proj = projectService.getProject(projectId);
             if (proj == null) {
@@ -977,9 +978,10 @@ public class ExpHubTools {
             if (loadStrategy != null && !"ALWAYS".equalsIgnoreCase(loadStrategy) && !"ON_DEMAND".equalsIgnoreCase(loadStrategy)) {
                 return "❌ loadStrategy 只能是 ALWAYS 或 ON_DEMAND。";
             }
-            Doc saved = projectService.updateAgentsChapter(projectId, chapterNo, chapterTitle, content, loadStrategy, sortOrder);
+            Doc saved = projectService.updateAgentsChapter(projectId, chapterNo, chapterTitle, content, loadStrategy, sortOrder, summary);
             return "✅ 章节已更新！\n\n**项目**: " + proj.getName() + "\n**章节**: 第 " + chapterNo + " 章 · " + chapterTitle
-                 + "\n**版本**: v" + saved.getVersion() + " | 加载策略: " + saved.getLoadStrategy();
+                 + "\n**版本**: v" + saved.getVersion() + " | 加载策略: " + saved.getLoadStrategy()
+                 + "\n**目录描述**: " + saved.getSummary();
         } catch (Exception e) {
             log.error("ExpHubTools.updateProjectAgentsChapter: FAILED", e);
             return "更新失败: " + e.getMessage();

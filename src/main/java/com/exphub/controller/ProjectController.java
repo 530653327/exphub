@@ -109,8 +109,9 @@ public class ProjectController extends BaseController {
                               @RequestParam String content,
                               @RequestParam(required = false, defaultValue = "ON_DEMAND") String loadStrategy,
                               @RequestParam(required = false) Integer sortOrder,
+                              @RequestParam(required = false) String summary,
                               RedirectAttributes ra) {
-        projectService.updateAgentsChapter(id, chapterNo, chapterTitle, content, loadStrategy, sortOrder);
+        projectService.updateAgentsChapter(id, chapterNo, chapterTitle, content, loadStrategy, sortOrder, summary);
         ra.addFlashAttribute("msg", "第 " + chapterNo + " 章已保存");
         return "redirect:/projects/" + id;
     }
