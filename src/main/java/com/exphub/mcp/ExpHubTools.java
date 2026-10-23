@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
@@ -103,11 +104,13 @@ public class ExpHubTools {
      * 获取经验详情
      */
     /**
-     * 经验详情内容最大字符数（约 4k tokens），防止 AI 助手输出超限
+     * 经验详情/历史版本单次读取上限（字符）。默认 20000，覆盖常规长文档；
+     * 超过时提示使用 export_document 读取完整内容。
      */
-    private static final int DETAIL_CONTENT_MAX_CHARS = 4000;
+    @Value("${exphub.mcp.detail-max-chars:20000}")
+    private int detailMaxChars = 20000;
 
-    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。注意：超长内容会被截断以保持 AI 输出在合理范围内。")
+    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。超长内容会在合理长度处截断；需要完整内容请使用 export_document。")
     public String getExperienceDetail(
             @ToolParam(description = "经验ID。") Long id) {
 
@@ -146,8 +149,8 @@ public class ExpHubTools {
         // 截断超长内容，防止 AI 助手输出超限
         String content = doc.getContent();
         boolean truncated = false;
-        if (content != null && content.length() > DETAIL_CONTENT_MAX_CHARS) {
-            content = content.substring(0, DETAIL_CONTENT_MAX_CHARS);
+        if (content != null && content.length() > detailMaxChars) {
+            content = content.substring(0, detailMaxChars);
             truncated = true;
         }
         if (content != null) {
@@ -300,8 +303,8 @@ public class ExpHubTools {
 
                 String content = target.getContent();
                 boolean truncated = false;
-                if (content != null && content.length() > DETAIL_CONTENT_MAX_CHARS) {
-                    content = content.substring(0, DETAIL_CONTENT_MAX_CHARS);
+                if (content != null && content.length() > detailMaxChars) {
+                    content = content.substring(0, detailMaxChars);
                     truncated = true;
                 }
                 if (content != null) {
@@ -785,7 +788,7 @@ public class ExpHubTools {
             // === 截断更新检测（策略二：自动拦截+引导） ===
             String storedContent = existing.getContent();
             if (content != null && !content.isEmpty() && storedContent != null
-                    && storedContent.length() > DETAIL_CONTENT_MAX_CHARS) {
+                    && storedContent.length() > detailMaxChars) {
                 
                 String contentHead = content.substring(0, Math.min(100, content.length()));
                 boolean isPrefixMatch = storedContent.startsWith(contentHead);
