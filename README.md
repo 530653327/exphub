@@ -222,13 +222,14 @@ docker compose restart exphub  # 重启应用
 
 ---
 
-## 📦 MCP 工具列表（共 24 个）
+## 📦 MCP 工具列表（共 25 个）
 
-### 全局经验库（11 个）
+### 全局经验库（12 个）
 
 | 工具 | 功能 |
 |---|---|
 | `check_my_todos` | 检查待办事项（每次会话优先调用） |
+| `list_recent_memories` | 按更新时间倒序列出记忆（自己的全局经验 + 自有项目，游标分页） |
 | `search_experience` | 搜索经验（支持 `projectName` 限定项目内搜索） |
 | `get_experience_detail` | 获取经验详情 |
 | `get_experience_history` | 查看经验的历史版本（平台每次更新自动留存快照） |
@@ -287,7 +288,7 @@ exphub/
 │   │   ├── SecurityConfig                  # 安全策略
 │   │   └── McpContextPropagationConfig     # ★ 身份上下文跨线程传播（Reactor onScheduleHook）
 │   ├── mcp/             # MCP 相关
-│   │   ├── ExpHubTools.java                # 全部 24 个 MCP 工具定义
+│   │   ├── ExpHubTools.java                # 全部 25 个 MCP 工具定义
 │   │   ├── McpReactiveServerConfig.java    # 独立 WebFlux(Netty:3098) + API Key 鉴权
 │   │   └── McpRequestBodyLoggingFilter.java
 │   └── common/          # 通用工具类

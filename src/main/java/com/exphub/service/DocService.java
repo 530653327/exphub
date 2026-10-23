@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -853,6 +854,101 @@ public class DocService {
                .orderByDesc("updated_at");
         return docMapper.selectList(wrapper);
     }
+
+    // ==================== 记忆列表（游标分页） ====================
+
+    /**
+     * 记忆列表分页结果。
+     * @param docs       当前页文档（最多 pageSize 条）
+     * @param nextCursor 下一页游标；没有下一页时为 "-"
+     */
+    public record RecentPage(List<Doc> docs, String nextCursor) {}
+
+    /** 游标格式：<updated_at>|<id>，如 2026-10-22T19:05:12|437 */
+    private static final DateTimeFormatter CURSOR_TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
+    /**
+     * 按更新时间倒序枚举当前 Key 的记忆：全局经验（api_key 归属当前 Key）+ 自有活跃项目内的经验。
+     *
+     * <p>使用 keyset 分页（updated_at + id），不用 offset：记忆持续新增时 offset 会重复/漏条。
+     * 只返回 ACTIVE 文档，避免已废弃/已损坏内容出现在记忆流中。
+     * 禁止在 MCP 工具里另写 SQL —— 复用本方法的可见性口径。
+     *
+     * @param pageSize 每页条数（调用方已校验；此处再兜底 1~50）
+     * @param cursor   上一页返回的游标，首页传 null；非法格式按首页处理
+     */
+    public RecentPage listRecentAccessible(int pageSize, String cursor) {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+
+        // MCP 工具必须带 Key 上下文；缺失时不返回任何内容，避免越权枚举
+        if (apiKey == null) {
+            log.warn("listRecentAccessible: CURRENT_ASSISTANT is NULL, 拒绝返回记忆列表");
+            return new RecentPage(List.of(), "-");
+        }
+
+        int size = (pageSize < 1) ? 10 : Math.min(pageSize, 50);
+
+        // 自有活跃项目：项目本身即隔离边界
+        List<Long> projectIds = new ArrayList<>();
+        for (Project p : projectMapper.selectList(new QueryWrapper<Project>()
+                .eq("api_key", apiKey).eq("status", "ACTIVE"))) {
+            projectIds.add(p.getId());
+        }
+
+        QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        wrapper.eq("status", "ACTIVE");
+        wrapper.and(scope -> {
+            // 全局经验：只取归属当前 Key 的（“自己的全局”）
+            scope.and(global -> global.isNull("project_id").eq("api_key", apiKey));
+            if (!projectIds.isEmpty()) {
+                scope.or().in("project_id", projectIds);
+            }
+        });
+
+        Cursor c = parseCursor(cursor);
+        if (c != null) {
+            wrapper.and(k -> k.lt("updated_at", c.updatedAt())
+                    .or(o -> o.eq("updated_at", c.updatedAt()).lt("id", c.id())));
+        }
+
+        wrapper.orderByDesc("updated_at").orderByDesc("id");
+        // 多取 1 条用于精确判断是否还有下一页
+        wrapper.last("LIMIT " + (size + 1));
+
+        List<Doc> rows = docMapper.selectList(wrapper);
+        boolean hasMore = rows.size() > size;
+        List<Doc> page = hasMore ? new ArrayList<>(rows.subList(0, size)) : rows;
+        String next = (hasMore && !page.isEmpty()) ? formatCursor(page.get(page.size() - 1)) : "-";
+        return new RecentPage(page, next);
+    }
+
+    private String formatCursor(Doc doc) {
+        LocalDateTime t = doc.getUpdatedAt() != null ? doc.getUpdatedAt() : doc.getCreatedAt();
+        return CURSOR_TIME.format(t) + "|" + doc.getId();
+    }
+
+    /**
+     * 解析游标；任何非法格式（含 null/空/“-”）都返回 null，由调用方按首页处理。
+     */
+    private Cursor parseCursor(String cursor) {
+        if (cursor == null) return null;
+        String s = cursor.trim();
+        if (s.isEmpty() || "-".equals(s)) return null;
+        int sep = s.lastIndexOf('|');
+        if (sep <= 0 || sep == s.length() - 1) return null;
+        try {
+            LocalDateTime time = LocalDateTime.parse(s.substring(0, sep), DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            long id = Long.parseLong(s.substring(sep + 1).trim());
+            if (id <= 0) return null;
+            return new Cursor(time, id);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private record Cursor(LocalDateTime updatedAt, long id) {}
 
     private String maskKey(String key) {
         if (key == null || key.length() < 12) return "****";

@@ -17,7 +17,10 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * ExpHub MCP 工具类
@@ -1102,6 +1105,69 @@ public class ExpHubTools {
             log.error("ExpHubTools.getProjectProgress: FAILED", e);
             return "读取失败: " + e.getMessage();
         }
+    }
+
+    @Tool(name = "list_recent_memories", description = "按更新时间倒序列出当前 API Key 的记忆（自己的全局经验 + 自有项目内经验），游标分页。用于「最近记忆 / 记忆列表」这类枚举场景；要按关键词找内容请用 search_experience。")
+    public String listRecentMemories(
+            @ToolParam(description = "每页条数，默认 10，上限 50（超过 50 按 50）", required = false) Integer pageSize,
+            @ToolParam(description = "翻页游标：首页不传；后续页传上一页返回的 NEXT_CURSOR 值。非法格式按首页处理", required = false) String cursor) {
+        try {
+            int size = (pageSize == null || pageSize < 1) ? 10 : Math.min(pageSize, 50);
+            DocService.RecentPage page = docService.listRecentAccessible(size, cursor);
+
+            if (page.docs().isEmpty()) {
+                return "没有更多记忆了。\nNEXT_CURSOR: -";
+            }
+
+            Map<Long, String> projectNames = new HashMap<>();
+            for (Project p : projectService.listProjects()) {
+                projectNames.put(p.getId(), p.getName());
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (Doc d : page.docs()) {
+                String project = (d.getProjectId() == null)
+                        ? "全局" : projectNames.getOrDefault(d.getProjectId(), "未知项目");
+                sb.append("- [").append(sanitizeMemoryTitle(d.getTitle()))
+                  .append("](id:").append(d.getId()).append(") — ")
+                  .append(project)
+                  .append(" · ").append(memoryTypeLabel(d.getTemplateType()))
+                  .append(" · ").append(formatMemoryTime(d.getUpdatedAt()))
+                  .append("\n");
+            }
+            sb.append("NEXT_CURSOR: ").append(page.nextCursor());
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listRecentMemories: FAILED", e);
+            return "查询失败: " + e.getMessage();
+        }
+    }
+
+    private static final DateTimeFormatter MEMORY_TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+    private String formatMemoryTime(java.time.LocalDateTime time) {
+        return time == null ? "-" : MEMORY_TIME.format(time);
+    }
+
+    /**
+     * 列表行用 Markdown 链接格式 `[标题](id:123)`，标题里的方括号/换行会破坏解析，必须清洗。
+     */
+    private String sanitizeMemoryTitle(String title) {
+        if (title == null) return "无标题";
+        String s = title.replace("[", "【").replace("]", "】")
+                .replace("\r", " ").replace("\n", " ").trim();
+        return s.isEmpty() ? "无标题" : s;
+    }
+
+    /** 记忆列表的类型标签：项目文档/进度记录用更贴近记忆流的说法 */
+    private String memoryTypeLabel(String type) {
+        if (type == null) return "通用";
+        return switch (type) {
+            case "project_agents" -> "项目文档";
+            case "project_progress" -> "进度记录";
+            default -> getTemplateTypeLabel(type);
+        };
     }
 
     @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。")
