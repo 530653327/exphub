@@ -71,6 +71,7 @@
                     <option value="config_guide" th:selected="${templateType == 'config_guide'}">⚙️ 配置指南</option>
                     <option value="how_to" th:selected="${templateType == 'how_to'}">📖 操作指南</option>
                     <option value="schedule_plan" th:selected="${templateType == 'schedule_plan'}">📅 计划排期</option>
+                    <option value="goal" th:selected="${templateType == 'goal'}">🎯 目标</option>
                 </select>
                 <div class="input-group" style="width: 300px;">
                     <input type="text" class="form-control search-box" placeholder="搜索经验或输入ID精确查找..." id="searchInput" th:value="${keyword}">
@@ -100,6 +101,7 @@
                         <span th:case="'config_guide'">⚙️ 配置指南</span>
                         <span th:case="'how_to'">📖 操作指南</span>
                         <span th:case="'schedule_plan'">📅 计划排期</span>
+                        <span th:case="'goal'">🎯 目标</span>
                         <span th:case="*">其他</span>
                     </strong>
                 </span>
@@ -119,6 +121,7 @@
                                     <span th:case="'config_guide'">⚙️ 配置指南</span>
                                     <span th:case="'how_to'">📖 操作指南</span>
                                     <span th:case="'schedule_plan'">📅 计划排期</span>
+                                    <span th:case="'goal'">🎯 目标</span>
                                     <span th:case="*">📄 通用</span>
                                 </span>
                             </span>

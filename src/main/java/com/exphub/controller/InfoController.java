@@ -43,7 +43,7 @@ public class InfoController {
             "check_my_todos: 检查当前AI助手的待办事项",
             "search_experience: 搜索经验库中相关经验",
             "get_experience_detail: 获取经验的详细内容",
-            "get_template: 获取创建经验的模板格式（7种模板可选）",
+            "get_template: 获取创建经验的模板格式（8种模板可选）",
             "create_experience: 创建新经验记录",
             "update_experience: 更新已有经验内容",
             "update_experience_status: 更新经验状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED）"
@@ -68,7 +68,7 @@ public class InfoController {
         ));
 
         // 重要提示
-        info.put("important", "请务必先阅读 ID=4 的《ExpHub 经验阁系统使用指南 v3》，了解完整的 7 个 MCP 工具和 7 种模板的正确用法！");
+        info.put("important", "请务必先阅读 ID=4 的《ExpHub 经验阁系统使用指南 v3》，了解完整的 25 个 MCP 工具和 8 种模板的正确用法！");
 
         return info;
     }

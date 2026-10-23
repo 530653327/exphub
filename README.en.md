@@ -25,7 +25,7 @@ When using AI coding assistants (CodeBuddy, Cursor, Copilot, etc.), do you face:
 | Feature | Description |
 |---|---|
 | 🔍 **Experience Search** | AI searches relevant experiences before starting tasks |
-| ✍️ **Knowledge Capture** | Auto-structures solutions into experiences (7 templates) |
+| ✍️ **Knowledge Capture** | Auto-structures solutions into experiences (8 templates) |
 | ✅ **Todo Management** | AI tracks/completes todos; checks on every session start |
 | 🗂️ **Project Spaces** | Per-project space: handbook, progress handover, project-scoped experiences |
 | 📖 **AGENTS.md Handbook** | Handbook stored in chapters (15 recommended) with `ALWAYS` / `ON_DEMAND` load strategy — AI reads only what it needs |
@@ -178,9 +178,9 @@ java -jar target/exphub-1.0.0.jar
 | `promote_to_global` | Promote a project experience to global |
 | `generate_workflow_prompt` | Generate a dev-task prompt (template + project vars + task vars) |
 
-### Experience Templates (7)
+### Experience Templates (8)
 
-`problem_solution` · `knowledge_doc` · `todo_list` · `bug_fix` · `config_guide` · `how_to` · `schedule_plan`
+`problem_solution` · `knowledge_doc` · `todo_list` · `bug_fix` · `config_guide` · `how_to` · `schedule_plan` · `goal`
 
 ---
 
