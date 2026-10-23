@@ -154,9 +154,7 @@ public class ExpHubTools {
             sb.append(content);
         }
         if (truncated) {
-            sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
-                    .append(DETAIL_CONTENT_MAX_CHARS)
-                    .append(" 字）。如需完整内容请使用 export_document(id=")
+            sb.append("\n\n> ⚠️ 内容过长已截断（仅显示开头部分）。如需完整内容请使用 export_document(id=")
                     .append(id)
                     .append(") 导出完整文档，或分段说明具体关注的部分。");
         }
@@ -185,7 +183,7 @@ public class ExpHubTools {
     /**
      * 导出完整文档内容（无截断，适合长文档维护）
      */
-    @Tool(name = "export_document", description = "【文档维护专用】将经验完整导出为Markdown内容（无字符限制截断）。适用于超长文档（如项目需求文档、规格说明书等）。返回的内容可以直接保存为本地.md文件进行编辑。注意：短经验（≤4000字）请直接使用 get_experience_detail 查看。")
+    @Tool(name = "export_document", description = "【文档维护专用】将经验完整导出为Markdown内容（无字符限制截断）。适用于超长文档（如项目需求文档、规格说明书等）。返回的内容可以直接保存为本地.md文件进行编辑。短经验可直接使用 get_experience_detail 查看。")
     public String exportDocument(
             @ToolParam(description = "经验ID（必填）") Long id) {
 
@@ -310,9 +308,7 @@ public class ExpHubTools {
                     sb.append(content);
                 }
                 if (truncated) {
-                sb.append("\n\n> ⚠️ 内容过长已截断（仅显示前 ")
-                        .append(DETAIL_CONTENT_MAX_CHARS)
-                        .append(" 字）。如需完整内容请使用 export_document(id=")
+                sb.append("\n\n> ⚠️ 内容过长已截断（仅显示开头部分）。如需完整内容请使用 export_document(id=")
                         .append(id)
                         .append(") 导出完整文档，或分段说明具体关注的部分。");
             }
@@ -758,11 +754,11 @@ public class ExpHubTools {
     /**
      * 更新经验
      */
-    @Tool(name = "update_experience", description = "更新已有经验。用于修正错误或补充短内容。如果是要整体更新长篇文档（>4000字），建议使用 export_document + import_document 流程以避免内容丢失。如果确定要覆盖长文档，请设置 force=true。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
+    @Tool(name = "update_experience", description = "更新已有经验。用于修正错误或补充短内容。如果是要整体更新长篇文档，建议使用 export_document + import_document 流程以避免内容丢失。如果确定要覆盖长文档，请设置 force=true。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
             @ToolParam(description = "经验标题，不需要修改时传空字符串即可") String title,
-            @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可。注意：对于长文档（>4000字），如果提供的内容明显比原文档短，系统会自动检测并提示改用 export/import 流程，除非设置 force=true。🔒 严禁包含账号密码、API密钥、Token等敏感信息") String content,
+            @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可。注意：对于长文档，如果提供的内容明显比原文档短，系统会自动检测并提示改用 export/import 流程，除非设置 force=true。🔒 严禁包含账号密码、API密钥、Token等敏感信息") String content,
             @ToolParam(description = "分类，如：服务器、开发、运维、部署等，不需要修改时传空字符串即可") String category,
             @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
             @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
@@ -805,7 +801,7 @@ public class ExpHubTools {
                                 id, content.length(), storedContent.length());
                         return "⚠️ **检测到截断更新风险！**\n\n"
                              + "你提供的 content（" + content.length() + "字）比现有文档（" + storedContent.length() + "字）短了很多，\n"
-                             + "且新内容是旧文档的开头部分，这很可能是因为 get_experience_detail 只返回了前 " + DETAIL_CONTENT_MAX_CHARS + " 字，\n"
+                             + "且新内容是旧文档的开头部分，这很可能是因为 get_experience_detail 只返回了开头部分，\n"
                              + "你只看到了部分内容，直接 update 会丢失未展示的部分。\n\n"
                              + "📋 **请改用文档维护专用流程：**\n"
                              + "1. export_document(id=" + id + ") → 导出完整文档（无截断）\n"

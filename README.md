@@ -237,7 +237,7 @@ docker compose restart exphub  # 重启应用
 | `create_experience` | 创建新经验 |
 | `update_experience` | 更新已有经验 |
 | `update_experience_status` | 更新经验生命周期状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED） |
-| `export_document` | 导出完整文档（无截断，适合 >4000 字长文档） |
+| `export_document` | 导出完整文档（无截断，适合长文档） |
 | `import_document` | 导入替换内容（与 export 配对，自动留存版本快照） |
 | `report_experience_result` | 反馈经验是否有帮助（成功/失败都建议反馈） |
 

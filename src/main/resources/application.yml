@@ -56,6 +56,8 @@ spring:
 exphub:
   mcp:
     sse-heartbeat-seconds: 30
+    # MCP 单次请求体上限（字节）。默认 5MB；Nginx 对应 client_max_body_size 10m。
+    max-request-bytes: 5242880
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml

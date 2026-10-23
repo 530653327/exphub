@@ -156,7 +156,7 @@ java -jar target/exphub-1.0.0.jar
 | `create_experience` | Create an experience |
 | `update_experience` | Update an experience |
 | `update_experience_status` | Set lifecycle status (ACTIVE/COMPLETED/BROKEN/DEPRECATED) |
-| `export_document` | Export full document (no truncation; for >4000-char docs) |
+| `export_document` | Export full document (no truncation; for long docs) |
 | `import_document` | Import/replace content (pairs with export; snapshots kept) |
 | `report_experience_result` | Report whether an experience helped |
 

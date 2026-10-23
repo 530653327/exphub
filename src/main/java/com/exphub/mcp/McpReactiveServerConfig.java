@@ -20,6 +20,7 @@ import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.server.reactive.ServerHttpResponseDecorator;
 import org.springframework.web.reactive.function.server.HandlerFilterFunction;
+import org.springframework.web.reactive.function.server.HandlerStrategies;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.RouterFunctions;
 import org.springframework.web.reactive.function.server.ServerResponse;
@@ -57,6 +58,14 @@ public class McpReactiveServerConfig {
      */
     @Value("${exphub.mcp.sse-heartbeat-seconds:30}")
     private int sseHeartbeatSeconds;
+
+    /**
+     * MCP 单次请求体上限（字节）。默认 5MB，与 Nginx client_max_body_size 留出余量。
+     * 之前未显式配置时，RouterFunctions 使用 WebFlux 默认的 256KB，
+     * 超过会抛 DataBufferLimitException（HTTP 500）。
+     */
+    @Value("${exphub.mcp.max-request-bytes:5242880}")
+    private int maxRequestBytes;
 
     private final AiAssistantMapper assistantMapper;
 
@@ -103,7 +112,10 @@ public class McpReactiveServerConfig {
         RouterFunction<ServerResponse> securedRouter = ((RouterFunction<ServerResponse>) transport.getRouterFunction())
                 .filter(authFilter(objectMapper));
 
-        HttpHandler httpHandler = RouterFunctions.toHttpHandler(securedRouter);
+        HttpHandler httpHandler = RouterFunctions.toHttpHandler(securedRouter,
+                HandlerStrategies.builder()
+                        .codecs(c -> c.defaultCodecs().maxInMemorySize(maxRequestBytes))
+                        .build());
         // 包装一层：给 SSE 端点注入心跳，避免空闲连接被 Nginx / 中间设备掐断
         WebServer webServer = factory.getWebServer(withSseHeartbeat(httpHandler));
         webServer.start();
