@@ -847,14 +847,23 @@ public class ExpHubTools {
             
             Doc updateDoc = new Doc();
             updateDoc.setId(id);
-            if (title != null && !title.isEmpty()) updateDoc.setTitle(title);
-            if (content != null && !content.isEmpty()) updateDoc.setContent(content);
-            if (category != null && !category.isEmpty()) updateDoc.setCategory(category);
-            if (tags != null && !tags.isEmpty()) updateDoc.setTags(tags);
-            if (aliases != null && !aliases.isEmpty()) updateDoc.setAliases(aliases);
-            if (summary != null && !summary.isEmpty()) updateDoc.setSummary(summary);
-            if (relatedIds != null && !relatedIds.isEmpty()) updateDoc.setRelatedIds(relatedIds);
-            if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
+            // E9：记录实际写了哪些字段，用于返回回显（解决「传空串也返回已更新」的假成功）
+            List<String> changedFields = new java.util.ArrayList<>();
+            if (title != null && !title.isEmpty()) { updateDoc.setTitle(title); changedFields.add("title"); }
+            if (content != null && !content.isEmpty()) { updateDoc.setContent(content); changedFields.add("content"); }
+            if (category != null && !category.isEmpty()) { updateDoc.setCategory(category); changedFields.add("category"); }
+            if (tags != null && !tags.isEmpty()) { updateDoc.setTags(tags); changedFields.add("tags"); }
+            if (aliases != null && !aliases.isEmpty()) { updateDoc.setAliases(aliases); changedFields.add("aliases"); }
+            if (summary != null && !summary.isEmpty()) { updateDoc.setSummary(summary); changedFields.add("summary"); }
+            if (relatedIds != null && !relatedIds.isEmpty()) { updateDoc.setRelatedIds(relatedIds); changedFields.add("relatedIds"); }
+            if (authorName != null && !authorName.isEmpty()) { updateDoc.setAuthorName(authorName); changedFields.add("authorName"); }
+
+            // 一个字段都没变 + 也没要求改归属 → 明确告知「什么都没改」，不要报假成功
+            if (changedFields.isEmpty() && projectId == null) {
+                return "⚠️ 没有任何字段被修改：所有参数都是空值，或与传入值相同。\n\n"
+                     + "本次未写入任何内容，文档仍是 v" + existing.getVersion() + "。\n"
+                     + "如果要修改某个字段，请传入非空值；如果只想调整归属，请传 projectId（0=移回全局）。";
+            }
 
             // 归属调整（E7 的对称面）：0 = 移回全局，>0 = 归入项目，不传 = 不动
             // 注意必须在 docService.update 之后单独处理：
@@ -877,14 +886,27 @@ public class ExpHubTools {
                 docService.updateProjectId(id, targetProjectId);
             }
 
-            String scopeHint = "";
-            if (changeScope) {
-                scopeHint = (targetProjectId == null)
-                        ? "\n**归属**: 已移回全局（全局搜索可命中）"
-                        : "\n**归属**: 已归入项目 " + targetProjectId + "（项目内隔离，不进全局搜索）";
+            // E9：回显改动，让调用方当场就能核对，不必再读一次
+            StringBuilder res = new StringBuilder();
+            res.append("✅ 经验更新成功！\n\n");
+            res.append("**ID**: ").append(id).append("\n");
+            res.append("**新版本**: v").append(existing.getVersion() + 1).append("\n");
+            res.append("**已修改字段**: ").append(changedFields.isEmpty() ? "（无，仅调整归属）" : String.join(", ", changedFields)).append("\n");
+            if (changedFields.contains("content")) {
+                int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
+                res.append("**正文字数**: ").append(oldLen).append(" → ").append(content.length()).append(" 字\n");
+                res.append("\n**改后开头**:\n> ")
+                   .append(content.substring(0, Math.min(200, content.length())).replace("\n", "\n> "))
+                   .append(content.length() > 200 ? "…" : "")
+                   .append("\n");
             }
-
-            return "✅ 经验更新成功！\n\n**ID**: " + id + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n" + scopeHint + "\n经验已更新，其他AI助手可以看到最新内容。";
+            if (changeScope) {
+                res.append("\n**归属**: ").append(targetProjectId == null
+                        ? "已移回全局（全局搜索可命中）"
+                        : "已归入项目 " + targetProjectId + "（项目内隔离，不进全局搜索）").append("\n");
+            }
+            res.append("\n经验已更新，其他AI助手可以看到最新内容。");
+            return res.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.updateExperience: FAILED", e);
             callLogService.incrementFailCalls();
@@ -1043,7 +1065,11 @@ public class ExpHubTools {
                 for (Doc c : chapters) {
                     sb.append("- 第 ").append(c.getChapterNo()).append(" 章 · ").append(c.getChapterTitle())
                       .append(" [").append(c.getLoadStrategy()).append("]");
-                    if (c.getSummary() != null && !c.getSummary().isEmpty()) {
+                    // E10：历史数据里大量章节 summary 是创建时的占位值
+                    // 「项目 AGENTS.md 第 N 章」，显示出来纯属浪费 token 且无助于判断相关性。
+                    // 读取端过滤掉，不要求补写数据（62 个章节全靠人补不现实）。
+                    if (c.getSummary() != null && !c.getSummary().isEmpty()
+                            && !isPlaceholderSummary(c.getSummary())) {
                         sb.append(" —— ").append(c.getSummary());
                     }
                     sb.append("\n");
@@ -1066,6 +1092,24 @@ public class ExpHubTools {
      * 只做「读取时清洗」，不改库内容：旧数据仍可正常读；
      * 想要彻底干净，由调用方用 update_project_agents_main 覆盖一次正文。
      */
+    /**
+     * 判断章节 summary 是否为「创建时的占位默认值」。
+     *
+     * 实测（2026-10-24）：6 个项目 82 个章节里有 62 个 summary 是
+     * 「项目 AGENTS.md 第 N 章」——这是 updateAgentsChapter 新建时填的默认文案，
+     * 没人后续补写。目录里显示出来等于括号里写了一句废话。
+     */
+    static boolean isPlaceholderSummary(String summary) {
+        if (summary == null) {
+            return true;
+        }
+        String s = summary.trim();
+        if (s.isEmpty()) {
+            return true;
+        }
+        return s.matches("^项目\\s*AGENTS\\.md\\s*第\\s*\\d+\\s*章.*$");
+    }
+
     /**
      * 剥掉章节 content 开头手写的「# 第 N 章 · 标题」与「> 加载策略: …」行。
      *
