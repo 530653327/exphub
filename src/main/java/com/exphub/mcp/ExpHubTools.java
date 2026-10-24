@@ -1306,32 +1306,95 @@ public class ExpHubTools {
         return s.matches("^项目\\s*AGENTS\\.md\\s*第\\s*\\d+\\s*章.*$");
     }
 
+    /** 自动摘要取整段前的最大字数 */
+    private static final int AUTO_SUMMARY_MAX = 30;
+
     /**
-     * 从正文自动提取一句目录描述（约 30 字）。
+     * 从正文自动提取一句目录描述（≤30 字）。
      *
      * 用途：写章节时没传 summary 就自动补，避免目录里出现
      * 「项目 AGENTS.md 第 N 章」这种占位废话（E10 的治本面）。
      *
-     * ⚠️ 实测教训：很多章节 content 开头就是表格（| 项 | 值 |）或代码块（```bash），
-     * 直接取首行会提取出「项  值」「bash」这种垃圾。所以必须：
-     * 跳过代码块 / 表格行 / 标题 / 引用 / 分隔线，且要求含中文；
-     * 全文都找不到合适行时，兜底用章节标题（比垃圾好）。
+     * ⚠️ 实测教训 1：很多章节 content 开头就是表格（| 项 | 值 |）或代码块（```bash），
+     * 直接取首行会提取出「项  值」「bash」这种垃圾。所以必须跳过
+     * 代码块 / 表格行 / 标题 / 引用 / 分隔线，且要求含中文。
+     *
+     * ⚠️ 实测教训 2（2026-10-24 23:2x 阁主复测）：占位符没了，但换成了「标题回声」——
+     * 拆解宝 16 章里有 6 章的摘要等于章节内的小标签或章节标题本身，挑章节时一样没用：
+     *   「后端 Controller」（第 3 章，整行加粗的小标签）
+     *   「业务术语」「关键文件索引」（第 5/14 章，全篇只有表格，找不到段落就回退成标题）
+     * 根因是只认「普通段落」这一种形态，其余全文直接放弃。
+     *
+     * 所以改成**分级取值**，取不到上一档就用下一档，直到真的没有才回退章节标题：
+     *   A 首段正文（跳过整行加粗的小标签——那不是描述，是下一级的标题）
+     *   B 整行加粗的小标签清单（如「后端 Controller、PC 页面」）
+     *   C 表格首列清单（业务术语章 →「报废车回收单、供货方、拆解厂」）
+     *   D 小标题清单（## xxx，最多 3 个）
+     *   E 章节标题
      */
     static String autoSummaryFromContent(String content, String chapterTitle) {
-        if (content != null) {
-            boolean inCode = false;
-            for (String line : content.split("\n", -1)) {
-                String t = line.trim();
-                if (t.startsWith("```")) {
-                    inCode = !inCode;
+        if (content == null) {
+            return chapterTitle == null ? "" : chapterTitle;
+        }
+        String para = null;                       // A
+        List<String> labels = new ArrayList<>();  // B
+        List<String> col1 = new ArrayList<>();    // C
+        List<String> heads = new ArrayList<>();   // D
+        boolean inCode = false;
+        boolean tableBody = false;
+        for (String line : content.split("\n", -1)) {
+            String t = line.trim();
+            if (t.startsWith("```")) {
+                inCode = !inCode;
+                tableBody = false;
+                continue;
+            }
+            if (inCode) {
+                continue;
+            }
+            if (t.isEmpty()) {
+                continue;
+            }
+            if (t.startsWith("#")) {
+                String h = t.replaceAll("^#+\\s*", "").trim();
+                if (!h.isEmpty() && heads.size() < 3) {
+                    heads.add(h);
+                }
+                tableBody = false;
+                continue;
+            }
+            if (t.startsWith(">") || t.startsWith("---")) {
+                tableBody = false;
+                continue;
+            }
+            if (t.startsWith("|")) {
+                // |---|---| 分隔行之后才是数据行，这样能自动跳过表头
+                if (t.replace("|", "").replace("-", "").replace(":", "").trim().isEmpty()) {
+                    tableBody = true;
                     continue;
                 }
-                if (inCode) {
-                    continue;
+                if (tableBody && col1.size() < 3) {
+                    String[] cells = t.split("\\|");
+                    if (cells.length >= 2) {
+                        String v = cells[1].replaceAll("[*`~_]", "").trim();
+                        // 首列太长的（整条文件路径、整句话）不适合当目录摘要
+                        if (v.length() >= 2 && v.length() <= 14 && v.matches(".*[\\u4e00-\\u9fa5].*")) {
+                            col1.add(v);
+                        }
+                    }
                 }
-                if (t.isEmpty() || t.startsWith("#") || t.startsWith(">") || t.startsWith("---") || t.startsWith("|")) {
-                    continue;
+                continue;
+            }
+            tableBody = false;
+            // 整行加粗＝小标签（**后端 Controller**），不是描述；留给 B 档当候选
+            if (t.matches("^\\*\\*[^*]+\\*\\*\\s*$")) {
+                String v = t.replace("*", "").trim();
+                if (v.length() <= 14 && labels.size() < 3) {
+                    labels.add(v);
                 }
+                continue;
+            }
+            if (para == null) {
                 if (!t.matches(".*[\\u4e00-\\u9fa5].*")) {
                     continue;   // 至少含一个中文，避免「bash」「npm run build」
                 }
@@ -1339,10 +1402,46 @@ public class ExpHubTools {
                 if (clean.length() < 4) {
                     continue;
                 }
-                return clean.length() > 30 ? clean.substring(0, 30) : clean;
+                para = clean;
             }
         }
-        return chapterTitle == null ? "" : chapterTitle;
+        String s;
+        if (para != null) {
+            s = para;
+        } else if (!labels.isEmpty()) {
+            s = String.join("、", labels);
+        } else if (!col1.isEmpty()) {
+            s = String.join("、", col1);
+        } else if (!heads.isEmpty()) {
+            s = String.join("、", heads);
+        } else {
+            s = chapterTitle == null ? "" : chapterTitle;
+        }
+        return smartCut(s, AUTO_SUMMARY_MAX);
+    }
+
+    /**
+     * 按字数截断，但尽量不断在半个词上。
+     *
+     * 硬切 30 字会切出「提交必须 push，禁止只 commit 不 push。 未」这种残句，
+     * 末尾那半个字比不截断还难读。所以优先断在最近的中文标点处；
+     * 只有断完剩不到 12 字（说明这句本身就没标点，比如纯英文配置串）才硬切。
+     */
+    static String smartCut(String s, int max) {
+        if (s == null || s.length() <= max) {
+            return s;
+        }
+        int cut = -1;
+        for (int i = max - 1; i >= 0; i--) {
+            if ("。，、；：！？｜→".indexOf(s.charAt(i)) >= 0) {
+                cut = i;
+                break;
+            }
+        }
+        if (cut >= 15) {
+            return s.substring(0, cut).trim();
+        }
+        return s.substring(0, max);
     }
 
     /**

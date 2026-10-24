@@ -84,7 +84,13 @@ class PlaceholderSummaryTest {
     void autoSummaryHandlesEmptyContent() {
         // content 为空时兜底用章节标题；两者都空才返回空
         assertEquals("标题", ExpHubTools.autoSummaryFromContent(null, "标题"));
-        assertEquals("标题", ExpHubTools.autoSummaryFromContent("# 只有标题\n\n---\n", "标题"));
         assertEquals("", ExpHubTools.autoSummaryFromContent(null, null));
+        assertEquals("", ExpHubTools.autoSummaryFromContent("", null));
+    }
+
+    @Test
+    void autoSummaryUsesHeadingWhenContentIsOnlyAHeading() {
+        // 只有标题时，用那个标题比回退章节标题信息量大（章节标题通常是更短的类目名）
+        assertEquals("只有标题", ExpHubTools.autoSummaryFromContent("# 只有标题\n\n---\n", "标题"));
     }
 }
