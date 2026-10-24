@@ -1,6 +1,7 @@
 package com.exphub.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
@@ -723,9 +724,30 @@ public class DocService {
         return updated;
     }
 
+    /**
+     * 只调整文档归属，不动内容、不 bump 版本号。
+     *
+     * ⚠️ 必须走 UpdateWrapper：MyBatis-Plus 默认忽略 null 字段，
+     * 用 updateById + setProjectId(null) 无法把列置空（会静默失败）。
+     * 这也是「移回全局」唯一的实现方式。
+     *
+     * @param projectId 目标项目ID；传 null 表示移回全局
+     */
     @Transactional
-    public void delete(Long id) {
-        Doc doc = docMapper.selectById(id);
+    public Doc updateProjectId(Long id, Long projectId) {
+        Doc old = docMapper.selectById(id);
+        if (old == null) {
+            return null;
+        }
+        docMapper.update(null, new UpdateWrapper<Doc>()
+                .eq("id", id)
+                .set("project_id", projectId));
+        log.info("DocService.updateProjectId: docId={}, {} -> {}", id, old.getProjectId(), projectId);
+        return docMapper.selectById(id);
+    }
+
+    @Transactional
+    public void delete(Long id) {        Doc doc = docMapper.selectById(id);
         String title = doc != null ? doc.getTitle() : "未知";
         docMapper.deleteById(id);
         

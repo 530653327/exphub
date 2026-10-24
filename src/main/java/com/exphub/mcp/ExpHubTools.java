@@ -796,7 +796,7 @@ public class ExpHubTools {
             @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds,
             @ToolParam(description = "修改作者名称。如果你是更新者且想标注自己的名字，传你的AI助手名称。不需要修改时传空字符串即可。") String authorName,
             @ToolParam(description = "强制覆盖开关。设为true可跳过截断检测，允许用较短的内容覆盖长文档（当确认丢失不用的部分时使用）。默认false。") Boolean force,
-            @ToolParam(description = "可选。改归属项目ID：把这条经验移进项目空间（用于把误落全局的文档归位）。不传=不改归属。只能填你名下的项目", required = false) Long projectId) {
+            @ToolParam(description = "可选。调整归属：传项目ID=归入该项目的项目空间；传 0=移回全局；不传=不改归属。用于把误落全局的文档归位，或把跨项目通用的经验从项目里移回全局", required = false) Long projectId) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -856,18 +856,35 @@ public class ExpHubTools {
             if (relatedIds != null && !relatedIds.isEmpty()) updateDoc.setRelatedIds(relatedIds);
             if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
 
-            // 改归属项目（E7）：把误落全局的文档归位到项目空间；不传则不动归属
-            if (projectId != null && projectId > 0) {
-                Project target = projectService.getProject(projectId);
-                if (target == null) {
-                    return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你的项目。";
+            // 归属调整（E7 的对称面）：0 = 移回全局，>0 = 归入项目，不传 = 不动
+            // 注意必须在 docService.update 之后单独处理：
+            // updateById 会忽略 null 字段，无法把 project_id 置空（会静默失败）
+            Long targetProjectId = null;
+            boolean changeScope = false;
+            if (projectId != null) {
+                changeScope = true;
+                if (projectId > 0) {
+                    Project target = projectService.getProject(projectId);
+                    if (target == null) {
+                        return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你的项目。";
+                    }
+                    targetProjectId = projectId;
                 }
-                updateDoc.setProjectId(projectId);
             }
 
             docService.update(id, updateDoc);
-            
-            return "✅ 经验更新成功！\n\n**ID**: " + id + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n\n经验已更新，其他AI助手可以看到最新内容。";
+            if (changeScope) {
+                docService.updateProjectId(id, targetProjectId);
+            }
+
+            String scopeHint = "";
+            if (changeScope) {
+                scopeHint = (targetProjectId == null)
+                        ? "\n**归属**: 已移回全局（全局搜索可命中）"
+                        : "\n**归属**: 已归入项目 " + targetProjectId + "（项目内隔离，不进全局搜索）";
+            }
+
+            return "✅ 经验更新成功！\n\n**ID**: " + id + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n" + scopeHint + "\n经验已更新，其他AI助手可以看到最新内容。";
         } catch (Exception e) {
             log.error("ExpHubTools.updateExperience: FAILED", e);
             callLogService.incrementFailCalls();
