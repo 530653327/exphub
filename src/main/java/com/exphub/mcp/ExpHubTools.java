@@ -19,9 +19,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * ExpHub MCP 工具类
@@ -407,6 +410,31 @@ public class ExpHubTools {
             
             var result = docService.search(query, templateType, statusFilter, projectId, 1, 20);
             var docs = result.getRecords();
+
+            // E5：全局搜索时若查询词里含项目名/别名，自动 OR 召回该项目的专属经验。
+            // 背景：项目经验默认隔离不进全局索引，导致搜「拆解宝」前 10 条全是「回金算」的内容，
+            // 而拆解宝自己 24 条经验一条都召回不到 —— 数据在库里，只是没进索引。
+            // 修法：识别到项目就补一次项目域搜索并合并，而不是让调用方再调一轮。
+            Project autoProject = null;
+            if (projectId == null) {
+                autoProject = detectProjectInQuery(query);
+                if (autoProject != null) {
+                    try {
+                        var projResult = docService.search(query, templateType, statusFilter, autoProject.getId(), 1, 10);
+                        var projDocs = projResult.getRecords();
+                        if (!projDocs.isEmpty()) {
+                            Set<Long> seen = new LinkedHashSet<>();
+                            for (Doc d : docs) seen.add(d.getId());
+                            docs = new ArrayList<>(docs);
+                            for (Doc d : projDocs) {
+                                if (seen.add(d.getId())) docs.add(d);
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.debug("searchExperience: 项目域补充召回失败 project={}, {}", autoProject.getName(), e.getMessage());
+                    }
+                }
+            }
             
             String filterInfo = "";
             if (projectId != null) {
@@ -420,23 +448,11 @@ public class ExpHubTools {
             }
             
             // 未指定项目时，尝试从查询里识别项目（如 “exphub 架构”）
-            Project detected = null;
-            if (projectName == null || projectName.trim().isEmpty()) {
-                detected = detectProjectInQuery(query);
-            }
+            Project detected = autoProject;
 
             if (docs.isEmpty()) {
-                // 1) 识别到项目时，先在该项目内再搜一次（项目经验默认不进全局搜索）
-                if (detected != null) {
-                    var inProject = docService.search(query, templateType, statusFilter, detected.getId(), 1, 20);
-                    if (!inProject.getRecords().isEmpty()) {
-                        return filterInfo + "🔎 自动定位到项目「" + detected.getName() + "」（"
-                                + detected.getProjectCode() + "），以下为项目内资料：\n\n"
-                                + renderDocs(inProject.getRecords());
-                    }
-                }
-
                 // 2) 相近经验兜底：避免 AI 误判“没有经验”而重复创建
+                // （原第 1 步「识别到项目后再搜一次」已前移到上面合并召回，此处不再重复）
                 var similar = docService.findSimilar(query, templateType, statusFilter, projectId, 3);
                 StringBuilder sb = new StringBuilder();
                 sb.append(filterInfo).append("未找到\"").append(query).append("\"的精确匹配。\n\n");
@@ -460,9 +476,10 @@ public class ExpHubTools {
             sb.append(filterInfo).append("找到 ").append(docs.size()).append(" 条相关经验：\n\n");
             sb.append(renderDocs(docs));
             if (detected != null) {
-                sb.append("---\n💡 检测到项目「").append(detected.getName())
-                  .append("」：以上为全局经验；项目内资料请用 projectName=")
-                  .append(detected.getProjectCode()).append(" 重试。\n");
+                // E5：已自动合并该项目经验，这里只做说明，不再让调用方多跑一轮
+                sb.append("---\n💡 查询词含项目「").append(detected.getName()).append("」（")
+                  .append(detected.getProjectCode()).append("），已自动合并全局与该项目的经验。")
+                  .append("只想看项目内资料时传 projectName=").append(detected.getProjectCode()).append("。\n");
             }
             return sb.toString();
         } catch (Exception e) {
@@ -472,6 +489,30 @@ public class ExpHubTools {
         }
     }
     
+    /**
+     * 列表摘要截断长度（E6）：原始 summary 常带完整首段（200+ 字），
+     * 列表里本该是「扫一眼挑目标」，压到 60 字足够判断相关性。
+     */
+    private static final int SUMMARY_PREVIEW_CHARS = 60;
+
+    /** 列表类工具的默认/最大条数（E6）：默认 10 条省 token，需要全量走 offset 翻页 */
+    private static final int LIST_DEFAULT_SIZE = 10;
+    private static final int LIST_MAX_SIZE = 50;
+
+    /**
+     * 列表里的摘要：压到 60 字并折叠换行。
+     * 需要完整摘要请用 get_experience_detail。
+     */
+    static String previewSummary(String summary) {
+        if (summary == null || summary.isBlank()) {
+            return "无";
+        }
+        String s = summary.replaceAll("\\s+", " ").trim();
+        return s.length() > SUMMARY_PREVIEW_CHARS
+                ? s.substring(0, SUMMARY_PREVIEW_CHARS) + "…"
+                : s;
+    }
+
     private String renderDocs(List<Doc> docs) {
         StringBuilder sb = new StringBuilder();
         int i = 1;
@@ -481,14 +522,16 @@ public class ExpHubTools {
             String statusLabel = getStatusLabel(doc.getStatus());
             sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel)
               .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
-            sb.append("   摘要: ").append(doc.getSummary() != null ? doc.getSummary() : "无").append("\n");
+            sb.append("   摘要: ").append(previewSummary(doc.getSummary())).append("\n");
             sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
             sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n");
-            // 📚 历史版本标识：引导 AI 搜索阶段就意识到可深挖历史
-            List<DocVersion> docVersions = docService.getVersions(doc.getId());
-            if (!docVersions.isEmpty()) {
-                sb.append("   📚 历史版本: 共 ").append(docVersions.size()).append(" 个（v1 ~ v").append(doc.getVersion() - 1)
-                  .append("），如需了解演进过程请调用 get_experience_history(id=").append(doc.getId()).append(", version=版本号)").append("\n");
+            // 📚 历史版本提示：用 doc.getVersion() 直接判断，不查库。
+            // 原实现对每条结果都调 getVersions()，20 条结果 = 20 次额外查询（N+1），
+            // 而这里只需要「有没有历史」这一个布尔信息，version 字段本身就够了。
+            if (doc.getVersion() != null && doc.getVersion() > 1) {
+                sb.append("   📚 历史版本: 共 ").append(doc.getVersion() - 1).append(" 个（v1 ~ v")
+                  .append(doc.getVersion() - 1).append("），如需了解演进过程请调用 get_experience_history(id=")
+                  .append(doc.getId()).append(", version=版本号)").append("\n");
             }
             sb.append("\n");
         }
@@ -1422,10 +1465,12 @@ public class ExpHubTools {
         };
     }
 
-    @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。")
+    @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。默认返回 10 条，摘要压缩到 60 字便于扫读；要翻页用 offset，要看完整摘要用 get_experience_detail。")
     public String listProjectExperiences(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "可选。按模板类型过滤，如 bug_fix、config_guide", required = false) String templateType) {
+            @ToolParam(description = "可选。按模板类型过滤，如 bug_fix、config_guide", required = false) String templateType,
+            @ToolParam(description = "可选。每页条数，默认 10，上限 50", required = false) Integer pageSize,
+            @ToolParam(description = "可选。跳过前 N 条（从 0 开始），配合 pageSize 翻页。默认 0", required = false) Integer offset) {
         try {
             Project proj = projectService.getProject(projectId);
             if (proj == null) {
@@ -1435,11 +1480,27 @@ public class ExpHubTools {
             if (list.isEmpty()) {
                 return "项目「" + proj.getName() + "」还没有专属经验。";
             }
-            StringBuilder sb = new StringBuilder("项目「" + proj.getName() + "」共 " + list.size() + " 条专属经验：\n\n");
-            for (Doc d : list) {
+
+            int size = (pageSize == null || pageSize < 1) ? LIST_DEFAULT_SIZE : Math.min(pageSize, LIST_MAX_SIZE);
+            int from = (offset == null || offset < 0) ? 0 : offset;
+            if (from >= list.size()) {
+                return "项目「" + proj.getName() + "」共 " + list.size() + " 条专属经验，offset=" + from
+                        + " 已超出范围（从 0 开始）。";
+            }
+            int to = Math.min(from + size, list.size());
+            var page = list.subList(from, to);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("项目「").append(proj.getName()).append("」共 ").append(list.size())
+              .append(" 条专属经验，本次返回第 ").append(from + 1).append("-").append(to).append(" 条：\n\n");
+            for (Doc d : page) {
                 sb.append("- 【ID:").append(d.getId()).append("】").append(d.getTitle())
                   .append(" [").append(getTemplateTypeLabel(d.getTemplateType())).append("]\n");
-                if (d.getSummary() != null) sb.append("   ").append(d.getSummary()).append("\n");
+                sb.append("   ").append(previewSummary(d.getSummary())).append("\n");
+            }
+            if (to < list.size()) {
+                sb.append("\n---\n还有 ").append(list.size() - to).append(" 条未显示，下一页：offset=")
+                  .append(to).append("&pageSize=").append(size).append("\n");
             }
             return sb.toString();
         } catch (Exception e) {
