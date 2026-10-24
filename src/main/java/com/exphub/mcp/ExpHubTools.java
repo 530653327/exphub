@@ -1030,15 +1030,15 @@ public class ExpHubTools {
         boolean hitToc = false;   // 遇到手写目录标题后，后续内容全部丢弃（目录一律由代码生成）
         for (String line : content.split("\n", -1)) {
             String t = line.trim();
-            if (t.matches("^#{1,6}\\s*章节目录\\s*$")) {
+            if (t.matches("^#{1,6}\\s*章节目录.*$")) {
                 hitToc = true;
                 continue;
             }
             if (hitToc) {
                 continue;
             }
-            if (t.matches("^#{1,6}\\s*.{0,60}AGENTS\\.md\\s*索引\\s*$")) {
-                continue;   // 手写标题行
+            if (t.matches("^#{1,6}\\s*.{0,60}AGENTS\\.md\\s*索引.*$")) {
+                continue;   // 手写标题行（实测存在「…索引（MAIN）」带后缀的写法）
             }
             if (t.matches("^>\\s*版本:\\s*v\\d+.*$")) {
                 continue;   // 手写版本行
@@ -1049,6 +1049,12 @@ public class ExpHubTools {
         // 剥掉目录后残留在末尾的分隔线
         while (result.endsWith("---")) {
             result = result.substring(0, result.length() - 3).trim();
+        }
+        // 首行 H1 若含「索引」字样（实测存在「# 拆解宝 · 报废车回收模块 — MAIN 索引」这种写法），
+        // 与系统自动生成的标题重复，剥掉；不含「索引」的 H1（如「# 项目定位」）是正文标题，保留
+        int nl = result.indexOf('\n');
+        if (result.startsWith("# ") && nl > 0 && result.substring(0, nl).contains("索引")) {
+            result = result.substring(nl).trim();
         }
         return result;
     }

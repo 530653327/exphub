@@ -64,4 +64,37 @@ class AgentsMainStripTest {
         assertEquals("", ExpHubTools.stripSelfGeneratedParts(null));
         assertEquals("", ExpHubTools.stripSelfGeneratedParts(""));
     }
+
+    @Test
+    void stripsTitlesWithSuffix() {
+        // 实测（项目 2）：标题行带「（MAIN）」后缀
+        String dirty = "# 回金算 · AGENTS.md 索引（MAIN）\n\n> 版本: v1 | 项目ID: 2\n\n正文内容。";
+        String clean = ExpHubTools.stripSelfGeneratedParts(dirty);
+        assertFalse(clean.contains("AGENTS.md 索引"));
+        assertEquals("正文内容。", clean);
+    }
+
+    @Test
+    void stripsTocHeadingWithAnnotation() {
+        // 实测（项目 3）：目录标题带括号说明
+        String dirty = "正文。\n\n## 章节目录（先看摘要+关键词判断相关性，再决定是否读全文）\n\n- 第 1 章 · 概述\n";
+        String clean = ExpHubTools.stripSelfGeneratedParts(dirty);
+        assertEquals("正文。", clean);
+    }
+
+    @Test
+    void stripsLeadingH1WithIndexWord() {
+        // 实测（项目 3）：首行是「# 拆解宝 · 报废车回收模块 — MAIN 索引」，与系统标题重复
+        String dirty = "# 拆解宝 · 报废车回收模块 — MAIN 索引\n\n**定位**：报废车子模块。";
+        String clean = ExpHubTools.stripSelfGeneratedParts(dirty);
+        assertFalse(clean.contains("MAIN 索引"));
+        assertEquals("**定位**：报废车子模块。", clean);
+    }
+
+    @Test
+    void keepsLeadingH1AsContentHeading() {
+        // 「# 项目定位」是正文标题，不含「索引」字样，必须保留
+        String dirty = "# 项目定位\n\n正文。";
+        assertEquals(dirty, ExpHubTools.stripSelfGeneratedParts(dirty));
+    }
 }
