@@ -1111,28 +1111,42 @@ public class ExpHubTools {
     }
 
     /**
-     * 从正文首段自动提取一句目录描述（约 30 字）。
+     * 从正文自动提取一句目录描述（约 30 字）。
      *
      * 用途：写章节时没传 summary 就自动补，避免目录里出现
      * 「项目 AGENTS.md 第 N 章」这种占位废话（E10 的治本面）。
+     *
+     * ⚠️ 实测教训：很多章节 content 开头就是表格（| 项 | 值 |）或代码块（```bash），
+     * 直接取首行会提取出「项  值」「bash」这种垃圾。所以必须：
+     * 跳过代码块 / 表格行 / 标题 / 引用 / 分隔线，且要求含中文；
+     * 全文都找不到合适行时，兜底用章节标题（比垃圾好）。
      */
-    static String autoSummaryFromContent(String content) {
-        if (content == null) {
-            return "";
-        }
-        for (String line : content.split("\n", -1)) {
-            String t = line.trim();
-            if (t.isEmpty() || t.startsWith("#") || t.startsWith(">") || t.startsWith("---")) {
-                continue;
+    static String autoSummaryFromContent(String content, String chapterTitle) {
+        if (content != null) {
+            boolean inCode = false;
+            for (String line : content.split("\n", -1)) {
+                String t = line.trim();
+                if (t.startsWith("```")) {
+                    inCode = !inCode;
+                    continue;
+                }
+                if (inCode) {
+                    continue;
+                }
+                if (t.isEmpty() || t.startsWith("#") || t.startsWith(">") || t.startsWith("---") || t.startsWith("|")) {
+                    continue;
+                }
+                if (!t.matches(".*[\\u4e00-\\u9fa5].*")) {
+                    continue;   // 至少含一个中文，避免「bash」「npm run build」
+                }
+                String clean = t.replaceAll("[*`>\\[\\]()|]", "").replaceAll("^[-+]\\s+", "").trim();
+                if (clean.length() < 4) {
+                    continue;
+                }
+                return clean.length() > 30 ? clean.substring(0, 30) : clean;
             }
-            // 去掉 markdown 强调/列表/链接符号，避免提取出 "* **重点**："
-            String clean = t.replaceAll("[*`>\\[\\]()|]", "").replaceAll("^[-+]\\s+", "").trim();
-            if (clean.isEmpty()) {
-                continue;
-            }
-            return clean.length() > 30 ? clean.substring(0, 30) : clean;
         }
-        return "";
+        return chapterTitle == null ? "" : chapterTitle;
     }
 
     /**
@@ -1263,7 +1277,7 @@ public class ExpHubTools {
                         && existingCh.getSummary() != null
                         && !isPlaceholderSummary(existingCh.getSummary());
                 if (!keepExisting) {
-                    effSummary = autoSummaryFromContent(content);
+                    effSummary = autoSummaryFromContent(content, chapterTitle);
                 }
             }
             Doc saved = projectService.updateAgentsChapter(projectId, chapterNo, chapterTitle, content, loadStrategy, sortOrder, effSummary);
