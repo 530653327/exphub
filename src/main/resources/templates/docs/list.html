@@ -237,6 +237,16 @@
             var form = document.createElement('form');
             form.method = 'POST';
             form.action = contextPath + '/docs/' + id + '/delete';
+            // ⚠️ 动态创建的表单不经过 Thymeleaf 渲染，不会自动带 CSRF 隐藏域，
+            // 必须手动从 meta 取 token 补上，否则 CSRF 启用后删除会 403
+            var csrfMeta = document.querySelector('meta[name="_csrf"]');
+            if (csrfMeta) {
+                var csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = '_csrf';
+                csrfInput.value = csrfMeta.getAttribute('content');
+                form.appendChild(csrfInput);
+            }
             document.body.appendChild(form);
             form.submit();
         }
