@@ -1261,7 +1261,17 @@ public class ExpHubTools {
                     sb.append("\n");
                 }
             }
-            return sb.toString();
+            // 完整性标记（2026-10-24）：忆阁复测报告「MAIN 读到一半就断」，
+            // 但服务端实测返回完整（4183 字符 / 113 行，末尾有完整章节目录），
+            // 说明截断发生在其读取层。加个尾部标记，任何截断都能立刻看出来：
+            // 末尾没有这行 = 传输/读取层被截断，而不是 ExpHub 少给了内容。
+            String out = sb.toString();
+            if (out.length() > 2500) {
+                out = out + "\n---\n📄 **返回完整**（共 " + out.length() + " 字符 / "
+                        + (out.split("\n", -1).length) + " 行）。"
+                        + "若你看到的末尾没有这一行，说明读取层截断了，请分段读取或调大客户端返回上限。\n";
+            }
+            return out;
         } catch (Exception e) {
             log.error("ExpHubTools.getProjectAgents: FAILED", e);
             return "读取失败: " + e.getMessage();
