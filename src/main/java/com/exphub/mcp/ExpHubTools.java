@@ -983,10 +983,15 @@ public class ExpHubTools {
             if (main == null) {
                 return "⚠️ 项目「" + proj.getName() + "」还没有 AGENTS.md 索引。请用 update_project_agents_main 创建。";
             }
+            // 兼容历史脏数据：剥掉 content 里手写的标题行 / 版本行 / 章节目录。
+            // 这三样统一由本方法生成（单一数据源）；旧数据重复写过会导致返回两份目录互相矛盾
+            // （2026-10-24 实测：6 个项目里 5 个中招，且手写版本号停在 v6、系统已 v7）。
+            String body = stripSelfGeneratedParts(main.getContent());
+
             StringBuilder sb = new StringBuilder();
             sb.append("# ").append(proj.getName()).append(" · AGENTS.md 索引\n\n");
             sb.append("> 版本: v").append(main.getVersion()).append(" | 项目ID: ").append(projectId).append("\n\n");
-            sb.append(main.getContent());
+            sb.append(body);
             var chapters = projectService.listAgentsChapters(projectId);
             if (!chapters.isEmpty()) {
                 sb.append("\n\n---\n\n## 章节目录\n\n");
@@ -1007,10 +1012,51 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "update_project_agents_main", description = "写入或更新项目 AGENTS.md 的 MAIN 索引。索引必须包含：项目一句话定位、章节目录、以及3-5条绝对红线（内联，确保AI每次都能看到）。控制在2000字以内。")
+    /**
+     * 剥掉 MAIN content 里手写的标题行、版本行和章节目录段。
+     *
+     * 设计原则：**单一数据源**——标题 / 版本行 / 章节目录统一由 getProjectAgents 生成，
+     * content 只存正文。历史数据里 AI 按旧工具描述把这些写进了 content，
+     * 直接返回会出现两份目录且版本号不一致（2026-10-24 实测：手写 v6、系统已 v7）。
+     *
+     * 只做「读取时清洗」，不改库内容：旧数据仍可正常读；
+     * 想要彻底干净，由调用方用 update_project_agents_main 覆盖一次正文。
+     */
+    static String stripSelfGeneratedParts(String content) {
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        StringBuilder kept = new StringBuilder();
+        boolean hitToc = false;   // 遇到手写目录标题后，后续内容全部丢弃（目录一律由代码生成）
+        for (String line : content.split("\n", -1)) {
+            String t = line.trim();
+            if (t.matches("^#{1,6}\\s*章节目录\\s*$")) {
+                hitToc = true;
+                continue;
+            }
+            if (hitToc) {
+                continue;
+            }
+            if (t.matches("^#{1,6}\\s*.{0,60}AGENTS\\.md\\s*索引\\s*$")) {
+                continue;   // 手写标题行
+            }
+            if (t.matches("^>\\s*版本:\\s*v\\d+.*$")) {
+                continue;   // 手写版本行
+            }
+            kept.append(line).append("\n");
+        }
+        String result = kept.toString().trim();
+        // 剥掉目录后残留在末尾的分隔线
+        while (result.endsWith("---")) {
+            result = result.substring(0, result.length() - 3).trim();
+        }
+        return result;
+    }
+
+    @Tool(name = "update_project_agents_main", description = "写入或更新项目 AGENTS.md 的 MAIN 索引**正文**。⚠️ 不要写标题行（「# 项目名 · AGENTS.md 索引」）、版本行（「> 版本: vN」）和章节目录——这三样由系统自动生成并在返回时自动追加，写进 content 会导致内容重复且与系统版本号脱节。你只负责：项目一句话定位、当前状态、3-5 条绝对红线（内联，确保AI每次都能看到）、关键配置。建议 1500 字以内。")
     public String updateProjectAgentsMain(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "索引正文（Markdown）：项目定位 + 章节目录 + 绝对红线") String content) {
+            @ToolParam(description = "索引正文（Markdown）：项目定位 + 当前状态 + 绝对红线 + 关键配置。不要包含标题行、版本行、章节目录（系统自动生成）") String content) {
         try {
             Project proj = projectService.getProject(projectId);
             if (proj == null) {
