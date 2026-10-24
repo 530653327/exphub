@@ -187,6 +187,111 @@ public class ExpHubTools {
     }
 
     /**
+     * 剥离「读取端渲染产生的痕迹」（E11，2026-10-24 忆阁实测发现）。
+     *
+     * 背景（这是一次真实事故）：get_experience_detail / export_document 返回的是
+     * **渲染视图**——除了正文，还自动拼了历史导读、关联经验列表、「📌 文档结尾」标记。
+     * AI 维护文档时的典型动作是「读出来 → 改一点 → 整体写回」，
+     * 如果直接把读到的内容写回 content，这些**渲染出来的内容就被固化进数据库**，
+     * 而且每写一次叠一层：实测 ID=101 的 content 里积了 v5~v9 五段历史导读。
+     *
+     * 同类错误已发生过一次（E1：MAIN 索引的标题/目录重复），那次是靠「改工具描述+读取端清洗」，
+     * 这次证明**必须再加一道写入端防御**——不能指望调用方把读到的内容自己摘干净。
+     *
+     * 剥离清单：
+     *  - 历史导读块（> 📚 **历史导读** 起，到分隔线）
+     *  - 关联经验段（## 📎 关联经验 起，到结尾——它是读取时按 relatedIds 实时渲染的）
+     *  - 「📌 文档结尾」标记
+     *  - 头部元信息块（**分类** / **作者** / **版本** / **标签** / **关联经验**: —— 渲染时加的行）
+     *  - 终端残留（脚本 Terminated / curl 报错 / bash 行号）—— 这是 AI 复制输出时误带的
+     */
+    static String stripRenderArtifacts(String content) {
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        String[] lines = content.split("\n", -1);
+        StringBuilder kept = new StringBuilder();
+        boolean inHeaderMeta = true;   // 开头的元信息块（遇到第一个非元信息行就关闭）
+        int i = 0;
+        while (i < lines.length) {
+            String raw = lines[i];
+            String t = raw.trim();
+
+            // 1) 历史导读块：整块跳过（含其后的空行与分隔线）
+            if (t.matches("^>\\s*📚?\\s*\\*\\*历史导读\\*\\*.*$")) {
+                i++;
+                while (i < lines.length && (lines[i].trim().startsWith(">") || lines[i].trim().isEmpty())) {
+                    i++;
+                }
+                if (i < lines.length && lines[i].trim().matches("^-{3,}$")) {
+                    i++;
+                }
+                continue;
+            }
+
+            // 2) 关联经验段：只跳过该段本身，**不能 break** ——
+            // 实测 ID=101 里有 4 段关联经验夹在正文中间，break 会把后面所有正文一起丢掉
+            if (t.matches("^#{1,6}\\s*\\S*\\s*关联经验\\s*$") || t.matches("^\\*\\*关联经验\\*\\*\\s*[:：].*$")) {
+                i++;
+                while (i < lines.length) {
+                    String cur = lines[i].trim();
+                    if (cur.matches("^-{3,}$") || cur.matches("^#{1,6}\\s+\\S.*$")) {
+                        break;
+                    }
+                    i++;
+                }
+                // 停在分隔线上时一并吃掉
+                if (i < lines.length && lines[i].trim().matches("^-{3,}$")) {
+                    i++;
+                }
+                continue;
+            }
+
+            // 3) 文档结尾标记
+            if (t.matches("^(📌\\s*)?文档结尾.*$") || t.matches("^📌.*文档结尾.*$")) {
+                i++;
+                continue;
+            }
+
+            // 4) 终端残留
+            if (t.matches("^.*mcpcall\\.sh: line \\d+:.*$")
+                    || t.matches("^.*Terminated:\\s*\\d+.*$")
+                    || t.matches("^bash: line \\d+:.*$")
+                    || t.matches("^curl: \\(\\d+\\).*$")) {
+                i++;
+                continue;
+            }
+
+            // 5) 头部元信息块：只处理开头连续的 **xxx**: 行与分隔线
+            if (inHeaderMeta) {
+                boolean isMeta = t.matches("^\\*\\*(分类|作者|版本|标签|关联经验)\\*\\*\\s*[:：].*$")
+                        || t.matches("^-{3,}$")
+                        || t.isEmpty();
+                if (isMeta) {
+                    i++;
+                    continue;
+                }
+                // `# 文档标题` 保留（正文结构的一部分），但仍在元信息区内——
+                // 让紧随其后的 **分类** / **版本** 行继续被剥掉
+                if (t.matches("^#\\s+\\S.*$")) {
+                    kept.append(raw).append("\n");
+                    i++;
+                    continue;
+                }
+                inHeaderMeta = false;
+            }
+
+            kept.append(raw).append("\n");
+            i++;
+        }
+        String result = kept.toString().trim();
+        while (result.endsWith("---")) {
+            result = result.substring(0, result.length() - 3).trim();
+        }
+        return result;
+    }
+
+    /**
      * 导出完整文档内容（无截断，适合长文档维护）
      */
     @Tool(name = "export_document", description = "【文档维护专用】将经验完整导出为Markdown内容（无字符限制截断）。适用于超长文档（如项目需求文档、规格说明书等）。返回的内容可以直接保存为本地.md文件进行编辑。短经验可直接使用 get_experience_detail 查看。")
@@ -245,12 +350,18 @@ public class ExpHubTools {
 
             Doc updateDoc = new Doc();
             updateDoc.setId(id);
-            updateDoc.setContent(content);
+            // E11：导入前剥离渲染痕迹（历史导读/关联经验/文档结尾/终端残留）
+            String cleaned = stripRenderArtifacts(content);
+            updateDoc.setContent(cleaned);
             if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
 
             docService.update(id, updateDoc);
 
-            return "✅ 文档导入成功！\n\n**ID**: " + id + "\n**标题**: " + existing.getTitle() + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n**内容长度**: " + content.length() + " 字\n\n文档已更新，当前版本保留了完整内容。";
+            int stripped = content.length() - cleaned.length();
+            return "✅ 文档导入成功！\n\n**ID**: " + id + "\n**标题**: " + existing.getTitle() + "\n**新版本**: v" + (existing.getVersion() + 1)
+                 + "\n**内容长度**: " + cleaned.length() + " 字"
+                 + (stripped > 0 ? "（已剥离 " + stripped + " 字渲染痕迹：历史导读/关联经验/文档结尾等）" : "")
+                 + "\n\n文档已更新，当前版本保留了完整内容。";
         } catch (Exception e) {
             log.error("ExpHubTools.importDocument: FAILED", e);
             callLogService.incrementFailCalls();
@@ -779,7 +890,8 @@ public class ExpHubTools {
             
             Doc doc = new Doc();
             doc.setTitle(title);
-            doc.setContent(content);
+            // E11：写入前剥离渲染痕迹（防止把「读出来的视图」原样存成新文档）
+            doc.setContent(stripRenderArtifacts(content));
             doc.setTemplateType(templateType != null && !templateType.isEmpty() ? templateType : "generic");
             doc.setCategory(category != null && !category.isEmpty() ? category : "未分类");
             doc.setTags(tags != null ? tags : "");
@@ -892,8 +1004,15 @@ public class ExpHubTools {
             updateDoc.setId(id);
             // E9：记录实际写了哪些字段，用于返回回显（解决「传空串也返回已更新」的假成功）
             List<String> changedFields = new java.util.ArrayList<>();
+            String cleanedContent = null;
             if (title != null && !title.isEmpty()) { updateDoc.setTitle(title); changedFields.add("title"); }
-            if (content != null && !content.isEmpty()) { updateDoc.setContent(content); changedFields.add("content"); }
+            if (content != null && !content.isEmpty()) {
+                // E11：写入前剥离渲染痕迹（历史导读/关联经验/文档结尾/终端残留）
+                // 这是 ID=101 导读叠了 5 层的根因：读出来是渲染视图，写回去就把注入内容固化了
+                cleanedContent = stripRenderArtifacts(content);
+                updateDoc.setContent(cleanedContent);
+                changedFields.add("content");
+            }
             if (category != null && !category.isEmpty()) { updateDoc.setCategory(category); changedFields.add("category"); }
             if (tags != null && !tags.isEmpty()) { updateDoc.setTags(tags); changedFields.add("tags"); }
             if (aliases != null && !aliases.isEmpty()) { updateDoc.setAliases(aliases); changedFields.add("aliases"); }
@@ -937,10 +1056,15 @@ public class ExpHubTools {
             res.append("**已修改字段**: ").append(changedFields.isEmpty() ? "（无，仅调整归属）" : String.join(", ", changedFields)).append("\n");
             if (changedFields.contains("content")) {
                 int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
-                res.append("**正文字数**: ").append(oldLen).append(" → ").append(content.length()).append(" 字\n");
+                int stripped = content.length() - (cleanedContent == null ? content.length() : cleanedContent.length());
+                res.append("**正文字数**: ").append(oldLen).append(" → ").append(cleanedContent.length()).append(" 字\n");
+                if (stripped > 0) {
+                    res.append("**已剥离渲染痕迹**: ").append(stripped)
+                       .append(" 字（历史导读/关联经验/文档结尾/终端残留）——它们由读取端生成，不应存进正文\n");
+                }
                 res.append("\n**改后开头**:\n> ")
-                   .append(content.substring(0, Math.min(200, content.length())).replace("\n", "\n> "))
-                   .append(content.length() > 200 ? "…" : "")
+                   .append(cleanedContent.substring(0, Math.min(200, cleanedContent.length())).replace("\n", "\n> "))
+                   .append(cleanedContent.length() > 200 ? "…" : "")
                    .append("\n");
             }
             if (changeScope) {
