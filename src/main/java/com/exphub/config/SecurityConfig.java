@@ -31,7 +31,15 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/login", "/").permitAll()
                 .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
-                .requestMatchers("/mcp/**", "/api/**").permitAll()
+                // MCP 用 authorization-key 请求头鉴权（ApiKeyInterceptor），不依赖 session
+                .requestMatchers("/mcp/**").permitAll()
+                // 公开 API：登录注册、版本信息、分享、模板列表（与 WebMvcConfig 的
+                // ApiKeyInterceptor excludePathPatterns 保持一致）
+                .requestMatchers("/api/auth/**", "/api/info", "/api/share/**", "/api/templates/**").permitAll()
+                // 其余后台 API 必须 Session 登录
+                // ⚠️ 历史上这里写的是 /api/** permitAll，与 ApiKeyInterceptor「要求 Session」的口径不一致，
+                // 靠拦截器兜住了；现在两层口径统一为「需登录」，避免将来拦截器放行时出现裸奔
+                .requestMatchers("/api/**").authenticated()
                 .requestMatchers("/share/**").permitAll()
                 .requestMatchers("/portal/**").permitAll()
                 .requestMatchers("/health").permitAll()

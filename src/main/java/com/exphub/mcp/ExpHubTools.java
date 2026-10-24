@@ -711,7 +711,7 @@ public class ExpHubTools {
      */
     @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template() 选择模板！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。可选 projectId：把经验直接写进项目空间（不传则写全局）；项目经验默认隔离、不出现在全局搜索中，属于该项目的内容应传 projectId。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
     public String createExperience(
-            @ToolParam(description = "经验标题，简短明确") String title,
+            @ToolParam(description = "经验标题，简短明确。⚠️ 不要把版本号写进标题（如「v2」「v3」）——系统有独立的 version 字段自动管理版本，手写版本号必然与系统脱节。想体现迭代可在标题里用内容描述") String title,
             @ToolParam(description = "经验正文，使用Markdown格式，按 get_template 返回的结构填写。🔒 严禁包含账号密码、API密钥、Token、数据库连接串等敏感信息") String content,
             @ToolParam(description = "模板类型标识（必填），从 get_template 返回的 type 值中选择，如：problem_solution、knowledge_doc、todo_list") String templateType,
             @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等，如不确定可填 未分类") String category,
@@ -787,7 +787,7 @@ public class ExpHubTools {
     @Tool(name = "update_experience", description = "更新已有经验。用于修正错误或补充短内容。如果是要整体更新长篇文档，建议使用 export_document + import_document 流程以避免内容丢失。如果确定要覆盖长文档，请设置 force=true。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
-            @ToolParam(description = "经验标题，不需要修改时传空字符串即可") String title,
+            @ToolParam(description = "经验标题，不需要修改时传空字符串即可。⚠️ 不要把版本号写进标题（如「v2」），版本由系统 version 字段管理") String title,
             @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可。注意：对于长文档，如果提供的内容明显比原文档短，系统会自动检测并提示改用 export/import 流程，除非设置 force=true。🔒 严禁包含账号密码、API密钥、Token等敏感信息") String content,
             @ToolParam(description = "分类，如：服务器、开发、运维、部署等，不需要修改时传空字符串即可") String category,
             @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
