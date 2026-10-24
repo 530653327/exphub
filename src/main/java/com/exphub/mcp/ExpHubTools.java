@@ -975,7 +975,9 @@ public class ExpHubTools {
                 StringBuilder sb = new StringBuilder();
                 sb.append("# 第 ").append(ch.getChapterNo()).append(" 章 · ").append(ch.getChapterTitle()).append("\n\n");
                 sb.append("> 加载策略: ").append(ch.getLoadStrategy()).append(" | 版本: v").append(ch.getVersion()).append("\n\n");
-                sb.append(ch.getContent());
+                // 与 MAIN 同理：标题行、加载策略行由代码生成，content 里手写的要剥掉，
+                // 否则返回两份标题且版本号脱节（2026-10-24 实测：82 个章节里 6 个中招）
+                sb.append(stripChapterHeader(ch.getContent()));
                 return sb.toString();
             }
 
@@ -1022,6 +1024,37 @@ public class ExpHubTools {
      * 只做「读取时清洗」，不改库内容：旧数据仍可正常读；
      * 想要彻底干净，由调用方用 update_project_agents_main 覆盖一次正文。
      */
+    /**
+     * 剥掉章节 content 开头手写的「# 第 N 章 · 标题」与「> 加载策略: …」行。
+     *
+     * 与 MAIN 的 stripSelfGeneratedParts 同一原则（单一数据源），但只处理**开头**：
+     * 章节正文里可能正常引用「第 3 章」，不能全文删，只跳过开头连续的标题/策略行。
+     */
+    static String stripChapterHeader(String content) {
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        String[] lines = content.split("\n", -1);
+        int start = 0;
+        while (start < lines.length) {
+            String t = lines[start].trim();
+            if (t.isEmpty()) {
+                start++;
+                continue;
+            }
+            if (t.matches("^#{1,6}\\s*第\\s*\\d+\\s*章.*$") || t.matches("^>\\s*加载策略:.*$")) {
+                start++;
+                continue;
+            }
+            break;
+        }
+        StringBuilder kept = new StringBuilder();
+        for (int i = start; i < lines.length; i++) {
+            kept.append(lines[i]).append("\n");
+        }
+        return kept.toString().trim();
+    }
+
     static String stripSelfGeneratedParts(String content) {
         if (content == null || content.isEmpty()) {
             return "";
@@ -1077,12 +1110,12 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "update_project_agents_chapter", description = "写入或更新项目 AGENTS.md 的某一章。按章独立更新，不触发长文档覆盖保护，每章独立保留版本快照。建议单章3000字以内。")
+    @Tool(name = "update_project_agents_chapter", description = "写入或更新项目 AGENTS.md 的某一章正文。按章独立更新，不触发长文档覆盖保护，每章独立保留版本快照。⚠️ 不要写「# 第 N 章 · 标题」和「> 加载策略: ...」这两行——由系统自动生成并拼接，写进 content 会导致重复且版本号脱节。建议单章3000字以内。")
     public String updateProjectAgentsChapter(
             @ToolParam(description = "项目ID") Long projectId,
             @ToolParam(description = "章节号，如'1'、'14'") String chapterNo,
             @ToolParam(description = "章节标题，如'项目概述'") String chapterTitle,
-            @ToolParam(description = "章节正文（Markdown）") String content,
+            @ToolParam(description = "章节正文（Markdown）。不要包含「# 第 N 章」标题行和「加载策略」行（系统自动生成）") String content,
             @ToolParam(description = "加载策略：ALWAYS(每次会话必读) / ON_DEMAND(按需)。默认 ON_DEMAND", required = false) String loadStrategy,
             @ToolParam(description = "排序号，默认0", required = false) Integer sortOrder,
             @ToolParam(description = "目录描述：AGENTS.md 自动生成的章节目录里那一行说明，建议 30 字内。不传则新建时用默认文案、更新时保持原值", required = false) String summary) {
