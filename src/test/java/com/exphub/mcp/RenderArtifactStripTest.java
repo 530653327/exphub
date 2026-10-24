@@ -125,6 +125,53 @@ class RenderArtifactStripTest {
     }
 
     @Test
+    void collapsesDuplicatedLeadingH1FromRenderView() {
+        // 渲染视图结构：# 标题 + 元信息 + 历史导读 + 正文；
+        // 而文档正文自己也可能以同名 H1 开头。导读与元信息剥掉后，两行标题贴在一起。
+        // （2026-10-24 23:4x 拿 ID=101 做写入端幂等实验实测出来的）
+        String view = HEADER + TOC + "# ExpHub 项目待办清单（统一管理）\n\n## 说明\n\n内容。";
+        String clean = ExpHubTools.stripRenderArtifacts(view);
+
+        assertEquals(1, countOf(clean, "# ExpHub 项目待办清单（统一管理）"),
+                "标题只能留一行，实际：\n" + clean);
+        assertTrue(clean.contains("## 说明"), "正文要保留");
+        assertFalse(clean.contains("历史导读"));
+        assertFalse(clean.contains("**版本**"));
+    }
+
+    @Test
+    void collapsesEvenWhenThreeCopiesStacked() {
+        // 已经脏过一次的内容再被喂回来，会有三份标题，不能只删一份
+        String dirty = "# 标题\n\n# 标题\n\n# 标题\n\n## 正文\n\n内容。";
+        String clean = ExpHubTools.stripRenderArtifacts(dirty);
+        assertEquals(1, countOf(clean, "# 标题"), "三份也要折成一份，实际：\n" + clean);
+    }
+
+    @Test
+    void keepsTwoDifferentHeadings() {
+        // 开头两个**不同**的 H1 是正常文档结构，不能当成重复砍掉
+        String real = "# 主标题\n\n# 另一个标题\n\n## 正文\n\n内容。";
+        assertEquals(real, ExpHubTools.stripRenderArtifacts(real));
+    }
+
+    @Test
+    void doesNotScanWholeDocumentForDuplicateH1() {
+        // 只处理开头；正文中间的 H1 是章节结构，动不得
+        String real = "# 标题\n\n## 正文一\n\n# 标题\n\n内容。";
+        assertEquals(real, ExpHubTools.stripRenderArtifacts(real));
+    }
+
+    private static int countOf(String s, String sub) {
+        int n = 0;
+        int i = 0;
+        while ((i = s.indexOf(sub, i)) >= 0) {
+            n++;
+            i += sub.length();
+        }
+        return n;
+    }
+
+    @Test
     void handlesNullAndEmpty() {
         assertEquals("", ExpHubTools.stripRenderArtifacts(null));
         assertEquals("", ExpHubTools.stripRenderArtifacts(""));

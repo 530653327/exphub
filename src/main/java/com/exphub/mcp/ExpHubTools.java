@@ -264,12 +264,19 @@ public class ExpHubTools {
 
             // 5) 头部元信息块：只处理开头连续的 **xxx**: 行与分隔线
             if (inHeaderMeta) {
-                boolean isMeta = t.matches("^\\*\\*(分类|作者|版本|标签|关联经验)\\*\\*\\s*[:：].*$")
-                        || t.matches("^-{3,}$")
-                        || t.isEmpty();
-                if (isMeta) {
+                if (t.matches("^\\*\\*(分类|作者|版本|标签|关联经验)\\*\\*\\s*[:：].*$")
+                        || t.matches("^-{3,}$")) {
                     i++;
                     continue;
+                }
+                // 空行：开头那几个是排版残留，跳过；标题之后的空行属于正文，
+                // 吃掉会让「# 标题\n\n正文」被压成「# 标题\n正文」
+                if (t.isEmpty()) {
+                    if (kept.length() > 0) {
+                        kept.append(raw).append("\n");
+                    }
+                    i++;
+                    continue;   // 注意：空行不退出元信息区，**分类** 行可能在它后面
                 }
                 // `# 文档标题` 保留（正文结构的一部分），但仍在元信息区内——
                 // 让紧随其后的 **分类** / **版本** 行继续被剥掉
@@ -284,11 +291,45 @@ public class ExpHubTools {
             kept.append(raw).append("\n");
             i++;
         }
-        String result = kept.toString().trim();
+        // 6) 开头重复的同名 H1 只留一个。
+        //    渲染视图会把「# 标题」拼在最前面，而文档正文自己也可能以同名 H1 开头，
+        //    导读和元信息都被剥掉后，这两行就贴在一起变成两行相同标题。
+        //    （2026-10-24 23:4x 拿 ID=101 做写入端幂等实验时实测出来的：
+        //    导读/关联经验确被剥离，但标题被复制了一份。）
+        String[] out = kept.toString().split("\n", -1);
+        List<Integer> dupH1 = new ArrayList<>();
+        for (int k = 0; k < out.length; k++) {
+            String t = out[k].trim();
+            if (t.isEmpty() || t.matches("^-{3,}$")) {
+                continue;
+            }
+            // 只收**同名**的连续 H1；标题不同或遇到正文就停
+            if (t.matches("^#\\s+\\S.*$")
+                    && (dupH1.isEmpty() || t.equals(out[dupH1.get(0)].trim()))) {
+                dupH1.add(k);
+                continue;
+            }
+            break;
+        }
+        String result;
+        if (dupH1.size() > 1) {
+            // 留第一个，其余整串删掉
+            Set<Integer> drop = new LinkedHashSet<>(dupH1.subList(1, dupH1.size()));
+            StringBuilder sb = new StringBuilder();
+            for (int k = 0; k < out.length; k++) {
+                if (!drop.contains(k)) {
+                    sb.append(out[k]).append("\n");
+                }
+            }
+            result = sb.toString().trim();
+        } else {
+            result = kept.toString().trim();
+        }
         while (result.endsWith("---")) {
             result = result.substring(0, result.length() - 3).trim();
         }
-        return result;
+        // 剥掉元信息后容易留下连续空行，压成一个
+        return result.replaceAll("\n{3,}", "\n\n");
     }
 
     /**
