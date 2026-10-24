@@ -7,6 +7,7 @@ import com.exphub.mapper.DocMapper;
 import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
+import com.exphub.service.ToolStatsService;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
@@ -37,6 +38,9 @@ public class PageController extends BaseController {
 
     @Autowired
     private AiAssistantService assistantService;
+
+    @Autowired
+    private ToolStatsService toolStatsService;
 
     // 登录页
     @GetMapping("/login")
@@ -227,6 +231,30 @@ public class PageController extends BaseController {
         model.addAttribute("active", "logs");
         model.addAttribute("pageTitle", "调用日志");
         return "logs/list";
+    }
+
+    // MCP 工具使用统计看板（观察期数据：哪些工具被用、哪些是僵尸工具）
+    @GetMapping("/tool-stats")
+    public String toolStats(HttpSession session, Model model, HttpServletRequest request,
+                            @RequestParam(value = "days", defaultValue = "30") int days) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        addContextPath(model, request);
+        model.addAttribute("active", "toolStats");
+        model.addAttribute("pageTitle", "工具统计");
+
+        int window = (days < 1 || days > 365) ? 30 : days;
+        Map<String, Object> data = toolStatsService.getDashboard(window);
+        model.addAttribute("overview", data.get("overview"));
+        model.addAttribute("ranking", data.get("ranking"));
+        model.addAttribute("zeroTools", data.get("zeroTools"));
+        model.addAttribute("unknownCalled", data.get("unknownCalled"));
+        model.addAttribute("trend", data.get("trend"));
+        model.addAttribute("byAssistant", data.get("byAssistant"));
+        model.addAttribute("days", window);
+        model.addAttribute("lowFreqThreshold", data.get("lowFreqThreshold"));
+        return "tool-stats";
     }
 
     // 模板管理

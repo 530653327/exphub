@@ -100,6 +100,9 @@
         <a href="/logs" th:classappend="${active == 'logs'} ? 'active' : ''">
             <i class="fas fa-history mr-2"></i> 调用日志
         </a>
+        <a href="/tool-stats" th:classappend="${active == 'toolStats'} ? 'active' : ''">
+            <i class="fas fa-tools mr-2"></i> 工具统计
+        </a>
         <div style="margin-top: 20px; padding: 0 20px;">
             <a href="/profile/password" th:classappend="${active == 'profile'} ? 'active' : ''">
                 <i class="fas fa-lock mr-2"></i> 修改密码

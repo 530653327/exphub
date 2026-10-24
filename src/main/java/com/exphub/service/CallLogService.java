@@ -185,9 +185,41 @@ public class CallLogService {
         return log;
     }
 
-    // 记录失败调用（MCP/API 异常时递增 failCalls）
-    public void incrementFailCalls() {
+    /**
+     * 记录一次 MCP 工具调用（埋点，由 ToolCallAspect 在 @Tool 方法执行后调用）。
+     *
+     * 设计要点：
+     * 1. 只写工具维度统计行（action=TOOL），**不**累加 ai_assistants.total_calls——
+     *    后者已由 logSearch/logCreate/logUpdate 等业务方法按业务动作累加，这里再加会重复计数。
+     * 2. 每次工具调用 +1 行，用于「哪个工具被用了多少次」，与业务日志（SEARCH/CREATE…）并存不冲突。
+     * 3. 本方法自身异常必须被调用方吞掉：埋点失败不能影响工具正常返回。
+     */
+    public void logToolCall(String toolName, boolean success, long costMs) {
+        if (toolName == null || toolName.isEmpty()) {
+            return;
+        }
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+
+        CallLog log = new CallLog();
+        log.setAction("TOOL");
+        log.setToolName(toolName);
+        log.setCostMs((int) Math.min(costMs, Integer.MAX_VALUE));
+        log.setSuccess(success ? 1 : 0);
+        log.setDetail(success ? "成功" : "失败");
+
+        if (assistant != null) {
+            log.setApiKey(assistant.getApiKey());
+            log.setCallerName(assistant.getAssistantName());
+        } else {
+            log.setApiKey("MANUAL");
+            log.setCallerName("后台管理");
+        }
+
+        callLogMapper.insert(log);
+    }
+
+    // 记录失败调用（MCP/API 异常时递增 failCalls）
+    public void incrementFailCalls() {        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
             assistant.setFailCalls(assistant.getFailCalls() + 1);
             assistantMapper.updateById(assistant);

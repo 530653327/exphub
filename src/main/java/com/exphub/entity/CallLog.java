@@ -12,7 +12,10 @@ public class CallLog {
     
     private String apiKey;           // AppKey
     private String callerName;       // 调用者名字（来自助手）
-    private String action;           // 操作类型：SEARCH, CREATE, UPDATE, DELETE
+    private String action;           // 操作类型：SEARCH/CREATE/UPDATE/DELETE/HELPFUL/TOOL
+    private String toolName;         // MCP 工具名（action=TOOL 时记录，用于工具维度统计）
+    private Integer costMs;          // 工具耗时毫秒（action=TOOL 时记录）
+    private Integer success;         // 工具调用成败 1成功 0失败（action=TOOL 时记录）
     private String keyword;          // 检索关键字（SEARCH 时用）
     private Integer hitCount;        // 命中数据条数（SEARCH 时用）
     private Long docId;             // 文档ID（CREATE/UPDATE/DELETE 时用）

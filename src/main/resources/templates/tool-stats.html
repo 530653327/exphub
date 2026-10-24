@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工具统计 - 经验阁 ExpHub</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
+        .stat-card { border-radius: 12px; padding: 18px; color: #fff; display: flex; align-items: center; }
+        .stat-card .icon { font-size: 2rem; margin-right: 12px; opacity: 0.85; }
+        .stat-card .number { font-size: 1.6rem; font-weight: bold; line-height: 1.2; }
+        .stat-card .label { font-size: 0.8rem; opacity: 0.9; }
+        .bg-gradient-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .bg-gradient-success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .bg-gradient-danger { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+        .bg-gradient-warning { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .bg-gradient-dark { background: linear-gradient(135deg, #434343 0%, #000000 100%); }
+        .bg-gradient-info { background: linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%); }
+        .tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86rem; font-weight: 600; }
+        .bar-bg { background: #eef0f4; border-radius: 4px; height: 16px; position: relative; overflow: hidden; min-width: 90px; }
+        .bar-fill { background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; border-radius: 4px; }
+        .bar-text { position: absolute; right: 6px; top: -1px; font-size: 0.72rem; color: #4a4a4a; }
+        .badge-active { background: #d4edda; color: #155724; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
+        .badge-low { background: #fff3cd; color: #856404; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
+        .badge-zero { background: #f8d7da; color: #721c24; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
+        .zero-item { background: #fff; border: 1px solid #f5c6cb; border-left: 4px solid #dc3545; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+        .zero-item .desc { color: #6c757d; font-size: 0.78rem; }
+        .day-btn { padding: 4px 14px; border: 1px solid #dee2e6; background: #fff; border-radius: 16px; font-size: 0.82rem; color: #495057; text-decoration: none; }
+        .day-btn:hover { background: #f1f3f5; text-decoration: none; color: #495057; }
+        .day-btn.on { background: #e94560; border-color: #e94560; color: #fff; }
+        .hint-box { background: #fff8e6; border: 1px solid #ffe58f; border-radius: 8px; padding: 12px 16px; font-size: 0.82rem; line-height: 1.7; color: #5c4b00; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a href="/exphub/dashboard"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a href="/exphub/docs"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a href="/exphub/assistants"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a href="/exphub/logs"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a href="/exphub/tool-stats" class="active"><i class="fas fa-tools mr-2"></i> 工具统计</a>
+        <a href="/exphub/projects"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <a href="/exphub/templates"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="margin-top: 20px; padding: 0 20px;">
+            <a href="/exphub/profile/password"><i class="fas fa-lock mr-2"></i> 修改密码</a>
+        </div>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a href="/exphub/logout" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0">MCP 工具使用统计</h4>
+            <div>
+                <a class="day-btn" th:classappend="${days == 7} ? 'on'" th:href="@{/tool-stats(days=7)}">近 7 天</a>
+                <a class="day-btn" th:classappend="${days == 30} ? 'on'" th:href="@{/tool-stats(days=30)}">近 30 天</a>
+                <a class="day-btn" th:classappend="${days == 90} ? 'on'" th:href="@{/tool-stats(days=90)}">近 90 天</a>
+            </div>
+        </div>
+
+        <!-- KPI -->
+        <div class="row mb-3">
+            <div class="col-md-3 mb-3">
+                <div class="stat-card bg-gradient-primary">
+                    <i class="fas fa-cubes icon"></i>
+                    <div>
+                        <div class="number" th:text="${overview.registrySize}">0</div>
+                        <div class="label">已注册工具</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card bg-gradient-success">
+                    <i class="fas fa-check-circle icon"></i>
+                    <div>
+                        <div class="number" th:text="${overview.activeTools} + ' / ' + ${overview.registrySize}">0</div>
+                        <div class="label">有过调用</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card bg-gradient-danger">
+                    <i class="fas fa-ghost icon"></i>
+                    <div>
+                        <div class="number" th:text="${overview.zeroTools}">0</div>
+                        <div class="label">零调用工具</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card bg-gradient-dark">
+                    <i class="fas fa-chart-bar icon"></i>
+                    <div>
+                        <div class="number" th:text="${overview.total}">0</div>
+                        <div class="label">累计工具调用</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="stat-card bg-gradient-warning">
+                    <i class="fas fa-bolt icon"></i>
+                    <div>
+                        <div class="number" th:text="${overview.today}">0</div>
+                        <div class="label">今日调用</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card bg-gradient-info">
+                    <i class="fas fa-percentage icon"></i>
+                    <div>
+                        <div class="number" th:text="${overview.successRate} + '%'">0%</div>
+                        <div class="label">调用成功率</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card" style="background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);">
+                    <i class="fas fa-stopwatch icon"></i>
+                    <div>
+                        <div class="number">
+                            <span th:text="${overview.avgCostMs != null ? overview.avgCostMs : '-'}">-</span><span style="font-size:0.9rem"> ms</span>
+                        </div>
+                        <div class="label">平均耗时</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card" style="background: linear-gradient(135deg, #e96443 0%, #904e95 100%);">
+                    <i class="fas fa-calendar-alt icon"></i>
+                    <div>
+                        <div class="number" th:text="${days}">30</div>
+                        <div class="label">统计窗口（天）</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="hint-box mb-4">
+            <b>怎么看这块看板：</b>
+            每次 MCP 工具调用会写一条 <code>action=TOOL</code> 的日志（<code>tool_name</code> + <code>cost_ms</code> + <code>success</code>）。
+            <b>零调用工具</b> = 代码里注册了但窗口期内一次都没被调用 —— 观察 2-4 周后，这些就是「可考虑精简」的候选，
+            但要结合功能是否被其他工具覆盖再决定，别只看次数。
+            <b>低频</b> 指窗口内 ≤ <span th:text="${lowFreqThreshold}">3</span> 次，属于「留着但关注」。
+            窗口只影响榜单和趋势；顶部「累计工具调用」是全量。
+        </div>
+
+        <!-- 工具使用榜 -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-ranking-star text-primary mr-2"></i>工具使用榜（近 <span th:text="${days}">30</span> 天）</h5>
+                <span class="text-muted" style="font-size:0.82rem;">
+                    共 <span th:text="${#lists.size(ranking)}">0</span> 个工具有调用
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;">#</th>
+                            <th>工具名</th>
+                            <th style="width:220px;">调用次数 / 占比</th>
+                            <th style="width:90px;">成功率</th>
+                            <th style="width:110px;">平均耗时</th>
+                            <th style="width:110px;">峰值耗时</th>
+                            <th style="width:150px;">最后调用</th>
+                            <th style="width:90px;">状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="row, stat : ${ranking}">
+                            <td th:text="${stat.count}">1</td>
+                            <td><span class="tool-name" th:text="${row.toolName}">-</span></td>
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <span class="mr-2 font-weight-bold" th:text="${row.calls}">0</span>
+                                    <div class="bar-bg flex-grow-1">
+                                        <div class="bar-fill" th:style="'width:' + ${row.share} + '%'"></div>
+                                        <span class="bar-text" th:text="${row.share} + '%'">0%</span>
+                                    </div>
+                                </div>
+                            </td>
+                            <td>
+                                <span th:text="${row.successRate} + '%'">100%</span>
+                            </td>
+                            <td>
+                                <span th:text="${row.avgCostMs != null ? row.avgCostMs + ' ms' : '-'}">-</span>
+                            </td>
+                            <td>
+                                <span th:text="${row.maxCostMs != null ? row.maxCostMs + ' ms' : '-'}">-</span>
+                            </td>
+                            <td th:text="${row.lastCallAtText}">-</td>
+                            <td>
+                                <span th:if="${row.level == 'active'}" class="badge-active">活跃</span>
+                                <span th:if="${row.level == 'low'}" class="badge-low">低频</span>
+                                <span th:if="${row.level == 'zero'}" class="badge-zero">零调用</span>
+                            </td>
+                        </tr>
+                        <tr th:if="${#lists.isEmpty(ranking)}">
+                            <td colspan="8" class="text-center text-muted py-4">
+                                窗口期内还没有工具调用记录（埋点从本次部署后开始生效）
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 趋势 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-chart-line text-primary mr-2"></i>每日工具调用趋势</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="toolTrendChart" height="70"></canvas>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 零调用工具 -->
+            <div class="col-md-7">
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-ghost text-danger mr-2"></i>零调用工具（精简候选）</h5>
+                        <span class="text-muted" style="font-size:0.82rem;">
+                            <span th:text="${#lists.size(zeroTools)}">0</span> 个 / 共 <span th:text="${overview.registrySize}">25</span> 个
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <div th:if="${#lists.isEmpty(zeroTools)}" class="text-success">
+                            <i class="fas fa-check-circle mr-1"></i> 所有注册工具在窗口期内都被调用过。
+                        </div>
+                        <div th:each="t : ${zeroTools}" class="zero-item">
+                            <div class="d-flex justify-content-between">
+                                <span class="tool-name" th:text="${t.toolName}">-</span>
+                                <span class="badge-zero">0 次</span>
+                            </div>
+                            <div class="desc" th:text="${t.description}">-</div>
+                        </div>
+                        <div th:if="${not #lists.isEmpty(unknownCalled)}" class="mt-3">
+                            <div class="text-warning font-weight-bold mb-1">
+                                <i class="fas fa-exclamation-triangle mr-1"></i>有调用但未在代码中注册（改名或已删除的残留）：
+                            </div>
+                            <span th:each="n : ${unknownCalled}" class="badge badge-warning mr-1" th:text="${n}">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 按助手分布 -->
+            <div class="col-md-5">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-robot text-primary mr-2"></i>按调用者分布（近 <span th:text="${days}">30</span> 天）</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>调用者</th>
+                                    <th style="width:90px;">调用数</th>
+                                    <th style="width:90px;">成功数</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr th:each="row : ${byAssistant}">
+                                    <td th:text="${row.callerName}">-</td>
+                                    <td th:text="${row.calls}">0</td>
+                                    <td th:text="${row.successCalls}">0</td>
+                                </tr>
+                                <tr th:if="${#lists.isEmpty(byAssistant)}">
+                                    <td colspan="3" class="text-center text-muted py-3">暂无数据</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script th:inline="javascript">
+        var trend = /*[[${trend}]]*/ [];
+        var ctx2d = document.getElementById('toolTrendChart').getContext('2d');
+        var labels = trend.map(function (d) { return String(d.date).substring(0, 10); });
+        var calls = trend.map(function (d) { return d.calls; });
+        var tools = trend.map(function (d) { return d.tools; });
+
+        new Chart(ctx2d, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: '工具调用次数',
+                        data: calls,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102,126,234,0.12)',
+                        fill: true,
+                        tension: 0.3,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: '活跃工具数',
+                        data: tools,
+                        borderColor: '#e94560',
+                        backgroundColor: 'rgba(233,69,96,0.10)',
+                        fill: false,
+                        tension: 0.3,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { position: 'top' } },
+                scales: {
+                    y: { beginAtZero: true, position: 'left', title: { display: true, text: '调用次数' } },
+                    y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '活跃工具数' } }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
