@@ -525,21 +525,29 @@ public class ExpHubTools {
             // E5：全局搜索时若查询词里含项目名/别名，自动 OR 召回该项目的专属经验。
             // 背景：项目经验默认隔离不进全局索引，导致搜「拆解宝」前 10 条全是「回金算」的内容，
             // 而拆解宝自己 24 条经验一条都召回不到 —— 数据在库里，只是没进索引。
-            // 修法：识别到项目就补一次项目域搜索并合并，而不是让调用方再调一轮。
+            //
+            // ⚠️ 2026-10-24 忆阁复测：第一版把项目结果 append 到末尾，等于「召回了但排在后面」，
+            // 实际使用时仍要手填 projectName。这次改为**项目域结果前置并分组显示**：
+            // 查询词里明确写了项目名，说明用户就是在找该项目的东西，它就应该是第一等公民。
             Project autoProject = null;
+            java.util.List<Doc> projDocsHit = java.util.List.of();
             if (projectId == null) {
                 autoProject = detectProjectInQuery(query);
                 if (autoProject != null) {
                     try {
                         var projResult = docService.search(query, templateType, statusFilter, autoProject.getId(), 1, 10);
-                        var projDocs = projResult.getRecords();
-                        if (!projDocs.isEmpty()) {
-                            Set<Long> seen = new LinkedHashSet<>();
-                            for (Doc d : docs) seen.add(d.getId());
-                            docs = new ArrayList<>(docs);
-                            for (Doc d : projDocs) {
-                                if (seen.add(d.getId())) docs.add(d);
+                        Set<Long> projIds = new LinkedHashSet<>();
+                        for (Doc d : projResult.getRecords()) projIds.add(d.getId());
+                        if (!projIds.isEmpty()) {
+                            // 项目域命中的排前面，全局里与项目重复的去掉
+                            projDocsHit = new ArrayList<>(projResult.getRecords());
+                            java.util.List<Doc> rest = new ArrayList<>();
+                            for (Doc d : docs) {
+                                if (!projIds.contains(d.getId())) rest.add(d);
                             }
+                            java.util.List<Doc> merged = new ArrayList<>(projDocsHit);
+                            merged.addAll(rest);
+                            docs = merged;
                         }
                     } catch (Exception e) {
                         log.debug("searchExperience: 项目域补充召回失败 project={}, {}", autoProject.getName(), e.getMessage());
@@ -585,11 +593,22 @@ public class ExpHubTools {
 
             StringBuilder sb = new StringBuilder();
             sb.append(filterInfo).append("找到 ").append(docs.size()).append(" 条相关经验：\n\n");
-            sb.append(renderDocs(docs));
+            if (projDocsHit.isEmpty()) {
+                sb.append(renderDocs(docs));
+            } else {
+                // 分组显示：项目内命中在前、全局相关在后，AI 一眼能看出哪些属于该项目
+                sb.append("【项目「").append(detected.getName()).append("」内命中 ")
+                  .append(projDocsHit.size()).append(" 条】\n\n");
+                sb.append(renderDocs(projDocsHit));
+                int restCnt = docs.size() - projDocsHit.size();
+                if (restCnt > 0) {
+                    sb.append("\n【全局相关 ").append(restCnt).append(" 条】\n\n");
+                    sb.append(renderDocs(docs.subList(projDocsHit.size(), docs.size())));
+                }
+            }
             if (detected != null) {
-                // E5：已自动合并该项目经验，这里只做说明，不再让调用方多跑一轮
                 sb.append("---\n💡 查询词含项目「").append(detected.getName()).append("」（")
-                  .append(detected.getProjectCode()).append("），已自动合并全局与该项目的经验。")
+                  .append(detected.getProjectCode()).append("），项目内结果已优先展示。")
                   .append("只想看项目内资料时传 projectName=").append(detected.getProjectCode()).append("。\n");
             }
             return sb.toString();
