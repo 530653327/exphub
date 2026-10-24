@@ -54,4 +54,21 @@ class ChapterHeaderStripTest {
         assertEquals("", ExpHubTools.stripChapterHeader(null));
         assertEquals("", ExpHubTools.stripChapterHeader(""));
     }
+
+    @Test
+    void stripsBareH1AndChineseColonVersion() {
+        // 2026-10-24 22:30 忆阁复测发现的漏网形态：裸 H1 + 中文冒号版本行
+        String dirty = "# 产品定位与核心决策\n\n> 版本：v6（2026-10-24 从“单用户只读”扩展为“多用户读写 + 图片”）\n\n## 定位\n- 忆阁是记忆入口";
+        String clean = ExpHubTools.stripChapterHeader(dirty);
+        assertFalse(clean.contains("产品定位与核心决策"), "裸 H1 应剥掉");
+        assertFalse(clean.contains("版本：v6"), "中文冒号版本行应剥掉");
+        assertTrue(clean.startsWith("## 定位"), "正文必须保留");
+    }
+
+    @Test
+    void keepsContentQuoteBlockAtStart() {
+        // 正文以普通引用块开头（不含版本/加载策略字样）应保留
+        String clean = "> 这是一段普通引用\n\n正文。";
+        assertEquals(clean, ExpHubTools.stripChapterHeader(clean));
+    }
 }

@@ -1111,10 +1111,42 @@ public class ExpHubTools {
     }
 
     /**
-     * 剥掉章节 content 开头手写的「# 第 N 章 · 标题」与「> 加载策略: …」行。
+     * 从正文首段自动提取一句目录描述（约 30 字）。
      *
-     * 与 MAIN 的 stripSelfGeneratedParts 同一原则（单一数据源），但只处理**开头**：
-     * 章节正文里可能正常引用「第 3 章」，不能全文删，只跳过开头连续的标题/策略行。
+     * 用途：写章节时没传 summary 就自动补，避免目录里出现
+     * 「项目 AGENTS.md 第 N 章」这种占位废话（E10 的治本面）。
+     */
+    static String autoSummaryFromContent(String content) {
+        if (content == null) {
+            return "";
+        }
+        for (String line : content.split("\n", -1)) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#") || t.startsWith(">") || t.startsWith("---")) {
+                continue;
+            }
+            // 去掉 markdown 强调/列表/链接符号，避免提取出 "* **重点**："
+            String clean = t.replaceAll("[*`>\\[\\]()|]", "").replaceAll("^[-+]\\s+", "").trim();
+            if (clean.isEmpty()) {
+                continue;
+            }
+            return clean.length() > 30 ? clean.substring(0, 30) : clean;
+        }
+        return "";
+    }
+
+    /**
+     * 剥掉章节 content 开头手写的标题行与元信息行。
+     *
+     * 与 MAIN 的 stripSelfGeneratedParts 同一原则（单一数据源：标题、版本、加载策略
+     * 都由读取端生成），但只处理**开头**——章节正文里可能正常引用「第 3 章」，
+     * 不能全文删，只跳过开头连续的手写头部。
+     *
+     * ⚠️ 2026-10-24 22:30 忆阁复测发现的漏网形态（上一版只认「# 第 N 章」+ 半角冒号）：
+     *   # 产品定位与核心决策        ← 裸 H1，不带章节号
+     *   > 版本：v6（2026-10-24 …）   ← 中文冒号「：」，且带括号说明
+     * 所以规则改为「泛化」：开头连续的**一级标题**（# 任意文字）和**元信息行**
+     * （> 开头且含 版本/加载策略）一律剥掉，直到遇到 ## 及以下或普通段落。
      */
     static String stripChapterHeader(String content) {
         if (content == null || content.isEmpty()) {
@@ -1128,7 +1160,13 @@ public class ExpHubTools {
                 start++;
                 continue;
             }
-            if (t.matches("^#{1,6}\\s*第\\s*\\d+\\s*章.*$") || t.matches("^>\\s*加载策略:.*$")) {
+            // 一级标题（# xxx，任意文字）——章节标题由读取端生成，content 里不该有
+            if (t.matches("^#\\s+\\S.*$")) {
+                start++;
+                continue;
+            }
+            // 元信息行：> 版本: / > 加载策略: / > 版本：v6（…）——含中文冒号
+            if (t.startsWith(">") && (t.contains("版本") || t.contains("加载策略"))) {
                 start++;
                 continue;
             }
@@ -1213,10 +1251,28 @@ public class ExpHubTools {
             if (loadStrategy != null && !"ALWAYS".equalsIgnoreCase(loadStrategy) && !"ON_DEMAND".equalsIgnoreCase(loadStrategy)) {
                 return "❌ loadStrategy 只能是 ALWAYS 或 ON_DEMAND。";
             }
-            Doc saved = projectService.updateAgentsChapter(projectId, chapterNo, chapterTitle, content, loadStrategy, sortOrder, summary);
+            // E10 治本：summary 缺失或是占位值时，自动从正文首段提取一句。
+            // 否则新建章节永远带着「项目 AGENTS.md 第 N 章」这种废话进目录
+            // （实测 62/82 个章节中招），读取端只能过滤，目录就退化成只剩标题。
+            // 更新时若原 summary 是真实描述，保留原值——调用方没说就不覆盖。
+            String effSummary = summary;
+            if (content != null && !content.trim().isEmpty()
+                    && (summary == null || summary.trim().isEmpty() || isPlaceholderSummary(summary))) {
+                Doc existingCh = projectService.getAgentsChapter(projectId, chapterNo);
+                boolean keepExisting = existingCh != null
+                        && existingCh.getSummary() != null
+                        && !isPlaceholderSummary(existingCh.getSummary());
+                if (!keepExisting) {
+                    effSummary = autoSummaryFromContent(content);
+                }
+            }
+            Doc saved = projectService.updateAgentsChapter(projectId, chapterNo, chapterTitle, content, loadStrategy, sortOrder, effSummary);
+            String summaryNote = (effSummary != null && !effSummary.equals(summary))
+                    ? "\n**目录描述**: " + effSummary + "（由正文自动提取，如需自定义请显式传 summary）"
+                    : "\n**目录描述**: " + saved.getSummary();
             return "✅ 章节已更新！\n\n**项目**: " + proj.getName() + "\n**章节**: 第 " + chapterNo + " 章 · " + chapterTitle
                  + "\n**版本**: v" + saved.getVersion() + " | 加载策略: " + saved.getLoadStrategy()
-                 + "\n**目录描述**: " + saved.getSummary();
+                 + summaryNote;
         } catch (Exception e) {
             log.error("ExpHubTools.updateProjectAgentsChapter: FAILED", e);
             return "更新失败: " + e.getMessage();
