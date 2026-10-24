@@ -23,24 +23,24 @@ if [ -f /etc/exphub/.env ]; then
     set -a
     source /etc/exphub/.env
     set +a
-    echo "[0/4] 已加载环境变量 /etc/exphub/.env"
+    echo "[0/5] 已加载环境变量 /etc/exphub/.env"
 else
     echo "⚠️  警告: 未找到 /etc/exphub/.env，将使用 application.yml 中的默认值"
 fi
 
 # 1. 拉取最新代码
-echo "[1/4] 拉取最新代码..."
+echo "[1/5] 拉取最新代码..."
 git fetch --all
 git reset --hard origin/master
 
 # 2. 编译打包
-echo "[2/4] 编译打包..."
+echo "[2/5] 编译打包..."
 export JAVA_HOME=/usr/local/java17
 export PATH=$JAVA_HOME/bin:$PATH
 mvn clean package -DskipTests -q
 
 # 3. 重启应用
-echo "[3/4] 重启应用..."
+echo "[3/5] 重启应用..."
 # 杀掉所有旧实例：应用为双端口（3098 MCP SSE + 3099 Web），同一 JVM 占用
 # 按 jar 名 pkill 最稳妥，避免漏杀只监听 3098 的旧进程
 pkill -f 'exphub-1.0.0.jar' 2>/dev/null || true
@@ -54,4 +54,44 @@ done
 sleep 2
 nohup $JAVA_HOME/bin/java -jar target/exphub-1.0.0.jar > app.log 2>&1 &
 
-echo "[4/4] 部署完成 → https://cloudim.club/exphub"
+# 4. 启动自检（2026-10-24 新增）
+# 此前部署完就宣告成功，应用起不来也无人知晓。这里轮询 /health：
+#   - 最多等 90 秒（Spring Boot + 连接池初始化约 6-10 秒）
+#   - /health 返回 200 才算成功；503 表示 DB 不可用
+echo "[4/5] 启动自检..."
+HEALTH_URL="http://127.0.0.1:3099/exphub/health"
+OK=0
+for i in $(seq 1 30); do
+    sleep 3
+    CODE=$(curl -s --noproxy '*' -o /tmp/exphub_health.json -m 5 -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+    if [ "$CODE" = "200" ]; then
+        OK=1
+        break
+    fi
+    # 进程已死就不用等了，直接报错
+    if ! pgrep -f 'exphub-1.0.0.jar' > /dev/null 2>&1; then
+        echo "❌ 应用进程已退出，部署失败"
+        break
+    fi
+done
+
+if [ "$OK" = "1" ]; then
+    echo "✅ 健康检查通过: $(cat /tmp/exphub_health.json 2>/dev/null)"
+    # MCP 端口探测（不校验业务，只看能否建连）
+    MCP_CODE=$(curl -s --noproxy '*' -o /dev/null -m 5 -w "%{http_code}" http://127.0.0.1:3098/mcp/sse 2>/dev/null || echo "000")
+    if [ "$MCP_CODE" = "200" ] || [ "$MCP_CODE" = "401" ]; then
+        echo "✅ MCP(3098) 可建连 (http=$MCP_CODE)"
+    else
+        echo "⚠️  MCP(3098) 异常 (http=$MCP_CODE)，请检查 app.log"
+    fi
+    echo "[5/5] 部署完成 → https://cloudim.club/exphub"
+else
+    echo "=========================================="
+    echo "❌ 部署失败：健康检查未通过（最后 http=$CODE）"
+    echo "--- /health 响应 ---"; cat /tmp/exphub_health.json 2>/dev/null
+    echo ""
+    echo "--- app.log 末尾 30 行 ---"; tail -30 app.log
+    rm -f /tmp/exphub_health.json
+    exit 1
+fi
+rm -f /tmp/exphub_health.json

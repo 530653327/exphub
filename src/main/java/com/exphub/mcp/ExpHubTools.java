@@ -709,7 +709,7 @@ public class ExpHubTools {
     /**
      * 创建新经验
      */
-    @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template() 选择模板！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
+    @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template() 选择模板！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。可选 projectId：把经验直接写进项目空间（不传则写全局）；项目经验默认隔离、不出现在全局搜索中，属于该项目的内容应传 projectId。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
     public String createExperience(
             @ToolParam(description = "经验标题，简短明确") String title,
             @ToolParam(description = "经验正文，使用Markdown格式，按 get_template 返回的结构填写。🔒 严禁包含账号密码、API密钥、Token、数据库连接串等敏感信息") String content,
@@ -718,7 +718,8 @@ public class ExpHubTools {
             @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理，如不确定可填 待分类") String tags,
             @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy，如不确定可填 无") String aliases,
             @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关") String summary,
-            @ToolParam(description = "作者名称。填写你自己的名字/标识，用于区分不同AI助手创建的经验。如：CodeBuddy、Claude、GPT-4等。") String authorName) {
+            @ToolParam(description = "作者名称。填写你自己的名字/标识，用于区分不同AI助手创建的经验。如：CodeBuddy、Claude、GPT-4等。") String authorName,
+            @ToolParam(description = "可选。归属项目ID：把这条经验直接写进项目空间。不传=写全局。只能填你名下的项目（用 list_projects 查）", required = false) Long projectId) {
         
         try {
             log.info("ExpHubTools.createExperience: ENTRY - title={}, tags={}", title, tags);
@@ -741,6 +742,15 @@ public class ExpHubTools {
             doc.setTags(tags != null ? tags : "");
             doc.setAliases(aliases != null ? aliases : "");
             doc.setSummary(summary != null ? summary : "");
+
+            // 项目归属（E7）：允许直接把经验写进项目空间，避免重要文档只能落全局无法归位
+            if (projectId != null && projectId > 0) {
+                Project target = projectService.getProject(projectId);
+                if (target == null) {
+                    return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你的项目。";
+                }
+                doc.setProjectId(projectId);
+            }
             // AI 助手自报名称，区分不同助手创建的经验
             if (authorName != null && !authorName.trim().isEmpty()) {
                 doc.setAuthorName(authorName.trim());
@@ -757,7 +767,12 @@ public class ExpHubTools {
             if (tags != null && !tags.isEmpty()) {
                 result.append("**标签**: ").append(tags).append("\n");
             }
-            result.append("\n经验已保存，其他AI助手可以通过搜索找到这条经验。");
+            if (created.getProjectId() != null) {
+                result.append("**归属项目**: ").append(created.getProjectId()).append("（项目内经验，不出现在全局搜索）\n");
+                result.append("\n经验已保存到项目空间，同项目的 AI 助手可搜索到。");
+            } else {
+                result.append("\n经验已保存，其他AI助手可以通过搜索找到这条经验。");
+            }
             return result.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.createExperience: FAILED", e);
@@ -780,7 +795,8 @@ public class ExpHubTools {
             @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary,
             @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds,
             @ToolParam(description = "修改作者名称。如果你是更新者且想标注自己的名字，传你的AI助手名称。不需要修改时传空字符串即可。") String authorName,
-            @ToolParam(description = "强制覆盖开关。设为true可跳过截断检测，允许用较短的内容覆盖长文档（当确认丢失不用的部分时使用）。默认false。") Boolean force) {
+            @ToolParam(description = "强制覆盖开关。设为true可跳过截断检测，允许用较短的内容覆盖长文档（当确认丢失不用的部分时使用）。默认false。") Boolean force,
+            @ToolParam(description = "可选。改归属项目ID：把这条经验移进项目空间（用于把误落全局的文档归位）。不传=不改归属。只能填你名下的项目", required = false) Long projectId) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -839,7 +855,16 @@ public class ExpHubTools {
             if (summary != null && !summary.isEmpty()) updateDoc.setSummary(summary);
             if (relatedIds != null && !relatedIds.isEmpty()) updateDoc.setRelatedIds(relatedIds);
             if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
-            
+
+            // 改归属项目（E7）：把误落全局的文档归位到项目空间；不传则不动归属
+            if (projectId != null && projectId > 0) {
+                Project target = projectService.getProject(projectId);
+                if (target == null) {
+                    return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你的项目。";
+                }
+                updateDoc.setProjectId(projectId);
+            }
+
             docService.update(id, updateDoc);
             
             return "✅ 经验更新成功！\n\n**ID**: " + id + "\n**新版本**: v" + (existing.getVersion() + 1) + "\n\n经验已更新，其他AI助手可以看到最新内容。";
