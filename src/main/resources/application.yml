@@ -67,8 +67,16 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
+# 日志级别（2026-10-24 收敛）
+# ⚠️ 不要把 com.exphub.mapper 开到 DEBUG：MyBatis 会把 SQL 参数全量打进日志，
+#    其中包含 ai_assistants.api_key 的完整值（实测 6 分钟内出现 169 次）。
+#    日志一旦外发排障 = 泄露 Key，拿到即可读写全部经验。
+# ⚠️ io.modelcontextprotocol 开 DEBUG 会打印完整 JSON-RPC 请求体（含经验正文），
+#    同时日志量约 130MB/天。需要排障时用环境变量临时开，不要写死在配置里。
 logging:
   level:
-    org.springframework.security: DEBUG
-    com.exphub: DEBUG
-    io.modelcontextprotocol: DEBUG
+    root: INFO
+    com.exphub: ${EXPHUB_LOG_LEVEL:INFO}
+    com.exphub.mapper: ${EXPHUB_LOG_MAPPER:INFO}
+    io.modelcontextprotocol: ${EXPHUB_LOG_MCP:WARN}
+    org.springframework.security: WARN
