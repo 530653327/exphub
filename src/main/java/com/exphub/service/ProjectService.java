@@ -8,6 +8,7 @@ import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.mapper.AiAssistantMapper;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.ProjectMapper;
+import com.exphub.util.RenderArtifactStripper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +36,23 @@ public class ProjectService {
 
     @Autowired
     private AiAssistantMapper assistantMapper;
+
+    /**
+     * E13：统一剥离渲染痕迹（历史导读 / 关联经验段 / 文档结尾标记 / 终端残留）。
+     *
+     * <p>剥离规则与 MCP 工具层共用 {@link RenderArtifactStripper}，避免两套实现漂移。
+     * null / 空串原样返回——空内容可能是合法的「清空」意图，不能在这里悄悄改判。</p>
+     */
+    private static String sanitize(String content) {
+        if (content == null || content.isEmpty()) {
+            return content;
+        }
+        String cleaned = RenderArtifactStripper.strip(content);
+        if (!cleaned.equals(content)) {
+            log.info("ProjectService.sanitize: 剥离渲染痕迹 {} → {} 字", content.length(), cleaned.length());
+        }
+        return cleaned;
+    }
 
     private String currentKey() {
         AiAssistant a = ApiKeyInterceptor.getCurrentAssistant();
@@ -189,6 +207,9 @@ public class ProjectService {
      */
     public Doc updateAgentsChapter(Long projectId, String chapterNo, String chapterTitle,
                                    String content, String loadStrategy, Integer sortOrder, String summary) {
+        // E13：写入端剥离渲染痕迹。原先只有 ExpHubTools 的经验增删改/导入调用了剥离，
+        // service 层的项目路径（章节 / MAIN / 进度）是漏网的，实测已踩脏 4 篇（252/293/515/585）
+        content = sanitize(content);
         Doc exist = getAgentsChapter(projectId, chapterNo);
         if (exist != null) {
             Doc patch = new Doc();
@@ -224,6 +245,7 @@ public class ProjectService {
      * 更新（或创建）MAIN 索引
      */
     public Doc updateAgentsMain(Long projectId, String content) {
+        content = sanitize(content);   // E13：MAIN 与章节同属 AI 写入路径，同样要剥
         Doc exist = getAgentsMain(projectId);
         if (exist != null) {
             Doc patch = new Doc();
@@ -272,6 +294,7 @@ public class ProjectService {
      * 追加一条进度 / 交接记录
      */
     public Doc appendProgress(Long projectId, String content, String title) {
+        content = sanitize(content);   // E13：进度记录最常被「整段复制渲染视图」污染
         Doc doc = new Doc();
         doc.setProjectId(projectId);
         doc.setDocRole("NORMAL");
