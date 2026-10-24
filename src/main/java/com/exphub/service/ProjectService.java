@@ -49,7 +49,9 @@ public class ProjectService {
         }
         String cleaned = RenderArtifactStripper.strip(content);
         if (!cleaned.equals(content)) {
-            log.info("ProjectService.sanitize: 剥离渲染痕迹 {} → {} 字", content.length(), cleaned.length());
+            // 用英文：服务器 nohup/systemd 下 LANG 未设置，中文日志会被写成 '?'，排查时看不到
+            log.info("ProjectService.sanitize: stripped render artifacts {} -> {} chars",
+                    content.length(), cleaned.length());
         }
         return cleaned;
     }
