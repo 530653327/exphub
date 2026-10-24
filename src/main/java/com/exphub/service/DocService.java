@@ -128,13 +128,17 @@ public class DocService {
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
         List<String> statusList = parseStatusList(includeStatus);
 
-        if (keyword == null || keyword.trim().isEmpty()) {
-            return searchWithLike(keyword, templateType, includeStatus, projectId, page, size);
+        // 无实质内容的查询词（null、空白、纯标点、纯停用词）直接返回空，不再走全库兜底。
+        // 旧逻辑：空词 → searchWithLike → concepts 为空 → 不加关键词条件全库分页返回，
+        // 线上实测空 query 曾一次返回 198 条无关经验，误导 AI 判断「库里什么都有」。
+        SearchTerms terms = buildSearchTerms(keyword);
+        if (terms.concepts.isEmpty()) {
+            log.info("search rejected: 查询词无实质内容 kw='{}' projectId={}", keyword, projectId);
+            return emptyPage(page, size);
         }
 
         String kw = keyword.trim();
         String cleanKeyword = toCleanKeyword(kw);
-        SearchTerms terms = buildSearchTerms(kw);
 
         // ===== 第 1 级：严格 AND（精确优先，但只在“整词覆盖”时直接采用）=====
         // 若严格命中只是靠 2-gram 泛词凑出来的（如「数据 结构」凑中「数据模型 表结构」），
@@ -284,12 +288,9 @@ public class DocService {
 
         SearchTerms terms = buildSearchTerms(keyword);
         if (terms.concepts.isEmpty()) {
-            long total = docMapper.selectCount(wrapper);
-            wrapper.orderByDesc("updated_at");
-            Page<Doc> result = docMapper.selectPage(new Page<>(page, size), wrapper);
-            result.setTotal(total);
-            callLogService.logSearch(keyword, (int) total, result.getRecords());
-            return result;
+            // 查询词无实质内容（空白/纯标点/纯停用词）：返回空，不做全库兜底。
+            // 与 search() 主入口口径一致，防止第 3 级 LIKE 兜底把空 query 放大成全库列表
+            return emptyPage(page, size);
         }
 
         // LIKE 兜底同样放宽为“任一关键词命中”，再按覆盖率排序
@@ -364,6 +365,15 @@ public class DocService {
             "是否", "可以", "需要", "一下", "我们", "你们", "他们", "这个", "那个",
             "请问", "帮我", "看看", "相关", "关于", "现在", "进行");
 
+    /**
+     * 查询词是否含有实质内容（非空、非纯空白/标点、非纯停用词）。
+     * 与 search() 内部判定口径一致；供 MCP 工具层在搜索前快速拒绝无效查询，
+     * 避免空 query 走「全库兜底」返回一堆无关经验、误导 AI 判断。
+     */
+    public static boolean hasMeaningfulQuery(String keyword) {
+        return !buildSearchTerms(keyword).concepts.isEmpty();
+    }
+
     /** 一次检索的两种视图：concepts 用于评分/LIKE，expanded 用于全文召回 */
     private static class SearchTerms {
         /** 原始概念（用户输入的关键词，去停用词后） */
@@ -395,7 +405,7 @@ public class DocService {
      * - expanded：全文召回用。中文按 2-gram 展开（ngram_token_size=2），
      *   英文/数字按非字母数字切分后取长度>=2 的片段；单字中文不进全文索引，只保留在 concepts 里
      */
-    private SearchTerms buildSearchTerms(String keyword) {
+    private static SearchTerms buildSearchTerms(String keyword) {
         SearchTerms terms = new SearchTerms();
         if (keyword == null) return terms;
 
@@ -403,6 +413,9 @@ public class DocService {
         for (String raw : cleaned.split("[\\s,，、;；]+")) {
             String token = raw.trim();
             if (token.isEmpty()) continue;
+            // 纯标点/符号（如「。。。」「___」「---」）不含任何文字，无实质内容：
+            // 放行后会进 FULLTEXT，被 MySQL ngram 当 token 匹配大量含标点的文档，返回一堆无关结果
+            if (!containsTextChar(token)) continue;
             if (STOPWORDS.contains(token.toLowerCase())) continue;
             if (!terms.concepts.contains(token)) {
                 terms.concepts.add(token);
@@ -423,8 +436,19 @@ public class DocService {
         return terms;
     }
 
-    private void addExpandedTerms(List<String> out, String token) {
-        String chinese = extractChinese(token);
+    /** token 是否含有至少一个文字字符（中文/英文字母/数字），纯标点符号视为无实质内容 */
+    private static boolean containsTextChar(String token) {
+        for (int i = 0; i < token.length(); i++) {
+            char c = token.charAt(i);
+            if ((c >= '\u4e00' && c <= '\u9fa5') || (c >= 'A' && c <= 'Z')
+                    || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void addExpandedTerms(List<String> out, String token) {        String chinese = extractChinese(token);
         String nonChinese = token.replaceAll("[\\u4e00-\\u9fa5]", " ").trim();
 
         if (!nonChinese.isEmpty()) {
@@ -588,7 +612,7 @@ public class DocService {
     /**
      * 提取字符串中的中文字符
      */
-    private String extractChinese(String str) {
+    private static String extractChinese(String str) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < str.length(); i++) {
             char c = str.charAt(i);

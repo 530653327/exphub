@@ -366,6 +366,17 @@ public class ExpHubTools {
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanSearch())) {
                 return "❌ 权限不足：该API Key没有查询经验的权限";
             }
+
+            // 查询词无实质内容（空白 / 纯标点 / 纯停用词）时直接拒绝：
+            // 空 query 走搜索会命中全库兜底、返回一两百条无关经验，误导 AI 判断
+            if (!DocService.hasMeaningfulQuery(query)) {
+                return "❌ 查询词无实质内容（空白、纯标点或全是停用词），已拒绝搜索。\n\n"
+                        + "请用完整的场景描述（2-3 个核心词）调用，例如：\n"
+                        + "- 「Nginx 反向代理 HTTPS 配置」\n"
+                        + "- 「MySQL 慢查询 性能优化」\n"
+                        + "- 「Docker 部署 Spring Boot」\n\n"
+                        + "如果想枚举最近的经验，请用 list_recent_memories，不要传空 query 给 search_experience。";
+            }
             
             // 解析项目范围（支持项目名称 / 别名 / 编码）
             Long projectId = null;
