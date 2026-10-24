@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
+    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - 经验阁 ExpHub</title>
@@ -62,6 +66,7 @@
         .alert-danger { background: rgba(233,69,96,0.2); border: 1px solid rgba(233,69,96,0.3); color: #ff8fa3; border-radius: 10px; }
         .alert-success { background: rgba(40,167,69,0.2); border: 1px solid rgba(40,167,69,0.3); color: #90EE90; border-radius: 10px; }
     </style>
+    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div class="login-card">

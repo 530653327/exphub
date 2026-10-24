@@ -34,8 +34,17 @@ public class SecurityConfig {
                 .requestMatchers("/mcp/**", "/api/**").permitAll()
                 .requestMatchers("/share/**").permitAll()
                 .requestMatchers("/portal/**").permitAll()
+                .requestMatchers("/health").permitAll()
                 .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()
+            )
+            // CSRF 保护（2026-10-24 启用）
+            // 豁免说明：
+            //  - /mcp/**：MCP 客户端用 authorization-key 请求头鉴权，不带 cookie，无法被 CSRF 利用
+            //  - /portal/api/**：门户用 portal token 鉴权，同样不依赖 session cookie
+            // 其余后台表单与 /api/** 写操作一律校验 token；页面通过 static/js/csrf.js 全局注入
+            .csrf(csrf -> csrf
+                .ignoringRequestMatchers("/mcp/**", "/mcp", "/portal/api/**")
             )
             .formLogin(form -> form
                 .loginPage("/login")
@@ -49,7 +58,6 @@ public class SecurityConfig {
                 .logoutSuccessUrl("/login?logout")
                 .permitAll()
             )
-            .csrf(csrf -> csrf.disable())
             .httpBasic(basic -> basic.disable());
         return http.build();
     }

@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
+    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>创建成功 - 经验阁 ExpHub</title>
@@ -23,6 +27,7 @@
         .success-icon { font-size: 4rem; color: #28a745; }
         .warning-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; }
     </style>
+    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div class="sidebar">

@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
+    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>模板管理 - 经验阁 ExpHub</title>
@@ -24,6 +28,7 @@
         .modal-lg { max-width: 800px; }
         .preview-box { background: #f8f9fa; border-radius: 8px; padding: 15px; font-size: 0.85rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
     </style>
+    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div class="sidebar">
