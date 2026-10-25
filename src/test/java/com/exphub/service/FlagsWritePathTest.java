@@ -4,6 +4,7 @@ import com.exphub.entity.Doc;
 import com.exphub.entity.DocVersion;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.DocVersionMapper;
+import com.exphub.mapper.ReviewCandidateMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -36,6 +37,9 @@ class FlagsWritePathTest {
 
     @Mock
     private CallLogService callLogService;
+
+    @Mock
+    private ReviewCandidateMapper reviewCandidateMapper;
 
     @InjectMocks
     private DocService docService;
@@ -79,5 +83,7 @@ class FlagsWritePathTest {
         // M10 上线后「后台点删除」是正规路径，不级联就是永久孤儿：不可见、不可清、全文还在
         verify(versionMapper).delete(any());
         verify(callLogService).logDelete(3L, "测试文档");
+        // D1：待判断候选也要跟着清，否则队列里永久挂着指向已删文档的候选
+        verify(reviewCandidateMapper).delete(any());
     }
 }

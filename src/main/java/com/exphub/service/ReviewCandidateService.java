@@ -70,10 +70,23 @@ public class ReviewCandidateService {
                 .eq("doc_a", a).eq("doc_b", b).last("LIMIT 1"));
         if (exist != null) {
             if (ReviewCandidate.PENDING.equals(exist.getStatus())) {
-                exist.setScore(score);
-                exist.setReasons(reasons);
+                // 只在有值时刷新：线上验证时发现，后一次传来的弱理由会把前一次的强理由覆盖掉
+                // （第一次写「标签交集:3；正文高度重合」，第二次随手写「又算到了」，人看到的就只剩后者）
+                if (score != null) {
+                    exist.setScore(score);
+                }
+                // 理由「先到先得」：只在为空时补写，不覆盖已有内容。
+                // 为什么不是「有值就刷新」：线上验证时亲眼看到，L2 重算时随手写的一句
+                // 「又算到了」把前一天详细写的「标签交集:3；正文高度重合」冲掉了。
+                // 理由的价值在于可解释，被弱理由覆盖等于让下一个人重新判断一遍。
+                boolean reasonKept = exist.getReasons() != null && !exist.getReasons().isBlank();
+                if (!reasonKept && reasons != null && !reasons.trim().isEmpty()) {
+                    exist.setReasons(truncate(reasons, 500));
+                }
+                // source 刻意不改：它记录「这条候选最初是谁发现的」，刷新一次就变等于丢失来源
                 candidateMapper.updateById(exist);
-                return new EnqueueResult(false, exist, "该候选对已在队列中（#id=" + exist.getId() + "），已刷新得分与理由");
+                return new EnqueueResult(false, exist, "该候选对已在队列中（#id=" + exist.getId() + "），已刷新得分"
+                        + (reasonKept ? "；原有理由保留未覆盖" : "与理由"));
             }
             return new EnqueueResult(false, exist,
                     "该候选对已处理过（状态 " + exist.getStatus() + "），不重复入队 —— "

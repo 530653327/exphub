@@ -47,6 +47,9 @@ public class DocService {
     private ProjectMapper projectMapper;
 
     @Autowired
+    private com.exphub.mapper.ReviewCandidateMapper reviewCandidateMapper;
+
+    @Autowired
     private CallLogService callLogService;
 
     @Transactional
@@ -931,6 +934,22 @@ public class DocService {
     public void delete(Long id) {        Doc doc = docMapper.selectById(id);
         String title = doc != null ? doc.getTitle() : "未知";
         docMapper.deleteById(id);
+
+        // D1：一并清掉这条相关的「待判断」候选。
+        // 不清的话队列里会永久挂着指向已删文档的候选（界面显示「该条已不存在」），
+        // 既判不了也删不掉，人只能一直跳过 —— 队列一旦掺垃圾就没人看了。
+        // 只清 PENDING：已判成 DUPLICATE / SUPERSEDED 的记录是判断历史，保留。
+        if (reviewCandidateMapper != null) {
+            try {
+                reviewCandidateMapper.delete(
+                        new QueryWrapper<com.exphub.entity.ReviewCandidate>()
+                                .eq("status", com.exphub.entity.ReviewCandidate.PENDING)
+                                .and(w -> w.eq("doc_a", id).or().eq("doc_b", id)));
+            } catch (Exception e) {
+                // 清理候选属附带动作，不能让它把删除主流程带崩（副作用不得拖垮主业务）
+                log.warn("delete: 清理待判断候选失败 doc={} err={}", id, e.getMessage());
+            }
+        }
 
         // 版本表必须跟着删。历史快照存的是正文全文，只删主表的话：
         // 1) 界面任何地方都看不到这些快照（get_experience_history 按 doc_id 查，doc 已不存在）；

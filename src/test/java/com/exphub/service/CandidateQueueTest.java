@@ -128,6 +128,59 @@ class CandidateQueueTest {
     }
 
     @Test
+    void enqueueRefreshDoesNotDowngradeReasons() {
+        ReviewCandidate exist = new ReviewCandidate();
+        exist.setId(13L);
+        exist.setDocA(5L);
+        exist.setDocB(9L);
+        exist.setStatus(ReviewCandidate.PENDING);
+        exist.setSource("MANUAL");
+        exist.setReasons("标签交集:3；正文高度重合");
+        when(docMapper.selectById(anyLong())).thenReturn(doc(5L, null));
+        when(candidateMapper.selectOne(any())).thenReturn(exist);
+
+        // 第二次传来的是随手写的理由、且没传得分
+        var r = service.enqueue(5L, 9L, null, "又算到了", "L2_WEEKLY");
+
+        assertEquals("标签交集:3；正文高度重合", r.candidate().getReasons(),
+                "理由先到先得，不能被后来的弱理由覆盖");
+        assertEquals("MANUAL", r.candidate().getSource(), "来源记录最初是谁发现的，不该被刷新覆盖");
+    }
+
+    @Test
+    void enqueueFillsReasonsWhenEmpty() {
+        ReviewCandidate exist = new ReviewCandidate();
+        exist.setId(15L);
+        exist.setDocA(5L);
+        exist.setDocB(9L);
+        exist.setStatus(ReviewCandidate.PENDING);
+        exist.setReasons(null);
+        when(docMapper.selectById(anyLong())).thenReturn(doc(5L, null));
+        when(candidateMapper.selectOne(any())).thenReturn(exist);
+
+        var r = service.enqueue(5L, 9L, new BigDecimal("0.8"), "首次补写理由", "L2_WEEKLY");
+
+        assertEquals("首次补写理由", r.candidate().getReasons(), "原为空时应补写");
+    }
+
+    @Test
+    void enqueueRefreshKeepsReasonsWhenBlank() {
+        ReviewCandidate exist = new ReviewCandidate();
+        exist.setId(14L);
+        exist.setDocA(5L);
+        exist.setDocB(9L);
+        exist.setStatus(ReviewCandidate.PENDING);
+        exist.setReasons("原有理由");
+        when(docMapper.selectById(anyLong())).thenReturn(doc(5L, null));
+        when(candidateMapper.selectOne(any())).thenReturn(exist);
+
+        var r = service.enqueue(5L, 9L, new BigDecimal("0.7"), "   ", "L2_WEEKLY");
+
+        assertEquals("原有理由", r.candidate().getReasons());
+        assertEquals(new BigDecimal("0.7"), r.candidate().getScore(), "得分有值就该刷新");
+    }
+
+    @Test
     void resolveDuplicateFlagsBothAndDeletesNothing() {
         ReviewCandidate c = new ReviewCandidate();
         c.setId(7L);
