@@ -707,7 +707,12 @@ public class DocService {
         if (old == null) {
             return null;
         }
-        saveVersionSnapshot(old);
+        // A3：只有正文真的变了才存全文快照。
+        // content 为 null（= 不传 = 不改）或与原值完全相同，都算「元数据变更」，
+        // 这类快照只记一条事件（change_type=META、content=NULL），不再重复存 4KB 正文。
+        String incomingContent = newDoc.getContent();
+        boolean contentChanged = incomingContent != null && !incomingContent.equals(old.getContent());
+        saveVersionSnapshot(old, contentChanged, null);
 
         newDoc.setId(id);
         newDoc.setVersion(old.getVersion() + 1);
@@ -749,25 +754,28 @@ public class DocService {
     }
 
     /**
-     * 写一条版本快照（旧版本全文）。
-     * 从 update 里抽出来，供 update / append / patch 三条写路径复用，避免三份拷贝走样。
-     */
-    private void saveVersionSnapshot(Doc old) {
-        saveVersionSnapshot(old, null);
-    }
-
-    /**
-     * 写版本快照，可覆盖署名。
+     * 写版本快照。从 update / append / patch 三条写路径复用，避免三份拷贝走样。
      *
+     * @param contentChanged 本次是否动了正文（A3）。
+     *        true  → 存旧版全文，change_type=CONTENT
+     *        false → 只记事件（change_type=META），content 存 NULL，不重复存全文
      * @param authorOverride 非空时用它作为 updated_name。
      *        为什么要这个：一个 API Key 只能绑一个 assistant_name，而同一个 Key 往往被多个
      *        助手共用（开发/对话/不同项目）。署名必须由调用方自报，否则谁的活都记在同一个人头上。
      */
-    private void saveVersionSnapshot(Doc old, String authorOverride) {
+    private void saveVersionSnapshot(Doc old, boolean contentChanged, String authorOverride) {
         DocVersion v = new DocVersion();
         v.setDocId(old.getId());
         v.setVersion(old.getVersion());
-        v.setContent(old.getContent());
+        if (contentChanged) {
+            v.setContent(old.getContent());
+            v.setChangeType("CONTENT");
+        } else {
+            // 正文没变就不存副本。NULL 是「本次没动正文」的显式标记，不是「数据丢了」；
+            // 读取端遇到 NULL 会明确告诉调用方「该版仅元数据变更，正文请参考更早版本」。
+            v.setContent(null);
+            v.setChangeType("META");
+        }
         v.setAliases(old.getAliases());
         v.setSummary(old.getSummary());
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
@@ -821,7 +829,7 @@ public class DocService {
         if (addition == null || addition.trim().isEmpty()) {
             return old;   // 空追加不写库：不递增版本、不产生快照
         }
-        saveVersionSnapshot(old, authorName);
+        saveVersionSnapshot(old, true, authorName);
         String merged = mergeAppend(old.getContent(), addition);
 
         Doc patch = new Doc();
@@ -850,7 +858,7 @@ public class DocService {
         if (old == null) {
             return null;
         }
-        saveVersionSnapshot(old, authorName);
+        saveVersionSnapshot(old, true, authorName);
         String base = old.getContent() == null ? "" : old.getContent();
         String merged = base.replace(find, replacement == null ? "" : replacement);
 
@@ -1247,17 +1255,62 @@ public class DocService {
      * 按模板类型查询（用于 check_my_todos 等场景）
      */
     public List<Doc> listByTemplateType(String templateType) {
+        return listByTemplateType(templateType, null, null);
+    }
+
+    /**
+     * 按模板类型列经验，支持项目与状态过滤（A7）。
+     *
+     * <p>为什么不直接把默认值改成「全部」：原行为是「只列全局、只列 ACTIVE」，
+     * 项目内容不外泄到全局、已完成的待办不刷屏。默认值必须保持，否则调用方拿到的是
+     * 一屏已完成任务，反而看不清还有什么没做。
+     *
+     * @param projectId null 或 0 = 全局（默认行为）；&gt;0 = 指定项目
+     * @param status    null = ACTIVE；传 ALL 表示不限状态
+     */
+    public List<Doc> listByTemplateType(String templateType, Long projectId, String status) {
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         // API Key 级别隔离
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
             wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", assistant.getApiKey()));
         }
-        wrapper.isNull("project_id"); // 待办等列表只列全局经验，项目内容不泄漏到全局
-        wrapper.eq("template_type", templateType)
-               .eq("status", "ACTIVE")
-               .orderByDesc("updated_at");
+        if (projectId == null || projectId == 0) {
+            wrapper.isNull("project_id"); // 待办等列表只列全局经验，项目内容不泄漏到全局
+        } else {
+            wrapper.eq("project_id", projectId);
+        }
+        wrapper.eq("template_type", templateType);
+        if (status != null && !status.trim().isEmpty() && !"ALL".equalsIgnoreCase(status.trim())) {
+            wrapper.eq("status", status.trim().toUpperCase());
+        }
+        wrapper.orderByDesc("updated_at");
         return docMapper.selectList(wrapper);
+    }
+
+    /**
+     * 版本表占用统计（只读，供后台展示「快照在膨胀」这件事）。
+     * 不改任何数据 —— 清理必须由人决定（删历史正文是不可逆操作）。
+     */
+    public java.util.Map<String, Object> versionStats() {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        QueryWrapper<DocVersion> qw = new QueryWrapper<>();
+        qw.select("COUNT(*) AS cnt",
+                  "IFNULL(SUM(CHAR_LENGTH(content)),0) AS bytes",
+                  "SUM(CASE WHEN change_type = 'META' THEN 1 ELSE 0 END) AS metaCnt");
+        try {
+            java.util.Map<String, Object> row = versionMapper.selectMaps(qw).get(0);
+            long cnt = row.get("cnt") == null ? 0 : ((Number) row.get("cnt")).longValue();
+            long bytes = row.get("bytes") == null ? 0 : ((Number) row.get("bytes")).longValue();
+            long metaCnt = row.get("metaCnt") == null ? 0 : ((Number) row.get("metaCnt")).longValue();
+            out.put("snapshots", cnt);
+            out.put("kb", bytes / 1024);
+            out.put("metaCount", metaCnt);
+            out.put("avgChars", cnt == 0 ? 0 : (bytes / cnt));
+        } catch (Exception e) {
+            log.warn("versionStats failed: {}", e.getMessage());
+        }
+        return out;
     }
 
     // ==================== 记忆列表（游标分页） ====================

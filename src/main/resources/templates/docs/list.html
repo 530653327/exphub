@@ -105,6 +105,14 @@
                     <i class="fas fa-plus mr-1"></i> 新建经验
                 </a>
             </div>
+            <!-- A3：版本表占用（只读）。删历史正文不可逆，所以这里只展示不给清理按钮 -->
+            <div th:if="${versionStats != null and versionStats.snapshots != null}" class="text-muted mt-2" style="font-size:0.82rem;">
+                <i class="fas fa-layer-group mr-1"></i>
+                历史快照：<span th:text="${versionStats.snapshots}">0</span> 条 ·
+                占用 <span th:text="${versionStats.kb}">0</span> KB ·
+                平均 <span th:text="${versionStats.avgChars}">0</span> 字/条 ·
+                其中「仅元数据变更」<span th:text="${versionStats.metaCount}">0</span> 条（不存正文副本）
+            </div>
         </div>
 
         <div class="card">

@@ -157,6 +157,9 @@ public class PageController extends BaseController {
                 docMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
                         .like("flags", "needs_review")));
 
+        // A3：版本表占用（只读展示，让「快照在膨胀」这件事可见；清理动作不在界面里，删正文不可逆）
+        model.addAttribute("versionStats", docService.versionStats());
+
         return "docs/list";
     }
 

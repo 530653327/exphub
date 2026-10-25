@@ -63,23 +63,41 @@ public class ExpHubTools {
      * 🔔 检查待办事项 - 连接后优先调用
      * 重要提示：本MCP连接后，请优先调用 check_my_todos() 检查是否有待处理任务！
      */
-    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查当前AI助手在ExpHub中记录的待办事项（todo_list类型），包括任务状态、截止日期等信息。每次会话开始时都应该调用此工具，确保不遗漏重要任务。⚠️ 完成待办事项后，务必调用 update_experience_status 将状态更新为 COMPLETED。")
-    public String checkMyTodos() {
+    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查当前AI助手在ExpHub中记录的待办事项（todo_list类型），包括任务状态、截止日期等信息。每次会话开始时都应该调用此工具，确保不遗漏重要任务。默认只看**全局未完成**（ACTIVE）的待办；要看某个项目的、或想看已完成/归档的，传 projectId / status。⚠️ 完成待办事项后，务必调用 update_experience_status 将状态更新为 COMPLETED。")
+    public String checkMyTodos(
+            @ToolParam(description = "可选。只看某个项目的待办，填项目ID（用 list_projects 查）。不传 或传 0 = 全局待办", required = false) Long projectId,
+            @ToolParam(description = "可选。状态过滤，默认 ACTIVE（未完成）。可选 ACTIVE / COMPLETED / DEPRECATED / BROKEN，传 ALL 表示不限状态", required = false) String status) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant == null) {
                 return "⚠️ 无法识别调用者身份，请检查API Key配置。";
             }
-            
-            // 直接按 template_type 查询，不做全文搜索
-            var todos = docService.listByTemplateType("todo_list");
-            
-            if (todos.isEmpty()) {
-                return "📋 当前没有待办事项。\n\n你可以通过 create_experience（templateType=todo_list）创建新的待办任务。";
+
+            // 指定项目时先校验访问权限，避免用别人的 projectId 探到内容
+            Long pid = null;
+            if (projectId != null && projectId > 0) {
+                if (projectService.getProject(projectId) == null) {
+                    return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你有权访问的项目。";
+                }
+                pid = projectId;
             }
-            
+
+            // 直接按 template_type 查询，不做全文搜索
+            var todos = docService.listByTemplateType("todo_list", pid, status);
+
+            String scopeLabel = pid == null ? "全局" : ("项目 " + pid);
+            String statusLabel = (status == null || status.trim().isEmpty()) ? "ACTIVE（未完成）"
+                    : ("ALL".equalsIgnoreCase(status.trim()) ? "全部状态" : status.trim().toUpperCase());
+
+            if (todos.isEmpty()) {
+                return "📋 " + scopeLabel + " 范围、状态 " + statusLabel + " 下没有待办事项。\n\n"
+                        + "可以用 create_experience（templateType=todo_list）创建，"
+                        + "或换 projectId / status 再看（status=ALL 可看已完成的）。";
+            }
+
             StringBuilder sb = new StringBuilder();
-            sb.append("📋 待办事项（共 ").append(todos.size()).append(" 条）\n\n");
+            sb.append("📋 待办事项 · ").append(scopeLabel).append(" · ").append(statusLabel)
+              .append("（共 ").append(todos.size()).append(" 条）\n\n");
             sb.append("| # | ID | 标题 | 创建时间 | 更新时间 |\n");
             sb.append("|---|-----|------|----------|----------|\n");
             
@@ -333,6 +351,35 @@ public class ExpHubTools {
                 sb.append("**更新时间**: ").append(target.getCreatedAt() != null ? target.getCreatedAt() : "未知").append("\n");
                 sb.append("**当前最新版本**: v").append(doc.getVersion()).append("\n\n---\n\n");
 
+                // A3：该次改动只动了元数据，正文没变，因此没有正文副本。
+                // 必须明确告诉调用方「不是丢了」，否则会被当成数据损坏。
+                if (target.getContent() == null) {
+                    StringBuilder nb = new StringBuilder();
+                    nb.append("# ").append(doc.getTitle()).append("（v").append(version).append(" 变更记录）\n\n");
+                    nb.append("**变更类型**: 仅元数据（标签 / 摘要 / 标题 / 归属等）—— **正文未变**\n");
+                    nb.append("**更新者**: ").append(target.getUpdatedName() != null ? target.getUpdatedName() : "未知").append("\n");
+                    nb.append("**更新时间**: ").append(target.getCreatedAt() != null ? target.getCreatedAt() : "未知").append("\n");
+                    nb.append("**当前最新版本**: v").append(doc.getVersion()).append("\n\n---\n\n");
+                    nb.append("> 该版本**没有保存正文副本**：那次改动没动正文，再存一份就是纯冗余（A3 之前的做法，\n");
+                    nb.append("> 实测 463 条快照里有 21 条正文与更早版本完全相同，就是这个原因）。\n");
+                    DocVersion earlier = null;
+                    for (DocVersion v : versions) {
+                        if (v.getVersion() < version && !"META".equals(v.getChangeType())) {
+                            earlier = v;
+                            break;
+                        }
+                    }
+                    if (earlier != null) {
+                        nb.append("> 要读当时的正文，请调用 get_experience_history(id=").append(id)
+                          .append(", version=").append(earlier.getVersion()).append(")（v")
+                          .append(earlier.getVersion()).append("，正文版本）。\n");
+                    } else {
+                        nb.append("> 这是该文档最早的变更记录，当时正文即为初版内容，")
+                          .append("可用 get_experience_detail(id=").append(id).append(") 查看当前正文。\n");
+                    }
+                    return nb.toString();
+                }
+
                 String content = target.getContent();
                 boolean truncated = false;
                 if (content != null && content.length() > detailMaxChars) {
@@ -362,14 +409,18 @@ public class ExpHubTools {
             sb.append("# ").append(doc.getTitle()).append(" — 历史版本列表\n\n");
             sb.append("**当前版本**: v").append(doc.getVersion());
             sb.append(" | **状态**: ").append(getStatusLabel(doc.getStatus())).append("\n\n");
-            sb.append("| 版本号 | 更新者 | 更新时间 |\n");
-            sb.append("|--------|--------|----------|\n");
+            sb.append("| 版本号 | 变更类型 | 更新者 | 更新时间 |\n");
+            sb.append("|--------|----------|--------|----------|\n");
             for (DocVersion v : versions) {
+                // A3：META 版只记事件、没有正文副本；老数据无 change_type 时按正文处理
+                String changeLabel = "META".equals(v.getChangeType()) ? "仅元数据" : "正文";
                 sb.append("| v").append(v.getVersion())
+                  .append(" | ").append(changeLabel)
                   .append(" | ").append(v.getUpdatedName() != null ? v.getUpdatedName() : "未知")
                   .append(" | ").append(v.getCreatedAt() != null ? v.getCreatedAt() : "未知")
                   .append(" |\n");
             }
+            sb.append("\n> 「仅元数据」的版本只改了标签/摘要/标题/归属，**没有保存正文副本**（正文当时没变）。\n");
             sb.append("\n需要查看某个历史版本的内容，请调用 get_experience_history(id=").append(id)
               .append(", version=版本号)。\n");
             sb.append("如需查看当前最新版本内容，请调用 get_experience_detail(id=").append(id).append(")。");

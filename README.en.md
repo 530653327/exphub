@@ -142,23 +142,29 @@ java -jar target/exphub-1.0.0.jar
 
 ---
 
-## 📦 MCP Tools (24 total)
+## 📦 MCP Tools (30 total)
 
-### Global Experience Library (11)
+### Global Experience Library (17)
 
 | Tool | Purpose |
 |---|---|
-| `check_my_todos` | List todos (call first on every session) |
-| `search_experience` | Search experiences (`projectName` scopes to a project) |
+| `check_my_todos` | List todos (call first on every session). Optional `projectId` / `status` filters |
+| `list_recent_memories` | List memories by `updated_at` desc (own global + own projects, cursor pagination) |
+| `search_experience` | Search experiences (`projectName` scopes to a project; `limit`/`offset` paging, `brief` compact output) |
 | `get_experience_detail` | Get experience detail |
 | `get_experience_history` | View historical versions (snapshots kept automatically) |
 | `get_template` | Get creation templates |
 | `create_experience` | Create an experience |
-| `update_experience` | Update an experience |
+| `update_experience` | Update **specified fields only** (omitted = unchanged); clear fields via `clearFields` |
+| `append_experience` | **Append** a block to the end of the body (server-side concat, no full-text read, never truncates the original) |
+| `patch_experience` | **Local replace** in the body (find→replace, must match exactly once) |
 | `update_experience_status` | Set lifecycle status (ACTIVE/COMPLETED/BROKEN/DEPRECATED) |
 | `export_document` | Export full document (no truncation; for long docs) |
 | `import_document` | Import/replace content (pairs with export; snapshots kept) |
 | `report_experience_result` | Report whether an experience helped |
+| `mark_for_deletion` | **Mark for deletion** (not delete): reason required, disappears from search, user confirms in admin |
+| `cancel_deletion` | Cancel a deletion mark |
+| `set_flags` | **Machine-readable flags** (needs_review / duplicate / superseded / stale / low_quality): no version bump, no snapshot, does not touch `updated_at` |
 
 ### Project Spaces (13)
 
