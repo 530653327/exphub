@@ -706,6 +706,26 @@ public class DocService {
      */
     @Transactional
     public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields) {
+        return update(id, newDoc, clearFields, null);
+    }
+
+    /**
+     * 更新文档，可指定「谁改的」（写进版本快照的 updated_name）。
+     *
+     * <p>为什么要这个参数：快照署名原来只能靠当前 API Key 绑定的助手名兜底，
+     * 而**一个 Key 常被多个助手共用**（开发/对话/不同项目），于是所有改动都记在同一个人头上，
+     * 审计链等于没有。越哥 2026-10-25 定：**谁修改的就记上谁的名字**。
+     *
+     * <p>与 {@code newDoc.authorName} 的区别（这两件事必须分清）：
+     * <ul>
+     *   <li>{@code newDoc.authorName} = **改文档作者**（作品归属，动了就等于改写著作权）</li>
+     *   <li>{@code authorOverride} = **本条版本的操作人署名**（审计痕迹，每次改动各记各的）</li>
+     * </ul>
+     *
+     * @param authorOverride 操作人署名；null/空 = 走 Key 绑定的助手名兜底
+     */
+    @Transactional
+    public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride) {
         Doc old = docMapper.selectById(id);
         if (old == null) {
             return null;
@@ -715,12 +735,18 @@ public class DocService {
         // 这类快照只记一条事件（change_type=META、content=NULL），不再重复存 4KB 正文。
         String incomingContent = newDoc.getContent();
         boolean contentChanged = incomingContent != null && !incomingContent.equals(old.getContent());
-        saveVersionSnapshot(old, contentChanged, null);
+        saveVersionSnapshot(old, contentChanged, authorOverride);
 
         newDoc.setId(id);
         newDoc.setVersion(old.getVersion() + 1);
         newDoc.setAuthorId(old.getAuthorId());
-        newDoc.setAuthorName(old.getAuthorName());
+        // 只有调用方显式传了作者才改；没传就回填旧值（updateById 对 null 是「跳过」，
+        // 但这里必须显式回填，否则后面 clearFields 的 UpdateWrapper 与 updateById 语义不一致）
+        // 🔴 原实现无条件 setAuthorName(old.getAuthorName())，
+        //    导致 update_experience 的 authorName 参数**完全无效**（死参数，2026-10-25 实测确认）
+        if (newDoc.getAuthorName() == null || newDoc.getAuthorName().trim().isEmpty()) {
+            newDoc.setAuthorName(old.getAuthorName());
+        }
         newDoc.setCallCount(old.getCallCount());
         newDoc.setSuccessCount(old.getSuccessCount());
         newDoc.setFailCount(old.getFailCount());

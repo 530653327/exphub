@@ -336,6 +336,7 @@ exphub/
 - **密码加密**：Spring Security BCrypt 加密存储
 - **改动先小后大**：`append_experience` / `patch_experience` 由服务端读改写全文，客户端永不持有全文，从机制上避免「读到截断版 → 整篇写回 → 丢后半段」这类事故
 - **存疑横幅在读取端，不在正文里**：`get_experience_detail` 与 `export_document` 都会在正文前拼「⛔ 已被取代 / ⚑ 标记」，两者共用同一份文案；`RenderArtifactStripper` 同步剥离，防止整篇写回时把提示固化进正文
+- **`authorName` 与 `updatedName` 是两件事**：前者 = 改文档作者（作品归属），后者 = 记录「这一次是谁改的」（写进版本快照）。所有文档写入工具都支持 `updatedName`；一个 API Key 被多个助手共用时**必须传**，否则都记成 Key 名，审计链等于没有
 - **写操作回执自证值**：不只说「已刷新」，还回显重新读出的实际值（如「相似度: 0.85」/「未记录」），值被规范化时说明为什么
 - **整理只标记、不合并**：`mark_superseded` 只写指针、`resolve_candidate` 只打标记，两者都不改正文、不删数据。合并错了不可逆，比不整理更糟
 - **候选队列不是自动清理队列**：`review_candidates` 只记录「待判断」，界面里没有「合并」「删除」按钮；真正的删除仍要人先在后台确认
