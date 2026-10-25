@@ -14,6 +14,8 @@ import com.exphub.service.SimilarityScorer;
 import com.exphub.service.SimilarityService;
 import com.exphub.service.DocTemplateService;
 import com.exphub.service.ProjectService;
+import com.exphub.service.VersionArchiveService;
+import com.exphub.entity.DocVersionArchive;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
@@ -53,6 +55,9 @@ public class ExpHubTools {
 
     @Autowired
     private ReviewCandidateService reviewCandidateService;
+
+    @Autowired
+    private VersionArchiveService versionArchiveService;
 
     @Autowired
     private SimilarityService similarityService;
@@ -2870,6 +2875,134 @@ public class ExpHubTools {
         } catch (Exception e) {
             log.error("ExpHubTools.generateWorkflowPrompt: FAILED", e);
             return "生成失败: " + e.getMessage();
+        }
+    }
+
+    // ==================== 版本快照归档（2026-10-26） ====================
+    //
+    // 为什么需要：doc_versions 只增不减，而「验证一个改动」本身就要写多次 patch ——
+    // 阁主为验证写 7 次，#654 一夜从 v25 涨到 v42。整理动作正在喂大它要整理的东西。
+    // 实测 598 条 / 3.87 MB，Top5 文档占 42%。
+
+    @Tool(name = "archive_old_versions",
+          description = "【瘦身，不删数据】把超出保留窗口的历史版本从 doc_versions 搬到冷存档 doc_versions_archive，"
+                  + "腾出主表空间。⚠️ **默认 dryRun=true，只算不写**；确认清单后再传 dryRun=false 才真正执行。"
+                  + "三件事保证安全：① 只搬**历史副本**，当前正文（docs.content）一个字都不动；"
+                  + "② **先写归档表、确认成功后才删主表**，同一事务，不存在丢数据窗口；"
+                  + "③ 按 version 倒序保留最近 N 版，**最新版永不归档**。"
+                  + "归档可回查：用 list_archived_versions(id=...) 看某篇被搬走了哪几版。"
+                  + "建议起点 keepRecent=10（够回看近期改动，又能把 #644/#631 这类 60+ 版的长文档压到 10）。")
+    public String archiveOldVersions(
+            @ToolParam(description = "可选。只处理某篇文档（传文档 ID）；不传 = 全库扫描", required = false) Long id,
+            @ToolParam(description = "可选。每篇保留最近几版，默认 10；允许区间 [3, 200]，**超出区间会被直接拒绝**（不静默改成边界值）", required = false) Integer keepRecent,
+            @ToolParam(description = "可选。true = 只算不写（**默认 true**）。确认清单没问题后再传 false 才真正搬", required = false) Boolean dryRun,
+            @ToolParam(description = "可选。**谁改的**——操作人署名，记进存档的 archived_by 字段", required = false) String updatedName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            // 非法参数明拒，不静默修正（红线：错误输入宁可失败得刺眼）
+            if (!VersionArchiveService.isKeepValid(keepRecent)) {
+                return "❌ keepRecent 只接受 [" + VersionArchiveService.MIN_KEEP_RECENT
+                        + ", " + VersionArchiveService.MAX_KEEP_RECENT + "]，**ExpHub 实际收到的是 "
+                        + keepRecent + "**。未做任何改动。"
+                        + "（如果你的传的是小数，说明链路上有取整，请查调用侧）";
+            }
+            // 默认 dryRun=true —— 归档虽然可回查，但仍是会动数据的操作，第一次必须先看清单
+            boolean dry = dryRun == null || Boolean.TRUE.equals(dryRun);
+            String operator = resolveAuthor(updatedName, assistant);
+
+            VersionArchiveService.ArchiveResult r =
+                    versionArchiveService.archive(id, keepRecent, dry, operator);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(dry ? "🔍 归档预演（dryRun：**没有搬任何数据**）\n\n" : "🗂 归档已执行\n\n");
+            sb.append("**保留窗口**: 每篇最近 ").append(r.keepRecent()).append(" 版（按 version 倒序）\n");
+            sb.append("**操作人**: ").append(operator);
+            if (dry) sb.append("（dryRun 不写入）");
+            sb.append("\n");
+            sb.append("**扫描范围**: ").append(id == null ? "全库" : ("#" + id)).append("\n");
+            sb.append("**版本数超窗口的文档**: ").append(r.docsScanned()).append(" 篇\n\n");
+
+            if (r.details().isEmpty()) {
+                sb.append("📭 没有需要归档的文档。\n");
+            } else {
+                sb.append("| 文档 | 标题 | 原版本数 | ").append(dry ? "将归档" : "已归档")
+                  .append(" | 归档后剩 |\n|---|---|---|---|---|\n");
+                int i = 0;
+                for (VersionArchiveService.DocArchiveResult d : r.details()) {
+                    if (i++ >= 30) { sb.append("| … | 还有 ").append(r.details().size() - 30).append(" 篇 | | | |\n"); break; }
+                    sb.append("| #").append(d.docId()).append(" | ")
+                      .append(abbreviate(d.title() == null ? "(无标题)" : d.title(), 30)).append(" | ")
+                      .append(d.keptBefore()).append(" | ").append(d.archived()).append(" | ")
+                      .append(d.keptAfter()).append(" |\n");
+                }
+                sb.append("\n**合计**: ").append(dry ? "将归档 " : "已归档 ")
+                  .append(r.archivedRows()).append(" 条，约 ")
+                  .append(String.format(java.util.Locale.ROOT, "%.2f", r.archivedBytes() / 1024.0 / 1024.0))
+                  .append(" MB｜主表现有 ").append(r.remainingRows()).append(" 条\n");
+            }
+
+            if (dry) {
+                sb.append("\n⚠️ 以上只是预演。确认无误后，用**相同参数 + dryRun=false** 再调一次才会真正搬。\n");
+            } else {
+                sb.append("\n✅ 归档完成。搬运的行都在 `doc_versions_archive` 里，可原样取回：\n")
+                  .append("· 看某篇被搬走了哪几版 → `list_archived_versions(id=文档ID)`\n")
+                  .append("· 当前正文一个字都没动（本工具只碰历史副本）\n");
+            }
+            for (String n : r.notes()) sb.append("· ").append(n).append("\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.archiveOldVersions: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "归档失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "list_archived_versions",
+          description = "查看某篇文档被归档（搬进冷存档）的历史版本清单。**只读**。"
+                  + "用于验证「搬走的东西还在」——归档不是删除，每条都能原样取回。"
+                  + "也给「这篇以前某一版写的是什么」提供回查入口。")
+    public String listArchivedVersions(
+            @ToolParam(description = "必填。文档 ID") Long id,
+            @ToolParam(description = "可选。是否输出正文片段（默认 false 只列版本号与时间，避免刷屏）", required = false) Boolean withPreview) {
+        try {
+            List<DocVersionArchive> list = versionArchiveService.listArchived(id);
+            StringBuilder sb = new StringBuilder();
+            sb.append("📦 #").append(id).append(" 的归档版本\n\n");
+            if (list.isEmpty()) {
+                sb.append("该文档没有归档版本（要么从没归档过，要么版本数没超过保留窗口）。\n");
+                return sb.toString();
+            }
+            sb.append("**共 ").append(list.size()).append(" 版**（按版本号升序）\n\n");
+            sb.append("| 版本 | 原创建时间 | 归档时间 | 归档人 | 变更类型 | 正文字数 |\n");
+            sb.append("|---|---|---|---|---|---|\n");
+            boolean preview = Boolean.TRUE.equals(withPreview);
+            for (DocVersionArchive a : list) {
+                sb.append("| v").append(a.getVersion()).append(" | ")
+                  .append(a.getCreatedAt() == null ? "-" : a.getCreatedAt().toString().replace('T', ' ')).append(" | ")
+                  .append(a.getArchivedAt() == null ? "-" : a.getArchivedAt().toString().replace('T', ' ')).append(" | ")
+                  .append(a.getArchivedBy() == null ? "-" : a.getArchivedBy()).append(" | ")
+                  .append(a.getChangeType() == null ? "-" : a.getChangeType()).append(" | ")
+                  .append(a.getContent() == null ? "0（仅元数据）" : a.getContent().length()).append(" |\n");
+            }
+            if (preview) {
+                sb.append("\n---\n**正文片段**（前 200 字）\n");
+                for (DocVersionArchive a : list) {
+                    sb.append("\n**v").append(a.getVersion()).append("**");
+                    if (a.getContent() == null) {
+                        sb.append("（仅元数据变更，原文未存）\n");
+                    } else {
+                        sb.append("：").append(abbreviate(a.getContent().replaceAll("\\s+", " "), 200)).append("\n");
+                    }
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listArchivedVersions: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "查询失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 }
