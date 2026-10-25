@@ -145,6 +145,40 @@ class AdviceShapeTest {
         assertTrue(d.contains("母集-子集"), "要点名形态：" + d);
         assertTrue(d.contains("别判 duplicate"), "母集-子集不能建议判 duplicate：" + d);
         assertFalse(d.contains("可以判 duplicate"), d);
+        // ⚠️ 2026-10-26 02:2x 越哥实测：上一版把 duplicate 挡住了，却写「先看是不是 superseded」——
+        // superseded 对母集-子集正是会丢内容的那个方向（子页独有行被埋在「已被取代」后面）。
+        assertTrue(d.contains("也别判 superseded"),
+                "母集-子集两个方向都不能判：只挡 duplicate、放过 superseded 等于同一个坑换个出口：" + d);
+        assertFalse(d.contains("看是不是 superseded"),
+                "不许再写「先看是不是 superseded」——superseded 会掩埋子页独有行：" + d);
+        assertTrue(d.contains("并回母档"),
+                "必须给出正确动作：先把子页剩余细节并回母档：" + d);
+        assertTrue(d.contains("distinct"), "并不了时的落点必须是 distinct：" + d);
+    }
+
+    /**
+     * ②层也要判形态：行数差悬殊就是母集-子集的强信号（2026-10-26 02:2x 越哥实测指出）。
+     *
+     * <p>反例：#514（120 行）↔ #542（5 行）落在②层，回执只写「只有标签/标题像…拿不准判 distinct」——
+     * 结论碰巧对，<b>理由却是错的</b>：它是典型的 24:1 母集-子集，而形态检测当时只在①层做。
+     * 建议对了、理由错了，下次换个数据就会把错的理由用错地方。
+     */
+    @Test
+    void seriesLayerAlsoNamesSubsetByLineRatio() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5);
+        assertTrue(d.contains("母集-子集"), "行数 120:5 要认出母集-子集，不能只说「拿不准」：" + d);
+        assertTrue(d.contains("24:1"), "要把行数比摆出来，人才判得快：" + d);
+        assertTrue(d.contains("也别判 superseded"), "②层同样不许放过 superseded 这个方向：" + d);
+        assertTrue(d.contains("并回母档"), "要给出正确动作：" + d);
+        assertFalse(d.contains("大概率"), d);
+    }
+
+    /** 行数差不悬殊时不许乱扣「母集-子集」的帽子 */
+    @Test
+    void balancedLineCountsAreNotCalledSubset() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 20, 12);
+        assertFalse(d.contains("母集-子集（"), "20:12 不是母集-子集，别乱扣帽子：" + d);
+        assertTrue(d.contains("distinct"), d);
     }
 
     @Test

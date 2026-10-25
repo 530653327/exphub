@@ -111,6 +111,19 @@ public final class SimilarityScorer {
      */
     public static final double MAX_OWN_SHARE_FOR_SUBSET = 0.35;
 
+    /**
+     * ②层里判「可能是母集-子集」的<b>行数比</b>门槛：大的一侧 ≥ 小的 <b>4 倍</b>。
+     *
+     * <p><b>为什么②层也要判形态（2026-10-26 02:2x 越哥实测指出）</b>：
+     * #514（120 行）↔ #542（5 行）落在②层，回执只写「只有标签/标题像…拿不准判 distinct」——
+     * 结论碰巧对（别判），<b>理由却是错的</b>：它是典型的 24:1 母集-子集，
+     * 而形态检测当时只在①层做。**建议对了、理由错了，下次换个数据就会把错的理由用错地方。**
+     *
+     * <p>⚠️ 这是<b>弱信号</b>（只看行数、不看内容），所以文案必须写成「很可能是」而不是「是」，
+     * 且动作仍要求人先读一眼母档有没有把这些行收进去。阈值 4 是常识值，没有正样本量过。
+     */
+    public static final int MIN_LINES_RATIO_FOR_SUBSET = 4;
+
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
     public static final double W_CONTENT = 0.33;
@@ -423,6 +436,42 @@ public final class SimilarityScorer {
             return String.format(java.util.Locale.ROOT, "%.2f", v);
         }
 
+        /**
+         * 母集-子集的<b>统一动作</b> —— 全系统只此一份，①层与②层都调它。
+         *
+         * <p><b>为什么必须单独立出来（2026-10-26 02:2x 越哥实测指出，第 N 次同类问题）</b>：
+         * 上一轮把①层的建议从「优先判 duplicate」改成「别判 duplicate，先看是不是 superseded」，
+         * 挡住了 duplicate 这个方向，<b>却把 superseded 这个方向放开了</b> ——
+         * 而 superseded 对母集-子集正是会丢内容的那个动作：
+         *
+         * <pre>
+         *   #63 母档 195 行 ↔ #67 子页 47 行（子页独有 8 行 / 17%）
+         *   #65 独有 8 行（20%）、#68 独有 18 行（30%）
+         * </pre>
+         * 判 superseded（子页 ← 母档）之后，那 8~18 行永久藏在「⛔ 已被 #63 取代」后面，
+         * 下一个 AI 读到就跳过 —— <b>这不是收敛，是信息丢失</b>。
+         * 同一个隐患换了个出口，比缺一条建议严重。
+         *
+         * @param kidLines 子页（被包含那一侧）的独有行数 —— 就是要保住的那几行
+         */
+        /**
+         * 同一套判法的<b>短版</b>（用于处理说明那种一行一条的清单，放不下长版）。
+         *
+         * <p>与 {@link #subsetAction(int)} 同在这个类里、紧邻放置，就是为了**改的时候一眼看到另一份** ——
+         * 散到 {@code ExpHubTools} 里各写一份，就会重演「文档改了工具没改」。
+         */
+        public static final String SUBSET_RULE_SHORT =
+                "一侧几乎整篇包含另一侧（母集-子集）→ **两个都别判**：duplicate 会用母档取代子页、"
+                + "superseded 会把子页独有行埋在「已被取代」后面；**并回母档再清，并不了判 distinct**";
+
+        public static String subsetAction(int kidLines) {
+            return "**别判 duplicate，也别判 superseded** —— superseded 只写指针，"
+                    + "小那侧独有的 " + kidLines + " 行会永久藏在「⛔ 已被 #N 取代」标记后面，"
+                    + "下一个读到的 AI 直接跳过，**那是信息丢失不是收敛**。"
+                    + "正确动作：**先把这 " + kidLines + " 行并回母档，确认母档已含它们，再清子页**；"
+                    + "并不了 / 不确定母档是否已含，就判 **distinct**（两份都留着，别为了「干净」丢掉细节）";
+        }
+
         public static String pct(double v) {
             return String.format(java.util.Locale.ROOT, "%.0f%%", v * 100);
         }
@@ -486,22 +535,42 @@ public final class SimilarityScorer {
                     + "B 独有 " + ub + " 行（占 " + Score.pct(ob) + "）。\n"
                     + switch (shape) {
                         case TRUE_DUP -> "　→ 两侧独有都很少（整篇复制）：**可以判 duplicate**";
-                        case SUBSET -> "　→ 一侧几乎整篇在另一侧里（母集-子集）：**别判 duplicate**；"
-                                + "先看是不是 superseded（母集取代子集），都不是就判 distinct";
+                        case SUBSET -> "　→ 一侧几乎整篇在另一侧里（母集-子集）："
+                                + (oa <= ob ? "A" : "B") + " 侧独有仅 "
+                                + (oa <= ob ? ua : ub) + " 行（占 " + Score.pct(Math.min(oa, ob))
+                                + "），像另一侧的子页。\n　　"
+                                + Score.subsetAction(oa <= ob ? ua : ub);
                         case PARALLEL -> "　→ 两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）："
                                 + "**别判 duplicate** —— 判了等于用其中一份取代另一份，一般判 distinct；"
                                 + "只有确认后者是前者同一件事的新阶段才 superseded";
                         case UNKNOWN -> "　→ 行口径不可用，形态分不出，人工读一眼再定";
                     };
-            case SERIES -> sharedLines > 0
-                    ? "**共用骨架**（只重 " + sharedLines + " 行、平均仅 " + sharedAvgLen + " 字、覆盖 "
-                      + cov + "，两侧还各有 " + ua + " / " + ub + " 行独有）→ 同一模板的不同实例："
-                      + "**别判 duplicate**，一般判 distinct；只有确认一侧确实是另一侧的新阶段才 superseded"
-                    : "**只有标签/标题像**（正文 " + sharedLines + " 行重合 —— 没有任何内容证据）："
-                      + "可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
-                      + "（**别照抄示例去猜类型，看标题和正文各写了什么**）。"
-                      + "⚠️ **没内容证据时不要判 superseded** —— 那等于用其中一份取代另一份。"
-                      + "先排除母集-子集与同模板实例，确认是同一件事的新阶段才 superseded；拿不准判 distinct";
+            case SERIES -> {
+                // ②层也要判形态：行数差 4 倍以上是母集-子集的强信号（2026-10-26 02:2x 越哥指出
+                // #514 120 行 ↔ #542 5 行 落在②层却只给「拿不准判 distinct」——结论对、理由错）
+                int big = Math.max(linesA, linesB), small = Math.min(linesA, linesB);
+                boolean ratioSubset = small > 0 && big >= small * MIN_LINES_RATIO_FOR_SUBSET;
+                String ratio = "两侧行数 " + linesA + " : " + linesB
+                        + (ratioSubset ? "（约 " + Math.round((double) big / small) + ":1）" : "");
+                if (sharedLines > 0) {
+                    yield "**共用骨架**（" + ratio + "，只重 " + sharedLines + " 行、平均仅 "
+                            + sharedAvgLen + " 字、覆盖 " + cov + "，两侧还各有 " + ua + " / " + ub
+                            + " 行独有）→ 同一模板的不同实例：**别判 duplicate**，一般判 distinct；"
+                            + "只有确认一侧确实是另一侧的新阶段才 superseded";
+                }
+                if (ratioSubset) {
+                    yield "**" + ratio + " —— 行数差得悬殊，很可能是母集-子集**，"
+                            + "而正文 " + sharedLines + " 行重合（没有任何逐行内容证据，"
+                            + "但短的那篇可能整篇被长的那篇包住）。\n　　"
+                            + Score.subsetAction(small)
+                            + "。（判之前先打开长的那篇，看短那篇的内容是否已经全在里面）";
+                }
+                yield "**只有标签/标题像**（" + ratio + "，正文 " + sharedLines + " 行重合 —— "
+                        + "没有任何内容证据）：可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
+                        + "（**别照抄示例去猜类型，看标题和正文各写了什么**）。"
+                        + "⚠️ **没内容证据时不要判 superseded** —— 那等于用其中一份取代另一份。"
+                        + "先排除母集-子集与同模板实例，确认是同一件事的新阶段才 superseded；拿不准判 distinct";
+            }
             case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
             case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）→ "
                     + "这类天然是同一件事的分阶段记录，**一般不用判**；"

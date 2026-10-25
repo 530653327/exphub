@@ -113,6 +113,22 @@ class SlicedReadAndStatusFilterTest {
                 "要写明 export_document 为什么不能替代，否则下个人还会这么建议");
     }
 
+    /**
+     * 同一段回执里不许自相矛盾（2026-10-26 02:2x 越哥实测）。
+     *
+     * <p>原来 appendContentSlice 的结尾还有一句
+     * 「也可用 get_experience_detail(id=654) 读当前正文（同样支持大文档，但那个工具不分段）」——
+     * 而那段回执上面刚教人「继续读 get_experience_detail(id=654, offset=20000)」。
+     * <b>同一个工具，上面在分段、下面说不分段。</b>
+     * 病根是这句写于 detail 还没有 offset 的时候，后来补了分段能力，这句没回头改。
+     */
+    @Test
+    void sliceHintMustNotContradictItself() throws IOException {
+        String src = read(TOOLS);
+        assertFalse(src.contains("那个工具不分段"),
+                "分段回执里不许再说「那个工具不分段」—— 它指的就是当前这个工具，直接自相矛盾");
+    }
+
     // ==================== ② 当前版本号 ====================
 
     @Test

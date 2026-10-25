@@ -557,10 +557,11 @@ public class ExpHubTools {
             sb.append("> ⚠️ 不要用 `export_document` 代替 —— 它只接受 id、不能指定版本、也不分段：")
               .append("读历史版本会导出当前正文，长文档只能整块吐。\n");
         }
-        if (version != null && version.equals(doc != null ? doc.getVersion() : null)) {
-            sb.append("\n> 也可用 `").append(detailTool).append("(id=").append(id)
-              .append(")` 读当前正文（同样支持大文档，但那个工具不分段）。\n");
-        }
+        // ⚠️ 2026-10-26 02:2x 越哥实测：这里原来还有一句「也可用 get_experience_detail(id=654)
+        // 读当前正文（同样支持大文档，但那个工具不分段）」—— 而 detailTool 本身就是
+        // get_experience_detail，上面刚教人用它分段续读，下面又说它不分段，**同一段回执自相矛盾**。
+        // 病根是这段文字写于 detail 还没有 offset 的时候，后来 detail 补了分段，这句没回头改。
+        // 「同一个事实有两个出口」的老毛病：分段能力只有一处真源（本方法），就别再另写一句描述。
     }
 
     /**
@@ -2070,7 +2071,8 @@ public class ExpHubTools {
               .append("· distinct = 判为不同，以后不再重新入队\n")
               .append("· skip = 本次忽略，下次还会提出来\n")
               .append("⚠️ 别凭「重合多」直接判 duplicate：两侧独有行都很少才是真重复；"
-                      + "一侧很少是母集-子集（别判 duplicate）；两侧各约一半是同模板实例（判 distinct）。"
+                      + SimilarityScorer.Score.SUBSET_RULE_SHORT + "；"
+                      + "两侧各约一半是同模板实例（判 distinct）。"
                       + "正文 0 行重合时也没有内容证据，不要判 superseded —— 那等于用其中一份取代另一份");
             return sb.toString();
         } catch (Exception e) {
@@ -2138,12 +2140,17 @@ public class ExpHubTools {
         if (kind == null) return "";
         String cov = SimilarityScorer.Score.pct(coverage);
         return switch (kind) {
+            // ⚠️ 兜底文案虽短，也必须守住同一条底线（2026-10-26 02:2x）：母集-子集
+            // **两个方向都别判**，只挡 duplicate、放过 superseded 等于同一个坑换了个出口
             case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致，覆盖较短那篇 "
                     + cov + "）→ 先看两侧独有行数：两侧都很少才是真重复，可判 duplicate；"
-                    + "一侧很少是母集-子集、两侧各约一半是同模板实例，这两种都别判 duplicate";
+                    + "一侧很少是母集-子集、两侧各约一半是同模板实例，这两种都别判 duplicate。"
+                    + SimilarityScorer.Score.SUBSET_RULE_SHORT;
             case SERIES -> sharedLines > 0
                     ? "🔗 **共用骨架**（只重 " + sharedLines + " 行、覆盖仅 " + cov
-                      + "，像同一模板的不同实例）→ 别判 duplicate；若确是同一件事的新阶段再判 superseded"
+                      + "，像同一模板的不同实例）→ 别判 duplicate；"
+                      + "先确认不是母集-子集（" + SimilarityScorer.Score.SUBSET_RULE_SHORT
+                      + "），确实是新阶段才判 superseded"
                     : "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 没内容证据时不判 superseded，"
                       + "先排除同模板实例与母集-子集，确认是同一件事的新阶段才判；拿不准判 distinct";
             case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）→ 建议人工读一眼";
@@ -2170,6 +2177,7 @@ public class ExpHubTools {
             sb.append("判断用 resolve_candidate(candidateId=..., action=duplicate|superseded|distinct)：\n")
               .append("· 两侧独有行都很少（整篇复制）→ duplicate（只打标记不合并）\n")
               .append("· 确认后者是前者同一件事的新阶段（**先排除母集-子集与同模板实例**）→ superseded（只写指针）\n")
+              .append("· ").append(SimilarityScorer.Score.SUBSET_RULE_SHORT).append("\n")
               .append("· 是两个不同实体/不同角色，或拿不准 → distinct（此后这一对不再打扰）\n")
               .append("⚠️ 0 行正文重合时不要判 superseded：那只是标签/标题像，判了等于用其中一份取代另一份\n");
         }
