@@ -222,15 +222,15 @@ docker compose restart exphub  # 重启应用
 
 ---
 
-## 📦 MCP 工具列表（共 25 个）
+## 📦 MCP 工具列表（共 27 个）
 
-### 全局经验库（12 个）
+### 全局经验库（14 个）
 
 | 工具 | 功能 |
 |---|---|
 | `check_my_todos` | 检查待办事项（每次会话优先调用） |
 | `list_recent_memories` | 按更新时间倒序列出记忆（自己的全局经验 + 自有项目，游标分页） |
-| `search_experience` | 搜索经验（支持 `projectName` 限定项目内搜索） |
+| `search_experience` | 搜索经验（支持 `projectName` 限定项目内搜索；`limit`/`offset` 翻页，`brief` 精简输出） |
 | `get_experience_detail` | 获取经验详情 |
 | `get_experience_history` | 查看经验的历史版本（平台每次更新自动留存快照） |
 | `get_template` | 获取创建经验的模板 |
@@ -240,6 +240,8 @@ docker compose restart exphub  # 重启应用
 | `export_document` | 导出完整文档（无截断，适合长文档） |
 | `import_document` | 导入替换内容（与 export 配对，自动留存版本快照） |
 | `report_experience_result` | 反馈经验是否有帮助（成功/失败都建议反馈） |
+| `mark_for_deletion` | **标记待删**（不是删除）：必须写原因，标记后立刻从检索结果消失，内容仍在库里，由用户在后台确认才真正删除 |
+| `cancel_deletion` | 撤销待删标记，恢复为正常状态 |
 
 ### 项目空间（13 个）
 
@@ -312,6 +314,7 @@ exphub/
 - **身份上下文跨线程传播**：MCP 工具实际运行在框架内部的 Reactor 线程上，身份通过 `Schedulers.onScheduleHook` 在调度时捕获、执行时恢复 —— 确保多 Key 场景下隔离**始终可靠**（不依赖裸 `ThreadLocal`，避免池化线程复用导致的身份串号）
 - **权限分级**：支持搜索/创建/更新权限分别控制
 - **密码加密**：Spring Security BCrypt 加密存储
+- **模型无删除权**：MCP 侧只能 `mark_for_deletion`（必须写原因），真正删除只能在后台由人执行；待删项对检索不可见，可一键恢复
 - **敏感信息提醒**：创建经验时提醒 AI 不记录密码、Token 等敏感数据
 
 ---
