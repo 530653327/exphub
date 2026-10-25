@@ -52,6 +52,9 @@ public class SimilarityService {
 
     /** L2 全库扫描的默认阈值：实测 0.50 时全库 23 对，人工十分钟能过一遍 */
     public static final double DEFAULT_THRESHOLD = 0.50;
+    /** 阈值合法区间：低于 0.30 会把整个库都算成候选，高于 0.95 一对都出不来 */
+    public static final double MIN_THRESHOLD = 0.30;
+    public static final double MAX_THRESHOLD = 0.95;
     /** L0 写入查重更严：新写入就弹提示，宁缺毋滥 */
     public static final double CREATE_THRESHOLD = 0.55;
     /** 单次写入最多提示几条 */
@@ -206,9 +209,15 @@ public class SimilarityService {
      */
     public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
                            boolean dryRun, String operator) {
+        // ⚠️ 2026-10-25 阁主验收教训：原来这里是 `if (th < 0.30) th = 0.30` 静默兜底。
+        // 上游把 0.5 截成整数 0 之后，静默兜底把它变成 0.30 —— 用户看到「阈值: 0.30」，
+        // 只会得出「阈值参数根本没生效」的结论，**永远查不到是链路丢了小数**。
+        // 静默修正等于把缺陷藏起来。现在非法值一律明拒，并在错误里写明收到多少。
         double th = (threshold == null) ? DEFAULT_THRESHOLD : threshold;
-        if (th < 0.30) th = 0.30;
-        if (th > 0.95) th = 0.95;
+        if (!isThresholdValid(th)) {
+            return new ScanResult(false, thresholdRejectMessage(threshold, th), DEFAULT_THRESHOLD, dryRun,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+        }
         int maxRows = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
         int perDoc = (maxPerDoc == null || maxPerDoc < 1) ? 2 : Math.min(maxPerDoc, 10);
 
@@ -342,6 +351,38 @@ public class SimilarityService {
                 + (dropped > 0 ? "，限流后取前 " + selected.size() + " 对" : "");
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
                 above.size(), dropped, enqueued, pending, resolved, rowsOut, notes);
+    }
+
+    /** 阈值是否落在允许区间（NaN 一律无效） */
+    public static boolean isThresholdValid(double th) {
+        return th >= MIN_THRESHOLD && th <= MAX_THRESHOLD;
+    }
+
+    /**
+     * 阈值非法时的拒绝说明。
+     *
+     * <p>重点是**区分「你传错了」和「链路把数丢了」**：
+     * 收到恰好 0 而用户说传的是 0.5，那是小数被截成整数，必须直接点出来，
+     * 否则用户只会以为「阈值参数不可调」，白白在 ExpHub 侧找 bug。
+     */
+    static String thresholdRejectMessage(Double raw, double parsed) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("阈值 ").append(parsed).append(" 不在允许区间 [")
+          .append(String.format(java.util.Locale.ROOT, "%.2f", MIN_THRESHOLD)).append(", ")
+          .append(String.format(java.util.Locale.ROOT, "%.2f", MAX_THRESHOLD))
+          .append("] 内，**已拒绝执行，没有比较任何文档、没有入队任何东西**。\n");
+        sb.append("  ExpHub 实际收到的 threshold = ").append(parsed);
+        if (parsed == 0d) {
+            sb.append("\n  ⚠️ 收到的是 0。如果你传的是 0.5 / 0.55 这类小数，说明**调用链路上小数被截成了整数**"
+                    + "（MCP 客户端常犯：`asInt()` / `intValue()` / `(int)`）。"
+                    + "这是 ExpHub 之外的问题，ExpHub 收不到原始小数。");
+        } else if (parsed < MIN_THRESHOLD) {
+            sb.append("\n  低于下限会把整个库都算成候选（实测 0.30 时全库 5270 对），没有参考价值。");
+        } else {
+            sb.append("\n  高于上限几乎一对都出不来。");
+        }
+        sb.append("\n  不传 threshold 则用默认 ").append(DEFAULT_THRESHOLD).append("。");
+        return sb.toString();
     }
 
     /** 作用域索引（带 3 分钟缓存） */

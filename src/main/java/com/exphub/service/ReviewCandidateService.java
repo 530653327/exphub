@@ -64,18 +64,43 @@ public class ReviewCandidateService {
      * <p>存在的理由只有一个：**回执必须自证值**。上一版回执写「已刷新得分」，
      * 但没说记成了多少 —— 于是调用方以为传了 0.92 就记了 0.92，实际库里是 0.0000，
      * 直到第二天从列表里才看出来。回执只证明动作发出去了，不证明结果对。
+     *
+     * <p>⚠️ 2026-10-25 第二次教训（阁主验收）：原文案写「**传了** 0」，读起来是在指责调用方传了 0。
+     * 实测真相是忆阁把 `0.33` 用 `asInt()` 截成了整数 0 —— 调用方传的是小数，
+     * **ExpHub 收到的才是 0**。措辞把「我这边收到什么」说成「你传了什么」，
+     * 等于把链路问题推给上游，让人往错的方向查。
+     * 现在改成「ExpHub 实际收到的是 X」，并在收到恰好 0 时给出整数截断的排查提示。
      */
     public static String scoreDiscardReason(java.math.BigDecimal score) {
         if (score == null) return null;
-        if (score.compareTo(java.math.BigDecimal.ZERO) <= 0) {
-            return "传了 " + plain(score) + "，0 及以下不视为有效相似度（相似度 0 = 完全不像），"
-                    + "已按「未提供」存 NULL，不参与排序";
+        if (score.compareTo(java.math.BigDecimal.ZERO) == 0) {
+            return "ExpHub 实际收到的是 0（不是一个有效相似度：相似度 0 的语义是「完全不像」，"
+                    + "真实调用里几乎一定是没算出来），已按「未提供」存 NULL，不参与排序。\n"
+                    + "  ⚠️ 如果你传的是小数（如 0.33 / 0.92）却变成了 0，那是**调用链路上把小数截成了整数**："
+                    + "检查 MCP 客户端的参数转换有没有用 `asInt()` / `intValue()` / `(int)` 这类取整操作"
+                    + "（正确做法是 `asDouble()` 或直接保留 BigDecimal）。这一步在 ExpHub 之外，ExpHub 收不到原始小数。";
+        }
+        if (score.compareTo(java.math.BigDecimal.ZERO) < 0) {
+            return "ExpHub 实际收到的是 " + plain(score) + "，负数不是有效相似度，已按「未提供」存 NULL";
         }
         if (score.compareTo(java.math.BigDecimal.ONE) > 0) {
-            return "传了 " + plain(score) + "，超出约定范围 0~1，已按「未提供」存 NULL"
-                    + "（请确认你的评分口径，可能是百分制没除以 100）";
+            return "ExpHub 实际收到的是 " + plain(score) + "，超出约定范围 0~1，已按「未提供」存 NULL"
+                    + "（若是百分制请除以 100，如 92 → 0.92）";
         }
         return null;
+    }
+
+    /** 状态的中文注解：列表里 ALL 模式下 PENDING 与 DISTINCT 混排，光看英文值难分辨 */
+    public static String statusLabel(String status) {
+        if (status == null) return "未知";
+        return switch (status) {
+            case ReviewCandidate.PENDING -> "待判断";
+            case ReviewCandidate.DUPLICATE -> "已标重复";
+            case ReviewCandidate.SUPERSEDED -> "已标取代";
+            case ReviewCandidate.DISTINCT -> "已判不同";
+            case ReviewCandidate.SKIPPED -> "已忽略";
+            default -> status;
+        };
     }
 
     /** 得分展示：固定两位小数，避免 0.9 与 0.9000 在回执里长得不一样 */

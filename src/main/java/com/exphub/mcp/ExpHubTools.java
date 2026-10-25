@@ -1797,11 +1797,26 @@ public class ExpHubTools {
                 Doc a = docMap.get(c.getDocA());
                 Doc b = docMap.get(c.getDocB());
                 sb.append(i++).append(". 「候选 #").append(c.getId()).append("」");
+                // ⚠️ 2026-10-25 阁主验收发现：原来这里不输出状态，
+                // status=ALL 时 PENDING 和 DISTINCT 混排、长得一模一样，只能靠数总数推断。
+                // 状态是这个列表最关键的字段之一，必须逐行给出。
+                sb.append(" **").append(c.getStatus()).append("**（")
+                  .append(ReviewCandidateService.statusLabel(c.getStatus())).append("）");
                 // 得分缺失时明确写「未记录」，不要静默不显示 ——
                 // 否则「没记分」和「记了 0 分」在列表里看起来一样
-                sb.append(" 相似度 ").append(ReviewCandidateService.formatScore(c.getScore()))
+                sb.append("｜相似度 ").append(ReviewCandidateService.formatScore(c.getScore()))
                   .append(c.getScore() == null ? "（未记录）" : "");
                 sb.append("｜来源 ").append(c.getSource()).append("\n");
+                // 已判过的显示谁判的、什么时候判的、判词是什么 —— 复盘时「当时为什么这么判」比结论更重要
+                if (!ReviewCandidate.PENDING.equals(c.getStatus()) && c.getResolvedAt() != null) {
+                    sb.append("   判定: ").append(c.getResolvedBy() == null ? "（未记录）" : c.getResolvedBy())
+                      .append(" · ").append(c.getResolvedAt().format(java.time.format.DateTimeFormatter
+                              .ofPattern("yyyy-MM-dd HH:mm")));
+                    if (c.getNote() != null && !c.getNote().isBlank()) {
+                        sb.append(" · ").append(abbreviate(c.getNote(), 80));
+                    }
+                    sb.append("\n");
+                }
                 sb.append("   A: #").append(c.getDocA()).append("「")
                   .append(a != null ? abbreviate(a.getTitle(), 50) : "已不存在").append("」")
                   .append(a != null && a.getSupersededBy() != null ? " ⛔已被#" + a.getSupersededBy() + "取代" : "").append("\n");
@@ -1887,7 +1902,7 @@ public class ExpHubTools {
     @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。建议先 dryRun=true 看清单再决定是否入队。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
-            @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）", required = false) Double threshold,
+            @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）。允许区间 [0.30, 0.95]，**超出区间会被直接拒绝并说明收到了多少**（不再静默改成 0.30 —— 静默修改会让「参数没生效」这种链路问题查不出来）", required = false) Double threshold,
             @ToolParam(description = "可选。最多返回/入队几条，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。一篇文档最多出现在几条候选里，默认 2 —— 防止同一个模板族（如一批同格式提示词）把队列占满", required = false) Integer maxPerDoc,
             @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
