@@ -87,7 +87,14 @@
                         </button>
                     </div>
                 </div>
-                <a th:href="@{/docs/edit}" class="btn btn-primary ml-3">
+                <a th:href="@{/docs(status='PENDING_DELETE')}" class="btn btn-outline-danger ml-3"
+                   th:classappend="${status == 'PENDING_DELETE'} ? 'active'"
+                   title="AI 标记待删的经验，等你确认才真正删除">
+                    <i class="fas fa-trash-restore mr-1"></i> 待删队列
+                    <span class="badge badge-danger ml-1" th:if="${pendingDeleteCount != null and pendingDeleteCount > 0}"
+                          th:text="${pendingDeleteCount}">0</span>
+                </a>
+                <a th:href="@{/docs/edit}" class="btn btn-primary ml-2">
                     <i class="fas fa-plus mr-1"></i> 新建经验
                 </a>
             </div>
@@ -95,6 +102,10 @@
 
         <div class="card">
             <div class="card-header">
+                <span th:if="${status == 'PENDING_DELETE'}" class="text-danger font-weight-bold">
+                    <i class="fas fa-trash-restore mr-1"></i>待删队列，共 <span th:text="${totalRows}">0</span> 条
+                    —— AI 标记的经验，点「恢复」撤回、点「删除」才真正删除
+                </span>
                 <span th:if="${keyword != null && keyword != ''}">
                     搜索 "<strong th:text="${keyword}"></strong>" 的结果：共 <span th:text="${totalRows}">0</span> 条
                 </span>
@@ -142,12 +153,28 @@
                             <div class="doc-tags">
                                 <span class="tag" th:each="tag : (${#strings.arraySplit(doc.tags, ',')})" th:text="${tag}">标签</span>
                             </div>
+                            <!-- M10：待删项把原因摊开显示，用户靠这句话决定删不删 -->
+                            <div th:if="${doc.status == 'PENDING_DELETE'}" class="mt-2 p-2"
+                                 style="background:#fff5f5;border-left:3px solid #e94560;border-radius:4px;font-size:0.85rem;">
+                                <i class="fas fa-exclamation-triangle text-danger mr-1"></i>
+                                <strong>待删原因：</strong><span th:text="${doc.deleteReason != null ? doc.deleteReason : '（未填写）'}">-</span>
+                                <span class="text-muted ml-2" th:if="${doc.deleteMarkedBy != null}">
+                                    — 由 <span th:text="${doc.deleteMarkedBy}">-</span>
+                                    <span th:if="${doc.deleteMarkedAt != null}" th:text="'于 ' + ${#temporals.format(doc.deleteMarkedAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                    标记（尚未删除）
+                                </span>
+                            </div>
                         </div>
                         <div class="text-right ml-3">
                             <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
                             <span th:if="${doc.status == 'COMPLETED'}" class="badge badge-completed">已完成</span>
                             <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">已失效</span>
                             <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已过期</span>
+                            <span th:if="${doc.status == 'PENDING_DELETE'}" class="badge badge-broken">待删</span>
+                            <button th:if="${doc.status == 'PENDING_DELETE'}" class="btn btn-sm btn-outline-success ml-2 restore-btn"
+                                    th:attr="data-doc-id=${doc.id}" title="撤销待删标记，恢复为正常">
+                                <i class="fas fa-undo"></i>
+                            </button>
                             <button class="btn btn-sm btn-outline-info ml-2 share-btn"
                                     th:attr="data-doc-id=${doc.id}, data-doc-title=${doc.title}" title="分享">
                                 <i class="fas fa-share-alt"></i>
@@ -169,14 +196,14 @@
                 <nav>
                     <ul class="pagination justify-content-center mb-0">
                         <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, page=${currentPage - 1})}">&laquo; 上一页</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, page=${currentPage - 1})}">&laquo; 上一页</a>
                         </li>
                         <li class="page-item" th:each="i : ${#numbers.sequence(1, totalPages)}"
                             th:classappend="${i == currentPage} ? 'active'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, page=${i})}" th:text="${i}">1</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, page=${i})}" th:text="${i}">1</a>
                         </li>
                         <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, page=${currentPage + 1})}">下一页 &raquo;</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, page=${currentPage + 1})}">下一页 &raquo;</a>
                         </li>
                     </ul>
                 </nav>
@@ -188,12 +215,14 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
     <script th:inline="javascript">
         var contextPath = /*[[${contextPath}]]*/ '';
+        var currentStatus = /*[[${status}]]*/ '';
 
         function doSearch() {
             var keyword = document.getElementById('searchInput').value.trim();
             var templateType = document.getElementById('templateTypeFilter').value;
             var url = contextPath + '/docs?keyword=' + encodeURIComponent(keyword);
             if (templateType) url += '&templateType=' + encodeURIComponent(templateType);
+            if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
             window.location.href = url;
         }
 
@@ -204,6 +233,7 @@
             var params = [];
             if (keyword) params.push('keyword=' + encodeURIComponent(keyword));
             if (templateType) params.push('templateType=' + encodeURIComponent(templateType));
+            if (currentStatus) params.push('status=' + encodeURIComponent(currentStatus));
             if (params.length > 0) url += '?' + params.join('&');
             window.location.href = url;
         }
@@ -229,6 +259,38 @@
                 deleteDoc(btn.getAttribute('data-doc-id'));
             }
         });
+
+        // 事件委托：撤销待删标记（M10）
+        document.getElementById('docList').addEventListener('click', function(e) {
+            var btn = e.target.closest('.restore-btn');
+            if (btn) {
+                restoreDoc(btn.getAttribute('data-doc-id'));
+            }
+        });
+
+        // 动态表单必须手动补 CSRF token —— 同 deleteDoc 的坑，删了就 403
+        function submitPostForm(action) {
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.action = action;
+            var csrfMeta = document.querySelector('meta[name="_csrf"]');
+            if (csrfMeta) {
+                var csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = '_csrf';
+                csrfInput.value = csrfMeta.getAttribute('content');
+                form.appendChild(csrfInput);
+            }
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        function restoreDoc(id) {
+            if (!confirm('撤销待删标记，把这条经验恢复正常？')) {
+                return;
+            }
+            submitPostForm(contextPath + '/docs/' + id + '/restore');
+        }
 
         function deleteDoc(id) {
             if (!confirm('确定要删除这条经验吗？删除后将无法恢复。')) {

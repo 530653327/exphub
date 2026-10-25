@@ -91,6 +91,7 @@ public class PageController extends BaseController {
     public String docs(HttpSession session,
                        @RequestParam(required = false) String keyword,
                        @RequestParam(required = false) String templateType,
+                       @RequestParam(required = false) String status,
                        @RequestParam(defaultValue = "1") int page,
                        Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
@@ -101,6 +102,7 @@ public class PageController extends BaseController {
         model.addAttribute("pageTitle", "经验管理");
         model.addAttribute("keyword", keyword != null ? keyword : "");
         model.addAttribute("templateType", templateType != null ? templateType : "");
+        model.addAttribute("status", status != null ? status : "");
 
         Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -128,12 +130,21 @@ public class PageController extends BaseController {
             if (templateType != null && !templateType.trim().isEmpty()) {
                 wrapper.eq("template_type", templateType.trim());
             }
+            // M10：status 筛选同时承担「待删队列」入口（/docs?status=PENDING_DELETE）
+            if (status != null && !status.trim().isEmpty()) {
+                wrapper.eq("status", status.trim());
+            }
             result = docMapper.selectPage(new Page<>(page, 20), wrapper);
         }
         model.addAttribute("docs", result.getRecords());
         model.addAttribute("currentPage", result.getCurrent());
         model.addAttribute("totalPages", result.getPages());
         model.addAttribute("totalRows", result.getTotal());
+
+        // M10：待删数量用于顶部入口的角标（AI 标记后用户能看到「有几条等确认」）
+        model.addAttribute("pendingDeleteCount",
+                docMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
+                        .eq("status", DocService.PENDING_DELETE)));
 
         return "docs/list";
     }
@@ -296,5 +307,15 @@ public class PageController extends BaseController {
 
         docService.delete(id);
         return "redirect:/docs";
+    }
+
+    // M10：撤销待删标记（把 AI 标记的东西放回来）
+    @PostMapping("/docs/{id}/restore")
+    public String restoreDoc(HttpSession session, @PathVariable Long id) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        docService.cancelDeletion(id);
+        return "redirect:/docs?status=" + DocService.PENDING_DELETE;
     }
 }

@@ -36,6 +36,11 @@ public class Doc {
     private String loadStrategy;     // ALWAYS(每次必读)/ON_DEMAND(按需)
     private Integer sortOrder;       // 排序
     private String visibility;       // PRIVATE(仅同Key可见)/PUBLIC(所有Key可见)
+    // ===== M10 标记待删（2026-10-25）=====
+    // 状态值用 status=PENDING_DELETE 承载，搜索默认只查 ACTIVE 因而天然排除
+    private String deleteReason;     // 标记待删的原因（AI 填写）
+    private String deleteMarkedBy;   // 标记待删的助手名
+    private LocalDateTime deleteMarkedAt; // 标记时间
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

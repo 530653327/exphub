@@ -376,7 +376,10 @@ public class ExpHubTools {
             @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
             @ToolParam(description = "可选。指定搜索的模板类型：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)、goal(目标)。不传则搜索所有类型。", required = false) String templateType,
             @ToolParam(description = "可选。指定搜索的状态，默认只搜索 ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。", required = false) String includeStatus,
-            @ToolParam(description = "可选。限定在某个项目内搜索，填项目名称或别名（如'回金算'、'huijinsuan'）。不传则只搜索全局经验——项目专属经验不会出现在全局搜索结果中。", required = false) String projectName) {
+            @ToolParam(description = "可选。限定在某个项目内搜索，填项目名称或别名（如'回金算'、'huijinsuan'）。不传则只搜索全局经验——项目专属经验不会出现在全局搜索结果中。", required = false) String projectName,
+            @ToolParam(description = "可选。本次返回条数，默认 20，上限 50。要一次看更多就调大（例如 50），不要靠反复换关键词。", required = false) Integer limit,
+            @ToolParam(description = "可选。偏移量，默认 0。上一页末尾提示「下一页 offset=N」时照抄该值翻页。", required = false) Integer offset,
+            @ToolParam(description = "可选。true=精简模式，只给 ID/标题/类型/摘要（省 token，适合先扫一遍挑目标）；false=默认完整信息（含标签/作者/更新时间/历史版本提示）。", required = false) Boolean brief) {
         
         try {
             // 权限验证
@@ -420,11 +423,21 @@ public class ExpHubTools {
             if (statusFilter == null || statusFilter.isEmpty()) {
                 statusFilter = "ACTIVE";
             } else if ("ALL".equalsIgnoreCase(statusFilter.trim())) {
-                statusFilter = null;
+                // M10：ALL 不再等价于「什么状态都要」，而是「除待删外的全部状态」。
+                // 待删项是等用户确认要删的东西，让 AI 搜到只会拿错资料。
+                statusFilter = "ACTIVE,COMPLETED,BROKEN,DEPRECATED";
             }
-            
-            var result = docService.search(query, templateType, statusFilter, projectId, 1, 20);
-            var docs = result.getRecords();
+
+            // M18-b：分页与精简（原实现固定 page=1 size=20，合并项目域后约 30 条，
+            // 第 26 条起永远拿不到 = 隐式 25 条上限。现在由调用方控制 limit/offset）
+            int effLimit = (limit == null || limit <= 0) ? 20 : Math.min(limit, LIST_MAX_SIZE);
+            int effOffset = (offset == null || offset < 0) ? 0 : offset;
+            // 召回池 = offset + limit，上限 200：offset 很大时不至于让 DB 全表排序
+            int poolSize = Math.min(effOffset + effLimit, SEARCH_POOL_MAX);
+
+            var result = docService.search(query, templateType, statusFilter, projectId, 1, poolSize);
+            long matchedTotal = result.getTotal();
+            java.util.List<Doc> docs = new ArrayList<>(result.getRecords());
 
             // E5：全局搜索时若查询词里含项目名/别名，自动 OR 召回该项目的专属经验。
             // 背景：项目经验默认隔离不进全局索引，导致搜「拆解宝」前 10 条全是「回金算」的内容，
@@ -439,7 +452,7 @@ public class ExpHubTools {
                 autoProject = detectProjectInQuery(query);
                 if (autoProject != null) {
                     try {
-                        var projResult = docService.search(query, templateType, statusFilter, autoProject.getId(), 1, 10);
+                        var projResult = docService.search(query, templateType, statusFilter, autoProject.getId(), 1, poolSize);
                         Set<Long> projIds = new LinkedHashSet<>();
                         for (Doc d : projResult.getRecords()) projIds.add(d.getId());
                         if (!projIds.isEmpty()) {
@@ -495,20 +508,54 @@ public class ExpHubTools {
                 return sb.toString();
             }
 
+            // M18-b：内存分页。项目域合并后的顺序已固定为「项目内命中在前 + 全局在后」，
+            // 所以直接对合并结果切片即可，翻页不会串位。
+            int poolTotal = docs.size();
+            int[] bounds = searchPageBounds(poolTotal, effOffset, effLimit);
+            int fromIdx = bounds[0], toIdx = bounds[1];
+            java.util.List<Doc> pageDocs = docs.subList(fromIdx, toIdx);
+            boolean hasMore = toIdx < poolTotal;
+            boolean briefMode = Boolean.TRUE.equals(brief);
+
             StringBuilder sb = new StringBuilder();
-            sb.append(filterInfo).append("找到 ").append(docs.size()).append(" 条相关经验：\n\n");
+            sb.append(filterInfo)
+              .append("匹配 ").append(Math.max(matchedTotal, poolTotal)).append(" 条");
+            if (effOffset > 0) {
+                sb.append("，本次从第 ").append(fromIdx + 1).append(" 条起返回 ").append(pageDocs.size()).append(" 条");
+            }
+            sb.append("：\n\n");
+
             if (projDocsHit.isEmpty()) {
-                sb.append(renderDocs(docs));
+                sb.append(renderDocs(pageDocs, briefMode));
             } else {
                 // 分组显示：项目内命中在前、全局相关在后，AI 一眼能看出哪些属于该项目
-                sb.append("【项目「").append(detected.getName()).append("」内命中 ")
-                  .append(projDocsHit.size()).append(" 条】\n\n");
-                sb.append(renderDocs(projDocsHit));
-                int restCnt = docs.size() - projDocsHit.size();
-                if (restCnt > 0) {
-                    sb.append("\n【全局相关 ").append(restCnt).append(" 条】\n\n");
-                    sb.append(renderDocs(docs.subList(projDocsHit.size(), docs.size())));
+                Set<Long> projIdsInPage = new LinkedHashSet<>();
+                for (Doc d : projDocsHit) projIdsInPage.add(d.getId());
+                java.util.List<Doc> pageProj = new ArrayList<>();
+                java.util.List<Doc> pageRest = new ArrayList<>();
+                for (Doc d : pageDocs) {
+                    if (projIdsInPage.contains(d.getId())) pageProj.add(d); else pageRest.add(d);
                 }
+                if (!pageProj.isEmpty()) {
+                    sb.append("【项目「").append(detected.getName()).append("」内命中 ")
+                      .append(pageProj.size()).append(" 条】\n\n");
+                    sb.append(renderDocs(pageProj, briefMode));
+                }
+                if (!pageRest.isEmpty()) {
+                    sb.append("\n【全局相关 ").append(pageRest.size()).append(" 条】\n\n");
+                    sb.append(renderDocs(pageRest, briefMode));
+                }
+            }
+
+            // 翻页提示：不提示的话调用方以为「只有这些」，这正是原来隐式 25 条上限的根源
+            sb.append("\n---\n");
+            if (hasMore) {
+                sb.append("📄 还有 ").append(poolTotal - toIdx).append(" 条未显示，下一页传 offset=")
+                  .append(toIdx).append("（limit 不变即 ").append(effLimit).append("）；")
+                  .append("想一次多看就调大 limit（上限 ").append(LIST_MAX_SIZE).append("）。\n");
+            } else {
+                sb.append("📄 以上为全部结果（本次返回第 ").append(fromIdx + 1).append("-").append(toIdx)
+                  .append(" 条，共 ").append(poolTotal).append(" 条）。\n");
             }
             if (detected != null) {
                 sb.append("---\n💡 查询词含项目「").append(detected.getName()).append("」（")
@@ -547,13 +594,47 @@ public class ExpHubTools {
                 : s;
     }
 
+    /** M18-b：搜索结果召回池上限。offset 很大时避免 DB 全量排序，同时保证翻页能翻到 */
+    private static final int SEARCH_POOL_MAX = 200;
+
+    /**
+     * M18-b：计算本次返回区间 [from, to)。包级可见便于单测。
+     * 越界一律夹到区间内，不抛异常：AI 传了个离谱的 offset 时应拿到「空页 + 提示」，而不是一个错误。
+     */
+    static int[] searchPageBounds(int poolTotal, int offset, int limit) {
+        int total = Math.max(poolTotal, 0);
+        int from = Math.min(Math.max(offset, 0), total);
+        int to = Math.min(from + Math.max(limit, 0), total);
+        return new int[]{from, to};
+    }
+
+    /** M18-b：精简模式的一条结果（单行，省 token）。包级可见便于单测。 */
+    static String briefLine(int index, Doc doc) {
+        return index + ". 【ID:" + doc.getId() + "】" + doc.getTitle()
+                + " —— " + getTemplateTypeLabel(doc.getTemplateType())
+                + " " + getStatusLabel(doc.getStatus())
+                + " · " + previewSummary(doc.getSummary()) + "\n";
+    }
+
     private String renderDocs(List<Doc> docs) {
+        return renderDocs(docs, false);
+    }
+
+    /**
+     * @param brief true=精简模式（M18-b）：一条一行，只留 ID/标题/类型/状态/摘要。
+     *              省 token，适合「先扫一遍挑目标」；要看标签、作者、历史版本提示就传 false。
+     */
+    private String renderDocs(List<Doc> docs, boolean brief) {
         StringBuilder sb = new StringBuilder();
         int i = 1;
         for (Doc doc : docs) {
-            sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
+            if (brief) {
+                sb.append(briefLine(i++, doc));
+                continue;
+            }
             String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
             String statusLabel = getStatusLabel(doc.getStatus());
+            sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
             sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel)
               .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
             sb.append("   摘要: ").append(previewSummary(doc.getSummary())).append("\n");
@@ -591,7 +672,7 @@ public class ExpHubTools {
         return null;
     }
 
-    private String getTemplateTypeLabel(String type) {
+    static String getTemplateTypeLabel(String type) {
         if (type == null) return "通用";
         return switch (type) {
             case "problem_solution" -> "🛠️ 问题解决方案";
@@ -606,7 +687,7 @@ public class ExpHubTools {
         };
     }
     
-    private String getStatusLabel(String status) {
+    static String getStatusLabel(String status) {
         if (status == null) return "未知";
         return switch (status) {
             case "ACTIVE" -> "🟢 正常";
@@ -636,6 +717,11 @@ public class ExpHubTools {
             
             // 校验状态值
             String upperStatus = status != null ? status.toUpperCase() : "";
+            // M10：待删必须走专用工具（要带原因，且删不删由用户定），这里挡掉绕过路径
+            if (DocService.PENDING_DELETE.equals(upperStatus)) {
+                return "❌ 待删标记不能用状态接口设置。请改用 mark_for_deletion(id, reason)："
+                        + "它要求说明删除原因，且是否真删由用户在后台确认。";
+            }
             if (!List.of("ACTIVE", "COMPLETED", "BROKEN", "DEPRECATED").contains(upperStatus)) {
                 return "❌ 无效的状态值: " + status + "，可选：ACTIVE、COMPLETED、BROKEN、DEPRECATED";
             }
@@ -654,6 +740,82 @@ public class ExpHubTools {
             log.error("ExpHubTools.updateExperienceStatus: FAILED", e);
             callLogService.incrementFailCalls();
             return "更新状态失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /**
+     * M10：标记经验为待删（AI 侧唯一可用的「删除」动作）。
+     *
+     * <p>红线：模型没有删除能力。本工具只把文档挂上待删标记并写明原因，
+     * 真正删除必须由用户在后台「待删队列」里确认执行。
+     * 标记后该经验立刻从搜索结果中消失（检索只查 ACTIVE），但内容仍在库里，用户可一键恢复。
+     */
+    @Tool(name = "mark_for_deletion", description = "【标记待删，不是删除】把一条错误的/过时的/重复的经验标记为「待删」，由用户在后台确认后才真正删除。你没有删除权限，这是你能做的唯一动作。适用场景：发现自己写错了内容、创建了重复经验、记录了已失效的方案。⚠️ 必须填 reason 说明为什么该删（用户据此决定删不删）；标记后该经验立即从搜索结果中消失，但内容仍可恢复。如误标，用 cancel_deletion 撤回。")
+    public String markForDeletion(
+            @ToolParam(description = "要标记待删的经验 ID") Long id,
+            @ToolParam(description = "删除原因（必填）。说清为什么该删，例如：重复经验（与 ID:123 同内容）/ 内容错误（命令已失效）/ 测试数据误写。用户在后台据此决定是否真删。") String reason) {
+
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限，不能标记待删";
+            }
+            if (reason == null || reason.trim().isEmpty()) {
+                return "❌ 必须填写 reason（删除原因）。用户在后台看到的就是这句话，没有原因他不会知道该不该删。";
+            }
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+            String by = (assistant != null && assistant.getAssistantName() != null)
+                    ? assistant.getAssistantName() : "unknown";
+            Doc marked = docService.markForDeletion(id, reason, by);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ 已标记为待删（**尚未删除**）\n\n");
+            sb.append("**ID**: ").append(id).append("\n");
+            sb.append("**标题**: ").append(marked.getTitle()).append("\n");
+            sb.append("**原因**: ").append(reason.trim()).append("\n");
+            sb.append("**标记人**: ").append(by).append("\n\n");
+            sb.append("现在起该经验不再出现在搜索结果中，但内容仍在库里。\n");
+            sb.append("真正删除需要用户在后台「经验管理 → 待删队列」确认执行；如需撤回，调用 cancel_deletion(id=").append(id).append(")。\n\n");
+            sb.append("⚠️ 请在回复里明确告诉用户：你只是打了删除标记，需要他确认才会真正删除。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.markForDeletion: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "标记待删失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * M10：撤销待删标记，恢复为 ACTIVE。
+     */
+    @Tool(name = "cancel_deletion", description = "撤销「待删」标记，把经验恢复为正常（ACTIVE）状态。用于：自己标错了、或用户看过之后说「这条不要删」。只有被标记为待删的经验才需要调用。")
+    public String cancelDeletion(
+            @ToolParam(description = "要恢复的经验 ID") Long id) {
+
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+            if (!DocService.PENDING_DELETE.equals(existing.getStatus())) {
+                return "ℹ️ 经验 ID:" + id + " 当前状态是 " + getStatusLabel(existing.getStatus())
+                        + "，并没有被标记待删，无需恢复。";
+            }
+            Doc restored = docService.cancelDeletion(id);
+            return "✅ 已撤销待删标记\n\n**ID**: " + id + "\n**标题**: " + restored.getTitle()
+                    + "\n**当前状态**: " + getStatusLabel(restored.getStatus())
+                    + "\n\n该经验已恢复正常，会重新出现在搜索结果中。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.cancelDeletion: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "撤销待删标记失败: " + e.getMessage();
         }
     }
 

@@ -594,11 +594,24 @@ public class DocService {
         return apiKey.equals(project.getApiKey());
     }
 
-    private List<String> parseStatusList(String includeStatus) {
+    /** 包级静态便于单测：M10 的关键安全性在于「ALL 也不许带出待删项」 */
+    static List<String> parseStatusList(String includeStatus) {
         if (includeStatus == null || includeStatus.trim().isEmpty()) return null;
         List<String> list = new ArrayList<>();
         for (String s : includeStatus.split(",")) {
-            if (!s.trim().isEmpty()) list.add(s.trim());
+            String v = s.trim();
+            if (v.isEmpty()) continue;
+            // M10：ALL 展开为「除待删外的全部状态」。
+            // 待删项是「等用户确认要删的东西」，让 AI 在检索里看到它只会误导判断；
+            // 真想看待删队列请显式传 PENDING_DELETE（后台用，MCP 侧不鼓励）。
+            if ("ALL".equalsIgnoreCase(v)) {
+                list.add("ACTIVE");
+                list.add("COMPLETED");
+                list.add("BROKEN");
+                list.add("DEPRECATED");
+                continue;
+            }
+            list.add(v);
         }
         return list.isEmpty() ? null : list;
     }
@@ -871,6 +884,11 @@ public class DocService {
      */
     @Transactional
     public Doc updateStatus(Long id, String status) {
+        // PENDING_DELETE 只能由 markForDeletion 设置：它必须带原因，且语义是「不可逆操作的前置标记」，
+        // 不能被通用的状态变更接口顺手写上（否则等于给模型留了一条绕过原因说明的后门）。
+        if (PENDING_DELETE.equalsIgnoreCase(status)) {
+            throw new IllegalArgumentException("PENDING_DELETE 不能通过状态接口设置，请使用 mark_for_deletion 并说明原因");
+        }
         Doc doc = docMapper.selectById(id);
         if (doc == null) {
             return null;
@@ -882,6 +900,78 @@ public class DocService {
         callLogService.logUpdate(doc);
         
         return doc;
+    }
+
+    // ==================== M10 标记待删（2026-10-25） ====================
+    //
+    // 设计红线：模型没有删除能力。它能做的只有「标记」，真正的删除必须由用户在后台点击执行。
+    // 实现上借用 status 字段（值 PENDING_DELETE）：
+    //   - 所有检索默认只查 ACTIVE（search / check_my_todos / listRecentAccessible），待删项自动不可见
+    //   - 后台 /docs?status=PENDING_DELETE 就是待删队列，用户在这里恢复或彻底删除
+    // 这样不碰任何检索 SQL，避免为了一个状态改动全库查询条件。
+
+    /** 待删状态值：AI 标记后等待用户确认，不等于已删除 */
+    public static final String PENDING_DELETE = "PENDING_DELETE";
+
+    /**
+     * 标记经验为待删。
+     *
+     * @param id     经验 ID
+     * @param reason 删除原因（必填，用户据它判断是否真删）
+     * @param by     标记人（助手名，记录进 delete_marked_by）
+     * @return 标记后的文档；文档不存在返回 null
+     */
+    @Transactional
+    public Doc markForDeletion(Long id, String reason, String by) {
+        Doc doc = docMapper.selectById(id);
+        if (doc == null) {
+            return null;
+        }
+        doc.setStatus(PENDING_DELETE);
+        doc.setDeleteReason(truncateForColumn(reason, 500));
+        doc.setDeleteMarkedBy(truncateForColumn(by, 100));
+        doc.setDeleteMarkedAt(java.time.LocalDateTime.now());
+        docMapper.updateById(doc);
+        callLogService.logUpdate(doc);
+        log.info("markForDeletion: doc={} by={} reason={}", id, by, reason);
+        return doc;
+    }
+
+    /**
+     * 取消待删标记，恢复为 ACTIVE。
+     * 用户判断「这条不该删」时在后台点恢复；AI 误标后也可用 cancel_deletion 自行撤回。
+     */
+    @Transactional
+    public Doc cancelDeletion(Long id) {
+        Doc doc = docMapper.selectById(id);
+        if (doc == null) {
+            return null;
+        }
+        if (!PENDING_DELETE.equals(doc.getStatus())) {
+            return doc;
+        }
+        doc.setStatus("ACTIVE");
+        doc.setDeleteReason(null);
+        doc.setDeleteMarkedBy(null);
+        doc.setDeleteMarkedAt(null);
+        docMapper.updateById(doc);
+        callLogService.logUpdate(doc);
+        log.info("cancelDeletion: doc={}", id);
+        return doc;
+    }
+
+    /** 待删队列（后台用）：按标记时间倒序，仅供参考与批量清理，不参与任何 MCP 检索 */
+    public Page<Doc> listPendingDelete(int page, int size) {
+        QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        wrapper.eq("status", PENDING_DELETE).orderByDesc("delete_marked_at");
+        return docMapper.selectPage(new Page<>(page, size), wrapper);
+    }
+
+    /** 列宽保护：delete_reason 是 varchar(500)，超长在 STRICT 模式下会直接抛错 */
+    private static String truncateForColumn(String s, int max) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.length() > max ? t.substring(0, max) : t;
     }
 
     /**
