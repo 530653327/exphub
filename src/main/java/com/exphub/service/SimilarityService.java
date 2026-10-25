@@ -487,16 +487,24 @@ public class SimilarityService {
         //    ①层豁免的理由是「一篇母档命中多个子页该一起判」，②层这批**不是一起判**，
         //    而是同一家族内部两两比较，而且 #63 与这四个子页在①层已逐对给过结论 —— 摆在②层纯占位。
         //    → **per-doc 只在①层豁免，②层恢复。**
+        // ⚠️ 2026-10-26 03:15 越哥定：**③层（none）不参与抢名额** —— 让它排到最后，名额有余才给。
+        //
+        // 他给的判据：`progressSample=0` 时③层 33 条占 66% 名额，而②层 4 对被 per-doc 挤掉；
+        // 「none 意味着不用判，占名额等于浪费；抢位会造成新的顺序复杂性和更多状态」。
+        // 所以不做「补位优先抢③层名额」那种互相插队的规则，而是**三段式**：
+        //   ① 可判层（①② + UNKNOWN）按原顺序占位 → ② per-doc 挤掉的补回 → ③ 最后才轮到进度类
+        // 这样顺序规则只有一条：**能判的永远先于不用判的**。
+        java.util.List<Row> progressRows = new java.util.ArrayList<>();
+
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
+            if (k == SimilarityScorer.Kind.PROGRESS) {
+                progressRows.add(r);   // 攒着，等可判层都坐下了再说
+                continue;
+            }
             int[] cnt = c.get(k);
             if (selected.size() >= maxRows) {
                 cnt[3]++;
-                continue;
-            }
-            // ③层（进度/日志）默认只给几条样本：可判性最低的一层不该吃掉大半名额
-            if (k == SimilarityScorer.Kind.PROGRESS && progressSample > 0 && cnt[1] >= progressSample) {
-                cnt[4]++;
                 continue;
             }
             if (k != SimilarityScorer.Kind.DUPLICATE) {
@@ -513,20 +521,43 @@ public class SimilarityService {
             cnt[1]++;
         }
 
+        // 第二段：可判层被 per-doc 挤掉的，名额有余就补回
         // ⚠️ 2026-10-26 03:01 越哥实测：③层抽样截到 5 条后，**空出来的名额没人用** ——
         //    传 limit=50 实际只展示 22 条，而②层还有 4 对是被 per-doc 挤掉的。
         //    per-doc 的本意是「防一批同格式提示词刷屏」，**不是硬不变量**：
         //    名额闲着的时候，宁可多给几条候选，也不留空位。
-        //    补位按原顺序（层先分数后）补，补完再整体重排一次，保证分层顺序不乱。
         int filled = 0;
         for (Row r : perDocDropped) {
             if (selected.size() >= maxRows) break;
             selected.add(r);
             filled++;
         }
-        if (filled > 0) {
-            selected.sort(Row.order());
+
+        // 第三段：最后才给③层（进度/日志）—— 受 progressSample 与剩余名额双重约束
+        for (Row r : progressRows) {
+            int[] cnt = c.get(SimilarityScorer.Kind.PROGRESS);
+            if (selected.size() >= maxRows) {
+                cnt[3]++;
+                continue;
+            }
+            if (progressSample > 0 && cnt[1] >= progressSample) {
+                cnt[4]++;
+                continue;
+            }
+            int ca = perDocCount.getOrDefault(r.docA(), 0);
+            int cb = perDocCount.getOrDefault(r.docB(), 0);
+            if (ca >= perDoc || cb >= perDoc) {
+                cnt[2]++;
+                samples.computeIfAbsent(SimilarityScorer.Kind.PROGRESS, x -> new java.util.ArrayList<>())
+                        .add("#" + r.docA() + "↔#" + r.docB());
+                continue;
+            }
+            perDocCount.put(r.docA(), ca + 1);
+            perDocCount.put(r.docB(), cb + 1);
+            selected.add(r);
+            cnt[1]++;
         }
+        selected.sort(Row.order());   // 展示顺序仍是①②③，非「先到先得」
 
         // 最终计数（必须基于补位后的 selected，否则「展示 N 条」与实际清单对不上）
         java.util.Map<SimilarityScorer.Kind, Integer> shownNow = new java.util.LinkedHashMap<>();

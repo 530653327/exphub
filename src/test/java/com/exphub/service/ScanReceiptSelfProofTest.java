@@ -42,6 +42,20 @@ class ScanReceiptSelfProofTest {
     }
 
     /** 组头不许预设动作（分层说的是「像什么」，动作说的是「做什么」） */
+    /**
+     * 差额为 0 时不许印「（差额 0 条 …）」（2026-10-26 03:1x 阁主实测）。
+     *
+     * <p>没差额还让人去找差额，等于凭空造一个不存在的东西。
+     */
+    @Test
+    void zeroGapMustNotRenderExplanation() throws IOException {
+        String src = read();
+        assertTrue(src.contains("if (gap > 0) {"),
+                "差额解释必须挂在 gap > 0 分支里，否则 0 差额也会渲染");
+        assertFalse(src.contains("if (r.rows().size() < r.limit() || filled) {"),
+                "旧写法（展示数 < limit 就渲染差额）会让 0 差额也印出来，已废弃");
+    }
+
     @Test
     void groupHeaderMustNotPresetAction() throws IOException {
         String src = read();

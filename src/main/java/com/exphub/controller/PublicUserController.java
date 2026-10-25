@@ -8,6 +8,7 @@ import com.exphub.entity.Doc;
 import com.exphub.entity.PublicUser;
 import com.exphub.interceptor.PortalAuthInterceptor;
 import com.exphub.mapper.DocMapper;
+import com.exphub.service.DocService;
 import com.exphub.service.PublicUserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,9 @@ public class PublicUserController {
 
     @Autowired
     private DocMapper docMapper;
+
+    @Autowired
+    private DocService docService;
 
     /**
      * 邮箱注册
@@ -222,6 +226,12 @@ public class PublicUserController {
         doc.setApiKey(existing.getApiKey());
         doc.setAuthorId(existing.getAuthorId());
         doc.setAuthorName(existing.getAuthorName());
+        // ⚠️ 2026-10-26 03:1x 查数据时定位到：这里原来直接 setVersion(old+1) + updateById，
+        //    **跳过快照** → 版本号被吃掉却没有副本。全库复查（主表+冷存档）只有 4 个文档缺号，
+        //    全是门户文档：#101 缺 v13/v15、#578 缺 v8/v11/v16/v29、#126 缺 v3/v5/v7、#30 缺 v2。
+        //    先补快照再递增，顺序不能反（反了就没有「改之前」的正文可存）。
+        docService.snapshotBeforeExternalUpdate(existing, doc.getContent(),
+                existing.getAuthorName() == null ? "portal" : existing.getAuthorName());
         doc.setVersion(existing.getVersion() != null ? existing.getVersion() + 1 : 1);
         doc.setCallCount(existing.getCallCount());
         doc.setSuccessCount(existing.getSuccessCount());

@@ -195,19 +195,31 @@ public class ExpHubTools {
         // **导读没合并** —— 同一个事实的两个出口，改一个必须回头查另一个。
         List<DocVersion> versions = docService.getVersions(id);
         VersionArchiveService.ArchivedSummary arc = versionArchiveService.archivedSummary(id);
-        int total = versions.size() + (int) arc.rows();
-        if (total > 0) {
-            int maxV = arc.maxVersion();
-            for (DocVersion v : versions) {
-                if (v.getVersion() != null) maxV = Math.max(maxV, v.getVersion());
-            }
-            sb.append("> 📚 **历史导读**：本文档当前为 v").append(doc.getVersion());
+        // ⚠️ 2026-10-26 03:1x 阁主实测 #101：导读写「共 18 条（v1 ~ v20）：主表 10 条、冷存档 8 条」，
+        //    条数来自 COUNT、区间来自 doc.getVersion()-1 —— **两个来源拼成一句话**。
+        //    实情是主表 v9,10,11,12,14,16,17,18,19,20（缺 v13、v15）、归档 v1~v8 连续，
+        //    「18 条」与「v1 ~ v20」各自都对，但**缺的 2 个版本号没人说** → 读者只会怀疑归档搬丢了数据。
+        //    现在条数、上界、缺号、重号全部由 VersionCoverage 一次算出，且缺口必须主动说明。
+        java.util.List<Integer> mainVs = new java.util.ArrayList<>();
+        for (DocVersion v : versions) mainVs.add(v.getVersion());
+        java.util.List<Integer> arcVs = versionArchiveService.archivedVersionNumbers(id);
+        VersionArchiveService.VersionCoverage cov = VersionArchiveService.VersionCoverage.of(mainVs, arcVs);
+        if (cov.totalRows() > 0) {
+            sb.append("> 📚 **历史导读**：本文档当前为 v").append(doc.getVersion())
+              .append("，**历史版本共 ").append(cov.totalRows()).append(" 条");
             if (arc.rows() > 0) {
-                sb.append("，**历史版本共 ").append(total).append(" 条（v1 ~ v").append(maxV)
-                  .append("）**：主表 ").append(versions.size()).append(" 条、冷存档 ")
-                  .append(arc.rows()).append(" 条");
-            } else {
-                sb.append("，共保存 ").append(total).append(" 个历史版本（v1 ~ v").append(maxV).append("）");
+                sb.append("（主表 ").append(versions.size()).append(" 条、冷存档 ")
+                  .append(arc.rows()).append(" 条）");
+            }
+            sb.append("，版本号到 v").append(cov.maxVersion()).append("**");
+            if (!cov.missing().isEmpty()) {
+                sb.append("。\n> ⚠️ ").append(cov.missingNote())
+                  .append("（早期经门户「更新我的经验」改正文时只递增版本号、未存快照；")
+                  .append("**不是归档丢的** —— 归档只搬不删，搬运前先校验插入行数）");
+            }
+            if (!cov.duplicated().isEmpty()) {
+                sb.append("。\n> ℹ️ ").append(cov.duplicateNote())
+                  .append("（同一版本号存了多条，属正常历史遗留，读的时候任取一条即可）");
             }
             sb.append("。\n");
             sb.append("> 如需了解本文档的**来龙去脉、演进过程或历史解决方案**，请调用\n");
@@ -960,8 +972,13 @@ public class ExpHubTools {
             // 原实现对每条结果都调 getVersions()，20 条结果 = 20 次额外查询（N+1），
             // 而这里只需要「有没有历史」这一个布尔信息，version 字段本身就够了。
             if (doc.getVersion() != null && doc.getVersion() > 1) {
-                sb.append("   📚 历史版本: 共 ").append(doc.getVersion() - 1).append(" 个（v1 ~ v")
-                  .append(doc.getVersion() - 1).append("），如需了解演进过程请调用 get_experience_history(id=")
+                // ⚠️ 2026-10-26 03:1x：这里原来写「共 (version-1) 个（v1 ~ v(version-1)）」——
+                //    和详情页导读是同一个病：**拿当前版本号推条数**。有缺号时（#101 缺 v13/v15）
+                //    会多报 2 个；有重号时（#608 v2 两份）会少报 1 个。
+                //    列表页为了不做 N+1 查询，本来就没查版本表 —— 那就**别报条数**，
+                //    只报「当前 vN、有历史」，具体几条让人去 history 看。少说一句，好过说错一句。
+                sb.append("   📚 历史版本: 当前 v").append(doc.getVersion())
+                  .append("，如需了解演进过程请调用 get_experience_history(id=")
                   .append(doc.getId()).append(", version=版本号)").append("\n");
             }
             sb.append("\n");
@@ -2284,8 +2301,12 @@ public class ExpHubTools {
                 sb.append("\n　**本次展示 ").append(r.rows().size()).append(" 条 / 你传的 limit=")
                   .append(r.limit()).append("**");
                 boolean filled = r.filledPerDoc() > 0;
-                if (r.rows().size() < r.limit() || filled) {
-                    sb.append("（差额 ").append(Math.max(0, r.limit() - r.rows().size()))
+                int gap = Math.max(0, r.limit() - r.rows().size());
+                // ⚠️ 2026-10-26 03:1x 阁主实测：差额为 0 时这句仍然印「（差额 0 条 …）」
+                //    —— 没差额还让人去找差额，等于凭空造一个不存在的东西。
+                //    规则：**只在真有差额时渲染解释**；有差额时也不许含糊其辞。
+                if (gap > 0) {
+                    sb.append("（差额 ").append(gap)
                       .append(" 条 = 各层规则主动省略：③层进度类默认只抽样 ")
                       .append(SimilarityService.DEFAULT_PROGRESS_SAMPLE)
                       .append(" 条 / per-doc 限流，明细见每层括号）");

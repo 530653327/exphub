@@ -147,6 +147,37 @@ class SelectionLimitTest {
                 "progressSample=0 表示不限，要能全看");
     }
 
+    /**
+     * ③层（none）不抢名额 —— 名额紧张时它一条都不该进（2026-10-26 03:15 越哥定）。
+     *
+     * <p>他的判据：`progressSample=0` 时③层 33 条占 66% 名额，而②层 4 对被 per-doc 挤掉；
+     * 「none 意味着不用判，占名额等于浪费；抢位会造成新的顺序复杂性和更多状态」。
+     * 所以规则不是「补位去抢③层的名额」，而是**③层排到最后，名额有余才给**。
+     */
+    @Test
+    void progressTierYieldsSeatsToJudgableTiers() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        // 3 条可判（②层）+ 5 条进度类，limit 只够 3 条，progressSample=0（不限）
+        all.add(row(SimilarityScorer.Kind.SERIES, 11, 12, 0.60));
+        all.add(row(SimilarityScorer.Kind.SERIES, 13, 14, 0.59));
+        all.add(row(SimilarityScorer.Kind.SERIES, 15, 16, 0.58));
+        for (int i = 0; i < 5; i++) {
+            all.add(row(SimilarityScorer.Kind.PROGRESS, 300L + i, 400L + i, 0.57 - i * 0.01));
+        }
+        all.sort(SimilarityService.Row.order());
+
+        SimilarityService.Selection sel = SimilarityService.select(all, 3, 2, 0);
+        assertEquals(3, sel.rows().size());
+        assertTrue(sel.rows().stream().noneMatch(r -> r.kind() == SimilarityScorer.Kind.PROGRESS),
+                "名额只够 3 条时，进度类一条都不该进：\" + sel.rows()");
+        assertEquals(5, sel.detail().get(SimilarityScorer.Kind.PROGRESS).shown() == 0
+                ? 5 : 5, "占位断言见下两行");
+
+        SimilarityService.TierDetail p = sel.detail().get(SimilarityScorer.Kind.PROGRESS);
+        assertEquals(0, p.shown(), "③层展示 0 条");
+        assertEquals(5, p.droppedByLimit(), "5 条全部记「被 limit 截断」，如实报");
+    }
+
     @Test
     void lowerTierDropsAreReportedWithSamples() {
         List<SimilarityService.Row> all = sorted();

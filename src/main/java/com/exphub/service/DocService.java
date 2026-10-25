@@ -783,6 +783,32 @@ public class DocService {
     }
 
     /**
+     * 供<b>不走本 service 写库</b>的调用方（门户 REST 等）在 updateById 之前补一条快照。
+     *
+     * <p><b>为什么需要（2026-10-26 03:1x 查数据时定位到的真因）</b>：
+     * `PublicUserController.updateMyDoc`（门户「更新我的经验」）直接
+     * {@code doc.setVersion(old+1); docMapper.updateById(doc)}，<b>跳过了快照</b> ——
+     * 版本号被吃掉，却没有对应副本。全库复查（含冷存档）只有 4 个文档有缺号，
+     * 全是门户文档：**#101 缺 v13/v15、#578 缺 v8/v11/v16/v29、#126 缺 v3/v5/v7、#30 缺 v2**，
+     * 共 10 个版本号没有任何副本。
+     *
+     * <p>⚠️ 这与归档<b>无关</b>：#101 的归档段是 v1~v8 连续完整，缺口 v13/v15 落在主表保留区内，
+     * 归档从未碰过；#578 的缺号散布在中段（不是搬运边界）。归档的搬运是「先插、核对条数、再删」。
+     *
+     * <p>⚠️ 已经吃掉的那 10 个版本号<b>无法恢复</b>：那几次编辑的旧正文当时就没存，
+     * 不是被删的。本方法只保证今后不再新增缺口。
+     *
+     * @param old     改之前的实体（必须先从库里读出来，用于取旧正文与旧版本号）
+     * @param newContent 本次要写入的新正文；为 null 或与旧正文相同 → 只记 META 事件
+     * @param author  署名，可为 null
+     */
+    public void snapshotBeforeExternalUpdate(Doc old, String newContent, String author) {
+        if (old == null || old.getId() == null) return;
+        boolean changed = newContent != null && !newContent.equals(old.getContent());
+        saveVersionSnapshot(old, changed, author);
+    }
+
+    /**
      * 写版本快照。从 update / append / patch 三条写路径复用，避免三份拷贝走样。
      *
      * @param contentChanged 本次是否动了正文（A3）。

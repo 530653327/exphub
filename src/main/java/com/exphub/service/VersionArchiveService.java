@@ -291,6 +291,91 @@ public class VersionArchiveService {
     /** 归档侧概览：{@code rows} = 归档条数，{@code maxVersion} = 归档里最大的版本号 */
     public record ArchivedSummary(long rows, int maxVersion) {}
 
+    /**
+     * 冷存档里出现过的<b>版本号</b>（只取 version 列，不带正文）。
+     *
+     * <p>为什么需要：导读要同时说「共几条」和「版本号跨到哪」，而<b>这两个数必须来自同一批数据</b>。
+     * 2026-10-26 03:1x 阁主实测 #101 导读写「共 18 条（v1 ~ v20）」——条数来自 COUNT、
+     * 上界来自 {@code docs.version - 1}，两个来源拼成一句话，于是 18 条配 20 个版本号，
+     * 读者分不清「少了 2 条」还是「本来就只有 18 个版本号」。
+     */
+    public java.util.List<Integer> archivedVersionNumbers(Long docId) {
+        if (docId == null) return java.util.List.of();
+        QueryWrapper<DocVersionArchive> w = new QueryWrapper<>();
+        w.select("version").eq("doc_id", docId);
+        return archiveMapper.selectList(w).stream()
+                .map(DocVersionArchive::getVersion)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    /**
+     * 版本号覆盖情况 —— 导读的唯一事实来源。
+     *
+     * <p><b>为什么单独立这个 record（2026-10-26 03:1x 阁主实测 #101）</b>：
+     * 导读原来写「共 18 条（v1 ~ v20）：主表 10 条、冷存档 8 条」，
+     * 条数是数出来的、区间是拿 {@code docs.version - 1} 拼的 —— 两个来源。
+     * 实际主表是 v9,10,11,12,14,16,17,18,19,20（**缺 v13、v15**），归档 v1~v8 连续，
+     * 所以「18 条」是对的、「v1 ~ v20」也是对的，但**缺的那 2 个版本号没人说**，
+     * 读者只会怀疑归档搬丢了数据。
+     *
+     * <p>这里把三件事一次算清：① 总条数（按行数，可含同一版本号的多份副本）
+     * ② 版本号上界（取实际存在的最大版本号，不再用 docs.version 推）
+     * ③ 缺号与重号 —— 缺号必须主动说明，不能只报总数。
+     */
+    public record VersionCoverage(int totalRows, int maxVersion,
+                                  java.util.List<Integer> missing,
+                                  java.util.List<Integer> duplicated) {
+
+        public static VersionCoverage of(java.util.Collection<Integer> mainVersions,
+                                         java.util.Collection<Integer> archivedVersions) {
+            java.util.List<Integer> all = new java.util.ArrayList<>();
+            if (mainVersions != null) all.addAll(mainVersions);
+            if (archivedVersions != null) all.addAll(archivedVersions);
+            all.removeIf(java.util.Objects::isNull);
+            if (all.isEmpty()) return new VersionCoverage(0, 0, java.util.List.of(), java.util.List.of());
+
+            int max = all.stream().mapToInt(Integer::intValue).max().orElse(0);
+            java.util.Map<Integer, Integer> cnt = new java.util.TreeMap<>();
+            for (Integer v : all) cnt.merge(v, 1, Integer::sum);
+
+            java.util.List<Integer> missing = new java.util.ArrayList<>();
+            for (int v = 1; v <= max; v++) {
+                if (!cnt.containsKey(v)) missing.add(v);
+            }
+            java.util.List<Integer> dup = new java.util.ArrayList<>();
+            for (var e : cnt.entrySet()) {
+                if (e.getValue() > 1) dup.add(e.getKey());
+            }
+            return new VersionCoverage(all.size(), max, missing, dup);
+        }
+
+        /** 缺号的人话描述（空串 = 没有缺口） */
+        public String missingNote() {
+            if (missing.isEmpty()) return "";
+            StringBuilder b = new StringBuilder("其中 ");
+            for (int i = 0; i < missing.size() && i < 8; i++) {
+                if (i > 0) b.append("、");
+                b.append("v").append(missing.get(i));
+            }
+            if (missing.size() > 8) b.append(" 等 ").append(missing.size()).append(" 个");
+            b.append(" 这个").append(missing.size() == 1 ? "" : "些").append("版本号在库里没有副本");
+            return b.toString();
+        }
+
+        /** 重号的人话描述（空串 = 没有重号） */
+        public String duplicateNote() {
+            if (duplicated.isEmpty()) return "";
+            StringBuilder b = new StringBuilder("其中 ");
+            for (int i = 0; i < duplicated.size(); i++) {
+                if (i > 0) b.append("、");
+                b.append("v").append(duplicated.get(i));
+            }
+            b.append(" 存了多份副本");
+            return b.toString();
+        }
+    }
+
     /** 该文档有没有任何归档记录（用于区分「从未归档」与「版本号本身不存在」） */
     public boolean hasAnyArchived(Long docId) {
         if (docId == null) return false;
