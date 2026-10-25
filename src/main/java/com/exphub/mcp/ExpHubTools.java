@@ -1701,17 +1701,28 @@ public class ExpHubTools {
     }
 
     /** 列出候选队列（默认只看待判断的） */
-    @Tool(name = "list_review_candidates", description = "查看记忆整理候选队列：哪些经验对可能重复或互相取代、相似度多少、为什么判为相似。默认只看 PENDING（待判断）的，按得分倒序。看完用 resolve_candidate 处理。")
+    @Tool(name = "list_review_candidates", description = "查看记忆整理候选队列：哪些经验对可能重复或互相取代、相似度多少、为什么判为相似。默认只看 PENDING（待判断）的，按得分倒序；status=ALL 可看全部状态。看完用 resolve_candidate 处理。")
     public String listReviewCandidates(
-            @ToolParam(description = "可选。状态：PENDING（默认，待判断）/ DUPLICATE / SUPERSEDED / DISTINCT / SKIPPED", required = false) String status,
+            @ToolParam(description = "可选。状态：PENDING（默认，待判断）/ DUPLICATE / SUPERSEDED / DISTINCT / SKIPPED；**ALL = 不限状态**（与 check_my_todos 的 ALL 语义一致）", required = false) String status,
             @ToolParam(description = "可选。最多返回几条，默认 20，上限 50", required = false) Integer limit) {
         try {
             int size = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
+            String st;
+            try {
+                st = ReviewCandidateService.normalizeStatusFilter(status);
+            } catch (IllegalArgumentException bad) {
+                // 非法状态值不能静默返回空：拼错一个字母就「队列空了」，
+                // 人会以为真的没数据，而不是「我查错了」。直接给出可用值。
+                return "❌ " + bad.getMessage();
+            }
             List<ReviewCandidate> list = reviewCandidateService.listByStatus(status, size);
-            String st = (status == null || status.trim().isEmpty()) ? ReviewCandidate.PENDING : status.trim().toUpperCase();
+            String scope = (st == null) ? "ALL（不限状态）" : st;
             if (list.isEmpty()) {
-                return "📭 队列为空（状态 " + st + "）。\n\n"
-                        + "整理新候选：发现两条内容高度重合时用 add_review_candidate 入队。";
+                return "📭 队列为空（状态 " + scope + "）。\n\n"
+                        + (st == null
+                            ? "全部状态都没有任何候选记录。\n"
+                            : "整理新候选：发现两条内容高度重合时用 add_review_candidate 入队。\n")
+                        + "想看所有状态用 status=ALL。";
             }
             // 批量取标题，避免逐条查
             java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
@@ -1720,7 +1731,7 @@ public class ExpHubTools {
             for (Doc d : docService.listByIds(ids)) docMap.put(d.getId(), d);
 
             StringBuilder sb = new StringBuilder();
-            sb.append("🗂 整理候选队列 · ").append(st).append("（").append(list.size()).append(" 条）\n\n");
+            sb.append("🗂 整理候选队列 · ").append(scope).append("（").append(list.size()).append(" 条）\n\n");
             int i = 1;
             for (ReviewCandidate c : list) {
                 Doc a = docMap.get(c.getDocA());

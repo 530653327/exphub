@@ -171,12 +171,54 @@ public class ReviewCandidateService {
         return new EnqueueResult(true, c, "已入队 #id=" + c.getId() + "（#" + a + " 与 #" + b + "）");
     }
 
+    /** 候选状态全集（用于校验与错误提示） */
+    public static final java.util.Set<String> VALID_STATUSES = java.util.Set.of(
+            ReviewCandidate.PENDING, ReviewCandidate.DUPLICATE, ReviewCandidate.SUPERSEDED,
+            ReviewCandidate.DISTINCT, ReviewCandidate.SKIPPED);
+
+    /**
+     * 状态过滤归一化（包级静态便于单测）。
+     *
+     * <p>线上实测踩到的坑（阁主 2026-10-25 18:0x 发现）：传 `status="ALL"` 返回空，
+     * 而同刻 `status=PENDING` 有数据 —— 因为原实现直接把 "ALL" 拼进了
+     * `WHERE status='ALL'`，库里根本不存在这个值。
+     *
+     * <p>为什么这不是小事：`check_my_todos` 早就用 `ALL` 表示「不限状态」，
+     * 同一个 `ALL` 在两个工具里语义不同，调用方一定会踩。**语义必须统一**。
+     *
+     * <p>同时把「非法状态值」从静默空结果改成明确报错：
+     * 拼错一个字母就返回空，人会以为「队列真的空了」，而不是「我查错了」。
+     *
+     * @return null = 不过滤（传了 ALL）；否则返回可入库的状态值
+     * @throws IllegalArgumentException 不是合法状态值
+     */
+    public static String normalizeStatusFilter(String status) {
+        if (status == null || status.trim().isEmpty()) {
+            return ReviewCandidate.PENDING;   // 默认只看待判断
+        }
+        String st = status.trim().toUpperCase();
+        if ("ALL".equals(st)) {
+            return null;                      // 不限状态
+        }
+        if (!VALID_STATUSES.contains(st)) {
+            throw new IllegalArgumentException("无法识别的候选状态：" + status
+                    + "。可用：" + String.join(" / ", ReviewCandidate.PENDING, ReviewCandidate.DUPLICATE,
+                    ReviewCandidate.SUPERSEDED, ReviewCandidate.DISTINCT, ReviewCandidate.SKIPPED)
+                    + "（或 ALL 表示不限状态）");
+        }
+        return st;
+    }
+
+    /** 按状态列出候选，默认 PENDING，按得分倒序；status=ALL 表示不限状态 */
     /** 按状态列出候选，默认 PENDING，按得分倒序 */
     public List<ReviewCandidate> listByStatus(String status, int limit) {
-        String st = (status == null || status.trim().isEmpty()) ? ReviewCandidate.PENDING : status.trim().toUpperCase();
+        String st = normalizeStatusFilter(status);   // null = 不过滤
         int size = (limit < 1) ? 20 : Math.min(limit, 100);
-        return candidateMapper.selectList(new QueryWrapper<ReviewCandidate>()
-                .eq("status", st)
+        QueryWrapper<ReviewCandidate> qw = new QueryWrapper<>();
+        if (st != null) {
+            qw.eq("status", st);
+        }
+        return candidateMapper.selectList(qw
                 .orderByDesc("score")
                 .orderByAsc("id")
                 .last("LIMIT " + size));
