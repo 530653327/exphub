@@ -57,11 +57,42 @@ public final class SimilarityScorer {
     /**
      * 判定为「疑似字面重复」所需的最小共享行数。
      *
-     * <p>取 2 而不是更高：实测全库「剔模板后仍有重合」的对里，最少的也有 5 行，
-     * 取 2 留足余量给将来的短文档；同时「1 行相同」几乎一定是残留套话（如单独的
-     * 一句「更新于 2026-04-21」），不足以当证据。
+     * <p>取 2：只有 1 行相同时几乎一定是残留套话（如单独一句「更新于 2026-04-21」），
+     * 不足以当证据。行数只是第一道门，真正的判据是 {@link #MIN_LINE_COVERAGE}。
      */
     public static final int MIN_SHARED_LINES = 2;
+
+    /**
+     * 判定为「疑似字面重复」所需的最小覆盖率（共享行 / 较短那篇的行数）。
+     *
+     * <p>为什么必须有覆盖率这一道（2026-10-25 23:50 实测）：只看行数会把
+     * 「同模板不同实例」判成重复 —— 水晶鹿与蝴蝶仙子共用 12 行提示词骨架，
+     * 但它们是两只不同的宠物。加了覆盖率后，这类对降到 27%，而真重复都在 48% 以上。
+     *
+     * <p>取 0.40 是在真实数据上选的最大间隔：真重复最低 48%、骨架最高 27%，中间没有样本。
+     */
+    public static final double MIN_LINE_COVERAGE = 0.40;
+
+    /**
+     * 判定为「疑似字面重复」所需的**共享行平均长度**。
+     *
+     * <p>为什么光有覆盖率不够（2026-10-25 23:56 写测试时发现）：
+     * 覆盖率对小文档不公平 —— 骨架行数固定，文档越短骨架占比越高。
+     * 合成一个 20 行的宠物提示词，骨架 10 行就占 45%，**刚过 0.40 阈值**，
+     * 于是「不同宠物」会被判成重复。真实库里宠物文档有 57 行去模板正文，
+     * 骨架只占 21% 才侥幸躲过 —— 换句话说，**这判据当时在全库上是对的，靠的是巧合**。
+     *
+     * <p>加的第二道门是共享行的**平均长度**：骨架是短标签（`death-死亡[6帧]`、
+     * `适用工具：PixelLab`），真内容行更长。实测中位数：
+     * <pre>
+     *   #159↔#160  39 字  → 真重复
+     *   #63↔#67   23 字  → 真重复
+     *   #74↔#85   15 字  → 骨架
+     *   #75↔#79   12 字  → 骨架
+     * </pre>
+     * 取 20 字落在这条缝里。两道门是 **AND**：覆盖率够**且**共享行够长，才算重复。
+     */
+    public static final int MIN_SHARED_LINE_LEN = 20;
 
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
@@ -255,10 +286,14 @@ public final class SimilarityScorer {
     /**
      * 打分结果。
      *
-     * @param lineMode true = 正文走的「去模板整行」口径；false = 回退 2-gram 口径
+     * @param lineMode        true = 正文走的「去模板整行」口径；false = 回退 2-gram 口径
+     * @param lineCoverage    「较短那篇有多少比例的行出现在对方里」，仅 lineMode 时有意义
+     * @param sharedAllLines  未剔模板时的原始共享行数，用于展示「骨架重合 vs 内容重合」的差异
+     * @param sharedAvgLen    共享行的平均字数：骨架行短（约 15 字）、真正的内容行长（约 23~39 字）
      */
     public record Score(double total, double tag, double title, double content,
-                        int sharedLines, int linesA, int linesB, boolean lineMode) {
+                        int sharedLines, int linesA, int linesB, boolean lineMode,
+                        double lineCoverage, int sharedAllLines, int sharedAvgLen) {
 
         /** 可读理由：人判断一对候选值不值得看，靠的就是这几行 */
         public String reason() {
@@ -267,17 +302,40 @@ public final class SimilarityScorer {
             sb.append("；标题重合 ").append(fmt(title));
             if (lineMode) {
                 sb.append("；正文行重合 ").append(sharedLines).append(" 行（").append(linesA)
-                  .append(" 行 vs ").append(linesB).append(" 行，模板行已剔除）");
+                  .append(" 行 vs ").append(linesB).append(" 行，模板行已剔除；平均 ")
+                  .append(sharedAvgLen).append(" 字，覆盖较短那篇 ")
+                  .append(pct(lineCoverage)).append("）");
             } else {
                 sb.append("；正文 2-gram 重合 ").append(fmt(content)).append("（行太少，回退 2-gram 口径）");
             }
             return sb.toString();
         }
 
-        /** 判定层级：这一对「像的是什么」 */
+        /**
+         * 判定层级：这一对「像的是什么」。
+         *
+         * <p><b>为什么用「覆盖率」而不是「共享行数」</b>（2026-10-25 23:50 实测修正）：
+         * 一开始只判「共享 ≥2 行」，结果 #74↔#85（水晶鹿 vs 蝴蝶仙子，**两只不同的宠物**）
+         * 因为共用一套提示词模板的骨架行而被判成「疑似字面重复」——那 12 行是
+         * `death-死亡[6帧]` / `适用工具：PixelLab` / `更新时间：2026-04-21` 这类骨架，不是内容。
+         *
+         * <p>换覆盖率后干净分开（实测全库）：
+         * <pre>
+         *   #63↔#67   地图设计 vs 地图3提示词   40 行  覆盖 83%  → 真重复
+         *   #159↔#160 两个 expert 专家          21 行  覆盖 51%  → 真重复
+         *   #59↔#71   亲密系统旧版 vs 新版      22 行  覆盖 48%  → 真重复
+         *   #74↔#85   水晶鹿 vs 蝴蝶仙子        12 行  覆盖 27%  → 骨架，不是重复
+         *   #75↔#79   水系 vs 电系特效           2 行  覆盖  4%  → 骨架，不是重复
+         * </pre>
+         * 「重复」的本质就是<b>较短的那篇几乎整篇出现在另一篇里</b> —— 这正是覆盖率的定义，
+         * 比「共享了几行」有依据，也更好向人解释。
+         */
         public Kind kind() {
             if (!lineMode) return Kind.UNKNOWN;
-            return sharedLines >= MIN_SHARED_LINES ? Kind.DUPLICATE : Kind.SERIES;
+            boolean enough = sharedLines >= MIN_SHARED_LINES
+                    && lineCoverage >= MIN_LINE_COVERAGE
+                    && sharedAvgLen >= MIN_SHARED_LINE_LEN;
+            return enough ? Kind.DUPLICATE : Kind.SERIES;
         }
 
         /**
@@ -288,16 +346,25 @@ public final class SimilarityScorer {
          */
         public String diagnosis() {
             return switch (kind()) {
-                case DUPLICATE -> "**疑似字面重复**（正文有 " + sharedLines
-                        + " 行完全一致）→ 优先判 duplicate 或 superseded";
-                case SERIES -> "**同话题演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded"
-                        + "（后者是前者的新阶段），不该判 duplicate";
+                case DUPLICATE -> "**疑似字面重复**（正文 " + sharedLines + " 行完全一致，平均 "
+                        + sharedAvgLen + " 字，覆盖较短那篇 " + pct(lineCoverage)
+                        + "）→ 优先判 duplicate 或 superseded";
+                case SERIES -> sharedLines > 0
+                        ? "**共用骨架**（只重 " + sharedLines + " 行、平均仅 " + sharedAvgLen
+                          + " 字、覆盖 " + pct(lineCoverage)
+                          + "，是同一模板的不同实例）→ 别判 duplicate"
+                        : "**同话题演进链**（正文共享仅覆盖 " + pct(lineCoverage)
+                          + "，不够算重复）→ 大概率该判 superseded（后者是前者的新阶段），不该判 duplicate";
                 case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
             };
         }
 
         public static String fmt(double v) {
             return String.format(java.util.Locale.ROOT, "%.2f", v);
+        }
+
+        public static String pct(double v) {
+            return String.format(java.util.Locale.ROOT, "%.0f%%", v * 100);
         }
     }
 
@@ -320,9 +387,9 @@ public final class SimilarityScorer {
      * 分数保持原样（不让已有候选的分数发生漂移），只影响排序与提示文案。
      */
     public enum Kind {
-        /** 正文有 ≥2 行完全一致：最像字面重复，最该先看 */
+        /** 正文共享行覆盖较短那篇 ≥40%：最像字面重复，最该先看 */
         DUPLICATE,
-        /** 正文一行不重，只有标签/标题像：同话题的不同阶段记录 */
+        /** 正文共享覆盖不足：同话题的不同阶段记录（或只是共用模板骨架） */
         SERIES,
         /** 长段落型文档，没有行边界可比，信息不足 */
         UNKNOWN
@@ -369,7 +436,21 @@ public final class SimilarityScorer {
         if (total > 1.0) total = 1.0;
 
         int shared = lineMode ? intersectionSize(ca, cb) : 0;
-        return new Score(total, tag, title, content, shared, ca.size(), cb.size(), lineMode);
+        // 覆盖率的分子分母都用「参与比较的那一套行」（去模板后），与 shared 同源
+        double coverage = lineMode ? containment(ca, cb) : 0;
+        // 原始共享行（不剔模板）：用于回执里对比「骨架重合 vs 内容重合」
+        int sharedAll = lineMode ? intersectionSize(a.lines(), b.lines()) : 0;
+        // 共享行的平均字数：区分「骨架」（短标签）与「内容」（长句）的关键
+        int avgLen = 0;
+        if (lineMode && shared > 0) {
+            int totalChars = 0;
+            Set<String> smaller = ca.size() <= cb.size() ? ca : cb;
+            Set<String> bigger = smaller == ca ? cb : ca;
+            for (String ln : smaller) if (bigger.contains(ln)) totalChars += ln.length();
+            avgLen = totalChars / shared;
+        }
+        return new Score(total, tag, title, content, shared, ca.size(), cb.size(), lineMode,
+                coverage, sharedAll, avgLen);
     }
 
     /** 统计一组文档的行频次（作用域内） */

@@ -108,9 +108,9 @@ class RankingTierTest {
         // 核心断言：这是真实数据里的排序反转 —— 重复对的分数反而更低
         // 我们不改分数（历史候选不该漂移），但必须保证分层后重复对排在前面
         SimilarityService.Row rowDup = new SimilarityService.Row(63L, "A", 67L, "B",
-                dup.total(), dup.reason(), null, dup.kind(), dup.sharedLines());
+                dup.total(), dup.reason(), null, dup.kind(), dup.sharedLines(), dup.lineCoverage());
         SimilarityService.Row rowChain = new SimilarityService.Row(470L, "A", 477L, "B",
-                chain.total(), chain.reason(), null, chain.kind(), chain.sharedLines());
+                chain.total(), chain.reason(), null, chain.kind(), chain.sharedLines(), chain.lineCoverage());
 
         List<SimilarityService.Row> rows = new java.util.ArrayList<>(List.of(rowChain, rowDup));
         rows.sort(SimilarityService.Row.order());
@@ -149,6 +149,91 @@ class RankingTierTest {
         assertFalse(s.lineMode(), "行太少应回退 2-gram");
         assertEquals(SimilarityScorer.Kind.UNKNOWN, s.kind(), "回退口径下无法分层，标 UNKNOWN");
         assertTrue(s.diagnosis().contains("信息不足"), s.diagnosis());
+    }
+
+    @Test
+    void sharedSkeletonIsNotDuplicate() {
+        // 真实案例（#74 水晶鹿 vs #85 蝴蝶仙子）：同一套提示词模板的**两个不同实例**。
+        // 共享 12 行骨架（death-死亡[6帧] / 适用工具：PixelLab / 更新时间），
+        // 但它们是两只不同的宠物 —— 绝不能判 duplicate。
+        String skeleton = String.join("\n",
+                "基于 AI绘画提示语.md 中的宠物描述生成",
+                "适用工具：PixelLab Animate 功能",
+                "更新时间：2026-04-21",
+                "## 动画类型",
+                "map_idle - 待机[4帧循环]",
+                "battle_idle - 战斗待机[4帧循环]",
+                "attack - 普通攻击[6帧]",
+                "hurt - 受击[4帧]",
+                "death - 死亡[6帧]",
+                "spell - 技能施法[8帧]");
+        // 真实比例：实测 #74 是 98 行正文 / 57 行去模板后，骨架只占约 1/5。
+        // 一开始把测试文档写得太短（骨架占 10/15），导致覆盖率虚高到 0.60 —— 那是测试数据不真实，不是算法错
+        StringBuilder deerBody = new StringBuilder("# 水晶鹿 (P-025) - 动画提示词\n").append(skeleton);
+        StringBuilder fairyBody = new StringBuilder("# 蝴蝶仙子 (P-024) - 动画提示词\n").append(skeleton);
+        String[] 帧明细 = {
+                "map_idle：4 帧循环，身体轻微起伏，阴影随之呼吸", "battle_idle：4 帧循环，重心下沉，随时起手",
+                "attack：6 帧，前冲后撤，命中帧要有明显顿挫", "hurt：4 帧，后仰位移，边缘泛红闪一下",
+                "death：6 帧，倒地渐隐，最后一帧留空位", "spell：8 帧，蓄力→爆发→收招三段"};
+        for (String f : 帧明细) {
+            deerBody.append("\n- ").append(f.replace("身体", "鹿身").replace("泛红", "泛冰蓝"))
+                    .append("；水晶鹿的四蹄踏过处留下细碎冰晶，痕迹保持 3 帧后消散");
+        }
+        for (String f : 帧明细) {
+            fairyBody.append("\n- ").append(f.replace("身体", "蝶翼").replace("泛红", "泛粉金"))
+                    .append("；蝴蝶仙子的鳞粉随振翅洒落，颗粒在光下呈暖黄高光");
+        }
+        deerBody.append("\n\n配色以淡蓝与银白为主，强调通透感与高贵气质，避免过饱和。")
+                .append("\n技能特效为环形冰霜扩散，收招时冰晶碎裂成雾。")
+                .append("\n背景使用雪原渐变，禁止出现文字或水印。")
+                .append("\n额外要求：动作幅度收敛，体现轻盈，不要做出野兽式扑咬。");
+        fairyBody.append("\n\n配色以粉紫与暖黄为主，鳞粉要有颗粒感，避免灰暗。")
+                .append("\n技能特效为花雨爆发，收招时花瓣向四周飘散。")
+                .append("\n背景使用花海虚化，禁止出现文字或水印。")
+                .append("\n额外要求：保留大量留白，体现柔美，不要用冷色调。");
+        String deer = deerBody.toString();
+        String fairy = fairyBody.toString();
+
+        SimilarityScorer.Score s = scorePair(
+                series(74, "百炼宠物-水晶鹿P-025动画提示词", "百炼宠物,动画提示词", deer),
+                series(85, "百炼宠物-蝴蝶仙子P-024动画提示词", "百炼宠物,动画提示词", fairy));
+
+        assertTrue(s.sharedLines() > 0, "骨架行确实有重合，说明测的是真实形态：" + s.reason());
+        // ⚠️ 这里**不能**断言 coverage < 阈值：骨架行数固定，文档越短占比越高。
+        // 本用例的文档只有 20 行左右，骨架占 45% —— 单看覆盖率会误判成重复。
+        // 真正把它拦下来的是「共享行平均字数」（骨架行都是短标签）。
+        assertTrue(s.sharedAvgLen() < SimilarityScorer.MIN_SHARED_LINE_LEN,
+                "骨架行很短（平均 " + s.sharedAvgLen() + " 字），这是第二道门：" + s.reason());
+        assertEquals(SimilarityScorer.Kind.SERIES, s.kind(),
+                "共用模板骨架 ≠ 内容重复，不能升成 DUPLICATE。reason=" + s.reason());
+        assertTrue(s.diagnosis().contains("骨架") || s.diagnosis().contains("演进链")
+                        || s.diagnosis().contains("不够算重复"),
+                "必须说清为什么不算重复：" + s.diagnosis());
+        // 记录这个坑：如果只有覆盖率一道门，这条用例会判 DUPLICATE（45% >= 40%）
+        assertTrue(s.lineCoverage() >= SimilarityScorer.MIN_LINE_COVERAGE,
+                "本用例刻意构造成「覆盖率会过关」，用来说明必须有第二道门，实际 " + s.lineCoverage());
+    }
+
+    @Test
+    void coverageIsWhatSeparatesContentFromSkeleton() {
+        // 同一份内容被摘要进另一篇：共享行占较短那篇绝大部分 → DUPLICATE
+        String full = String.join("\n",
+                "地图1 平原入口：缓坡草地，散落碎石，边缘有栅栏。",
+                "地图2 花田小径：成片野花，中间一条土路，两侧灌木。",
+                "地图3 北部丘陵：起伏地形，裸露岩层，顶部有废弃哨塔。",
+                "地图4 森林边界：密林边缘，光线斑驳，地面落叶厚。",
+                "配色以青绿与土黄为主，避免高饱和，保持新手区观感。");
+        String summary = String.join("\n",
+                "地图2 花田小径：成片野花，中间一条土路，两侧灌木。",
+                "地图3 北部丘陵：起伏地形，裸露岩层，顶部有废弃哨塔。",
+                "地图4 森林边界：密林边缘，光线斑驳，地面落叶厚。",
+                "配色以青绿与土黄为主，避免高饱和，保持新手区观感。");
+        SimilarityScorer.Score dup = scorePair(
+                series(1, "中央平原地图设计", "百炼宠物,地图", full),
+                series(2, "中央平原地图3提示词", "百炼宠物,地图", summary));
+        assertEquals(SimilarityScorer.Kind.DUPLICATE, dup.kind(),
+                "短篇 4 行里 4 行都能在长篇找到 → 覆盖率 100%，必判重复。reason=" + dup.reason());
+        assertTrue(dup.lineCoverage() >= SimilarityScorer.MIN_LINE_COVERAGE);
     }
 
     @Test

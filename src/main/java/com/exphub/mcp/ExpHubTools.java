@@ -1884,11 +1884,16 @@ public class ExpHubTools {
      * <p>为什么必须有：实测「同话题演进链」（正文 0 行重合）能拿 0.62，
      * 而「正文 33 行完全一致」的真重复只拿 0.51。光看分数人会把演进链当真重复判。
      */
-    private String kindLabel(SimilarityScorer.Kind kind, int sharedLines) {
+    private String kindLabel(SimilarityScorer.Kind kind, int sharedLines, double coverage) {
         if (kind == null) return "";
+        String cov = SimilarityScorer.Score.pct(coverage);
         return switch (kind) {
-            case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致）→ 优先判 duplicate / superseded";
-            case SERIES -> "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded，别判 duplicate";
+            case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致，覆盖较短那篇 "
+                    + cov + "）→ 优先判 duplicate / superseded";
+            case SERIES -> sharedLines > 0
+                    ? "🔗 **共用骨架**（只重 " + sharedLines + " 行、覆盖仅 " + cov
+                      + "，像同一模板的不同实例）→ 别判 duplicate；若确是同一件事的新阶段再判 superseded"
+                    : "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded，别判 duplicate";
             case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）→ 建议人工读一眼";
         };
     }
@@ -1904,7 +1909,7 @@ public class ExpHubTools {
             sb.append("- #").append(h.docId()).append("「").append(abbreviate(h.title(), 40))
               .append("」相似度 ").append(SimilarityScorer.Score.fmt(h.score()))
               .append("　→ ").append(h.queueState()).append("\n");
-            sb.append("  ").append(kindLabel(h.kind(), h.sharedLines())).append("\n");
+            sb.append("  ").append(kindLabel(h.kind(), h.sharedLines(), h.coverage())).append("\n");
             sb.append("  ").append(abbreviate(h.reasons(), 200)).append("\n");
         }
         if (!r.hits().isEmpty()) {
@@ -1982,7 +1987,7 @@ public class ExpHubTools {
                       .append("｜#").append(row.docA()).append("「").append(abbreviate(row.titleA(), 34))
                       .append("」 ↔ #").append(row.docB()).append("「").append(abbreviate(row.titleB(), 34)).append("」");
                     if (row.queueState() != null) sb.append("　→ ").append(row.queueState());
-                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines())).append("\n");
+                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines(), row.coverage())).append("\n");
                     sb.append("   ").append(row.reason()).append("\n");
                 }
             }
