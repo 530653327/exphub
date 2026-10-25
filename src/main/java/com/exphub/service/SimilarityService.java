@@ -248,6 +248,15 @@ public class SimilarityService {
      */
     public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
                            boolean dryRun, String operator) {
+        return scan(projectId, threshold, limit, maxPerDoc, null, dryRun, operator);
+    }
+
+    /**
+     * @param progressSample ③层（进度/日志）最多展示几条，{@code null} = 默认 5，{@code 0} = 不限。
+     *                       2026-10-26 02:51 越哥定：可判性最低的层不该吃掉 60% 名额。
+     */
+    public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
+                           Integer progressSample, boolean dryRun, String operator) {
         // ⚠️ 2026-10-25 阁主验收教训：原来这里是 `if (th < 0.30) th = 0.30` 静默兜底。
         // 上游把 0.5 截成整数 0 之后，静默兜底把它变成 0.30 —— 用户看到「阈值: 0.30」，
         // 只会得出「阈值参数根本没生效」的结论，**永远查不到是链路丢了小数**。
@@ -345,7 +354,8 @@ public class SimilarityService {
         // ⚠️ 2026-10-26 02:1x 越哥实测：原来这段内联在 scan 里，①层 6 对只显示 4 条
         //    （#63 命中 4 个子页，被「每篇最多 2 条」砍掉两条），而低层把空出的名额填满 ——
         //    观感与「按分数截断」一样，读的人会以为分层没生效。抽出来才测得动。
-        Selection sel = select(above, maxRows, perDoc);
+        int sampleCap = (progressSample == null) ? DEFAULT_PROGRESS_SAMPLE : Math.max(0, progressSample);
+        Selection sel = select(above, maxRows, perDoc, sampleCap);
         List<Row> selected = sel.rows();
         int dropped = 0;
         for (TierDetail d : sel.detail().values()) dropped += d.droppedPerDoc() + d.droppedByLimit();
@@ -416,11 +426,20 @@ public class SimilarityService {
      * 写进回执 —— 缺了就让读的人看见缺了，而不是从「统计 6、清单 4」里自己猜。
      */
     public record TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
-                             java.util.List<String> droppedSamples) {
+                             int droppedBySample, java.util.List<String> droppedSamples) {
 
         /** 这一层有没有「没展示出来」的对 */
-        public boolean hasDrop() { return droppedPerDoc > 0 || droppedByLimit > 0; }
+        public boolean hasDrop() { return droppedPerDoc > 0 || droppedByLimit > 0 || droppedBySample > 0; }
     }
+
+    /**
+     * 进度/日志层默认只展示几条样本（2026-10-26 02:51 越哥定）。
+     *
+     * <p>现场：清单 50 条里③层（进度/日志、「一般不用判」）占 30 条 = 60%，
+     * <b>可判性最低的那层挤掉了别的</b>。这类记录的「像」是工作流决定的，本来就不用判，
+     * 摆一堆只会把①②层的名额吃掉。
+     */
+    public static final int DEFAULT_PROGRESS_SAMPLE = 5;
 
     /** 限流结果：选中的行 + 每层的自证数据（纯函数，便于单测；不碰 DB） */
     public record Selection(java.util.List<Row> rows,
@@ -443,6 +462,10 @@ public class SimilarityService {
      * <p>①层也不计入 per-doc 计数：它已经展示了，低层再命中同一篇不额外占名额。
      */
     static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc) {
+        return select(sortedAbove, maxRows, perDoc, DEFAULT_PROGRESS_SAMPLE);
+    }
+
+    static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc, int progressSample) {
         java.util.Map<SimilarityScorer.Kind, int[]> c = new java.util.LinkedHashMap<>();
         java.util.Map<SimilarityScorer.Kind, java.util.List<String>> samples = new java.util.LinkedHashMap<>();
         java.util.List<Row> selected = new java.util.ArrayList<>();
@@ -450,23 +473,15 @@ public class SimilarityService {
 
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
-            c.computeIfAbsent(k, x -> new int[4])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit
+            c.computeIfAbsent(k, x -> new int[5])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample
         }
 
-        // ⚠️ 2026-10-26 02:42 越哥实测：①层豁免了 per-doc，②层却把同一批家族交叉对砍掉
-        //    （被挤掉的 4 对里有 3 对是 #65↔#68、#66↔#68、#67↔#68 —— 全是 #63 家族）。
-        //    同一个决策在两个出口给出相反结论：①层说「一篇母档命中多个子页该一起判」，
-        //    ②层又按「单篇最多 N 条」把同一批砍回去，读的人只会以为②层的挤压是随机的。
-        //    判法：**只要这篇文档已经在①层证明过自己有真近重复（是家族中心），它在低层就不再受 per-doc 限流。**
-        //    注意仍然受 maxRows（limit）约束 —— 家族再大也不会冲出总条数。
-        java.util.Set<Long> hubs = new java.util.HashSet<>();
-        for (Row r : sortedAbove) {
-            if (r.kind() == SimilarityScorer.Kind.DUPLICATE) {
-                hubs.add(r.docA());
-                hubs.add(r.docB());
-            }
-        }
-
+        // ⚠️ 2026-10-26 02:51 越哥实测：上一版把 per-doc 豁免扩散到了②层，结果 6 个名额被一个家族占满 ——
+        //    ②层展示的 14 条里有 6 条是 #63 家族的完全图 C(4,2)（#65↔#66/#65↔#67/#65↔#68/
+        //    #66↔#67/#66↔#68/#67↔#68），结论全是 distinct。
+        //    ①层豁免的理由是「一篇母档命中多个子页该一起判」，②层这批**不是一起判**，
+        //    而是同一家族内部两两比较，而且 #63 与这四个子页在①层已逐对给过结论 —— 摆在②层纯占位。
+        //    → **per-doc 只在①层豁免，②层恢复。**
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
             int[] cnt = c.get(k);
@@ -474,8 +489,12 @@ public class SimilarityService {
                 cnt[3]++;
                 continue;
             }
-            boolean hubPair = hubs.contains(r.docA()) || hubs.contains(r.docB());
-            if (k != SimilarityScorer.Kind.DUPLICATE && !hubPair) {
+            // ③层（进度/日志）默认只给几条样本：可判性最低的一层不该吃掉大半名额
+            if (k == SimilarityScorer.Kind.PROGRESS && progressSample > 0 && cnt[1] >= progressSample) {
+                cnt[4]++;
+                continue;
+            }
+            if (k != SimilarityScorer.Kind.DUPLICATE) {
                 int ca = perDocCount.getOrDefault(r.docA(), 0);
                 int cb = perDocCount.getOrDefault(r.docB(), 0);
                 if (ca >= perDoc || cb >= perDoc) {
@@ -494,7 +513,7 @@ public class SimilarityService {
         java.util.Map<SimilarityScorer.Kind, TierDetail> detail = new java.util.LinkedHashMap<>();
         for (var e : c.entrySet()) {
             int[] v = e.getValue();
-            detail.put(e.getKey(), new TierDetail(v[0], v[1], v[2], v[3],
+            detail.put(e.getKey(), new TierDetail(v[0], v[1], v[2], v[3], v[4],
                     samples.getOrDefault(e.getKey(), java.util.List.of())));
         }
         return new Selection(java.util.List.copyOf(selected), detail);

@@ -132,7 +132,8 @@ class AdviceShapeTest {
         assertEquals(SimilarityScorer.Shape.TRUE_DUP, s.shape(),
                 "两侧独有都很少 → 整篇复制。独有 A=" + s.uniqueA() + " B=" + s.uniqueB());
         String d = s.diagnosis();
-        assertTrue(d.contains("可以判 duplicate"), "真复制必须给出肯定建议：" + d);
+        assertTrue(d.contains("动作：判 duplicate"), "真复制必须给出肯定动作：" + d);
+        assertFalse(d.contains("动作：判 distinct"), "真重复不许同时又让判 distinct：" + d);
     }
 
     @Test
@@ -143,17 +144,13 @@ class AdviceShapeTest {
                 "子集那侧独有行应该很少。独有 A=" + s.uniqueA() + " B=" + s.uniqueB());
         String d = s.diagnosis();
         assertTrue(d.contains("母集-子集"), "要点名形态：" + d);
-        assertTrue(d.contains("别判 duplicate"), "母集-子集不能建议判 duplicate：" + d);
-        assertFalse(d.contains("可以判 duplicate"), d);
-        // ⚠️ 2026-10-26 02:2x 越哥实测：上一版把 duplicate 挡住了，却写「先看是不是 superseded」——
-        // superseded 对母集-子集正是会丢内容的那个方向（子页独有行被埋在「已被取代」后面）。
-        assertTrue(d.contains("也别判 superseded"),
-                "母集-子集两个方向都不能判：只挡 duplicate、放过 superseded 等于同一个坑换个出口：" + d);
-        assertFalse(d.contains("看是不是 superseded"),
-                "不许再写「先看是不是 superseded」——superseded 会掩埋子页独有行：" + d);
-        assertTrue(d.contains("并回母档"),
-                "必须给出正确动作：先把子页剩余细节并回母档：" + d);
-        assertTrue(d.contains("distinct"), "并不了时的落点必须是 distinct：" + d);
+        assertFalse(d.contains("动作：判 duplicate"), "母集-子集不能判 duplicate：" + d);
+        assertFalse(d.contains("动作：判 superseded"), "母集-子集也不能判 superseded：" + d);
+        assertTrue(d.contains("动作：先把这"), "唯一动作应该是「并进去再清」：" + d);
+        // ⚠️ 2026-10-26 02:2x 越哥实测：上一版把 duplicate 挡住了，却写「先看是不是 superseded」。
+        // 现在动作由 decide() 唯一决定，母集-子集落到 MERGE_THEN_CLEAR，且明确「改判 distinct」的退路。
+        assertTrue(d.contains("并进另一份"), "正确动作是并进去：" + d);
+        assertTrue(d.contains("改判 distinct"), "并不了时的落点必须是 distinct：" + d);
     }
 
     /**
@@ -188,8 +185,8 @@ class AdviceShapeTest {
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5,
                 "史越 个人档案", "史越个人档案补充：家庭、饮食偏好与饮茶习惯");
         assertTrue(d.contains("补充页"), "要点名它是补充页：" + d);
-        assertTrue(d.contains("并进长那篇"), "正确动作是并进母档：" + d);
-        assertTrue(d.contains("不要去找"), "要明确否掉「确认已包含」那条走不通的路：" + d);
+        assertTrue(d.contains("并进另一份"), "正确动作是并进母档：" + d);
+        assertTrue(d.contains("别去找"), "要明确否掉「确认已包含」那条走不通的路：" + d);
         assertFalse(d.contains("可能整篇被"), d);
     }
 
@@ -205,11 +202,10 @@ class AdviceShapeTest {
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 7, 54,
                 "10-23午餐实录", "10-24 全天饮食实录");
         assertTrue(d.contains("日期不同"), "标题日期不同要点名：" + d);
-        assertTrue(d.contains("不是母集-子集"), "必须直接否掉这个结论：" + d);
-        assertTrue(d.contains("判 distinct"), "落点必须是 distinct：" + d);
-        assertFalse(d.contains("并回母档"),
-                "两份独立记录绝不能给「并回母档」这种动作 —— 那是把一天的记录并进另一天：" + d);
-        assertFalse(d.contains("也别判 superseded"), "既然不是母集，就别套母集的建议：" + d);
+        assertTrue(d.contains("说明不了谁属于谁"), "要点明行数比推不出归属：" + d);
+        assertTrue(d.contains("动作：判 distinct"), "落点必须是 distinct：" + d);
+        assertFalse(d.contains("并进另一份"),
+                "两份独立记录绝不能给「并进去」这种动作 —— 那是把一天的记录并进另一天：" + d);
     }
 
     /**
@@ -234,8 +230,8 @@ class AdviceShapeTest {
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 10, 120,
                 "中央平原地图1提示词（平原入口）", "中央平原地图2提示词（花田小径）");
         assertTrue(d.contains("编号不同"), d);
-        assertTrue(d.contains("判 distinct"), d);
-        assertFalse(d.contains("并回母档"), "不同编号的两个子页不是母集关系：" + d);
+        assertTrue(d.contains("动作：判 distinct"), d);
+        assertFalse(d.contains("并进另一份"), "不同编号的两个子页不是母集关系：" + d);
     }
 
     /**
@@ -261,9 +257,8 @@ class AdviceShapeTest {
         assertTrue(d.contains("排除三项"), "没检测到差异 = 把排除清单摊开让人判：" + d);
         assertTrue(d.contains("日期") && d.contains("编号") && d.contains("主体"),
                 "三项都要列出来（日期/编号/主体）：" + d);
-        assertTrue(d.contains("两种可能"), "0 行重合只能给两种可能，不能下结论：" + d);
-        assertTrue(d.contains("distinct"), d);
-        assertFalse(d.contains("并回母档"), "0 行重合时「已含」不成立，不许给母集动作：" + d);
+        assertTrue(d.contains("动作：判 distinct"), "0 行重合下唯一动作是 distinct：" + d);
+        assertFalse(d.contains("并进另一份"), "0 行重合时「已含」不成立，不许给合并动作：" + d);
     }
 
     /** 拿不到标题时（6 参重载）不许下母集结论，只给排除清单 */
@@ -290,9 +285,9 @@ class AdviceShapeTest {
         assertEquals(SimilarityScorer.Shape.PARALLEL, s.shape(),
                 "两侧各有约一半独有行。独有 A=" + s.uniqueA() + " B=" + s.uniqueB());
         String d = s.diagnosis();
-        assertTrue(d.contains("别判 duplicate"), "同模板实例不能建议判 duplicate：" + d);
-        assertFalse(d.contains("可以判 duplicate"), d);
-        assertTrue(d.contains("取代另一份"), "要说清判错的后果：" + d);
+        assertTrue(d.contains("动作：判 distinct"), "同模板实例的唯一动作是 distinct：" + d);
+        assertFalse(d.contains("动作：判 duplicate"), "同模板实例不能判 duplicate：" + d);
+        assertTrue(d.contains("并列记录") || d.contains("两个对象"), "要说清它是什么形态：" + d);
     }
 
     @Test

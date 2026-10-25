@@ -70,28 +70,56 @@ class SelectionLimitTest {
     }
 
     /**
-     * 家族中心在低层不再受 per-doc（2026-10-26 02:42 越哥实测）。
+     * per-doc 只在①层豁免，②层恢复（2026-10-26 02:51 越哥实测）。
      *
-     * <p>①层豁免 per-doc 的理由是「一篇母档命中多个子页该一起判」，
-     * 而②层仍在砍同一批家族交叉对（被挤掉的 4 对里 3 对是 #65↔#68、#66↔#68、#67↔#68）——
-     * <b>同一个决策在两个出口给出相反结论</b>，读的人只会以为②层的挤压是随机的。
-     * 判法：#63 这种已经在①层证明自己有真近重复的文档是「家族中心」，
-     * 它在低层的候选不再受 per-doc 限流（limit 仍然管总数）。
+     * <p>上一版把豁免扩散到②层，结果 6 个名额被 #63 家族占满 ——
+     * ②层展示的 14 条里 6 条是 C(4,2) 完全图，结论全是 distinct。
+     * ①层豁免的理由是「一篇母档命中多个子页该一起判」，②层那批是<b>同一家族内部两两比较</b>，
+     * 而且 #63 与四个子页在①层已逐对给过结论，摆在②层纯占位。
      */
     @Test
-    void familyHubIsNotCappedAgainInLowerTiers() {
+    void perDocIsExemptOnlyInTierOne() {
         List<SimilarityService.Row> all = new ArrayList<>();
-        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 67, 0.54));   // ①层 → 家族中心 = {63, 67}
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 67, 0.54));
         all.add(row(SimilarityScorer.Kind.SERIES, 67, 68, 0.50));
         all.add(row(SimilarityScorer.Kind.SERIES, 66, 68, 0.49));
         all.add(row(SimilarityScorer.Kind.SERIES, 65, 68, 0.48));
         all.sort(SimilarityService.Row.order());
 
         SimilarityService.Selection sel = SimilarityService.select(all, 50, 2);
+        SimilarityService.TierDetail dup = sel.detail().get(SimilarityScorer.Kind.DUPLICATE);
         SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
-        assertEquals(3, ser.shown(),
-                "家族交叉对必须一起展示：67↔68 走豁免，66↔68 / 65↔68 各占 #68 一个名额（上限 2）");
-        assertEquals(0, ser.droppedPerDoc(), "这批不该再被 per-doc 挤掉：" + ser.droppedSamples());
+        assertEquals(1, dup.shown(), "①层照旧全部展示");
+        assertEquals(2, ser.shown(), "②层恢复 per-doc：单篇最多 2 条，#68 只允许出现两次");
+        assertEquals(1, ser.droppedPerDoc(), "第 3 条（#65↔#68）应被挤掉并点名");
+        assertEquals(1, ser.droppedSamples().size(), "挤掉的要点名：" + ser.droppedSamples());
+    }
+
+    /**
+     * ③层（进度/日志）默认只展示几条样本（2026-10-26 02:51 越哥定）。
+     *
+     * <p>现场：50 条里③层占 30 条 = 60%，而它是「一般不用判」的一层，
+     * 把名额从①②层抢走了。默认抽 5 条，其余如实报「另有 N 条」。
+     */
+    @Test
+    void progressTierIsSampledByDefaultAndCanBeFullyShown() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 1, 2, 0.9));
+        for (int i = 0; i < 8; i++) {
+            all.add(row(SimilarityScorer.Kind.PROGRESS, 100L + i, 200L + i, 0.6 - i * 0.01));
+        }
+        all.sort(SimilarityService.Row.order());
+
+        SimilarityService.Selection byDefault = SimilarityService.select(all, 50, 2);
+        SimilarityService.TierDetail p = byDefault.detail().get(SimilarityScorer.Kind.PROGRESS);
+        assertEquals(8, p.above(), "统计仍按全库 8 条");
+        assertEquals(SimilarityService.DEFAULT_PROGRESS_SAMPLE, p.shown(), "默认只展示 5 条样本");
+        assertEquals(3, p.droppedBySample(), "剩下的如实报「另有 3 条抽样省略」");
+        assertEquals(0, p.droppedByLimit(), "不是被 limit 截断，别混为一谈");
+
+        SimilarityService.Selection allShown = SimilarityService.select(all, 50, 2, 0);
+        assertEquals(8, allShown.detail().get(SimilarityScorer.Kind.PROGRESS).shown(),
+                "progressSample=0 表示不限，要能全看");
     }
 
     @Test

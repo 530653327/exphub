@@ -2136,27 +2136,23 @@ public class ExpHubTools {
      */
     private String kindLabel(SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
         if (advice != null && !advice.isBlank()) return advice;
-        // 兜底：老数据（队列里存的历史行）没有 advice 时，至少别给出「大概率判 superseded」这种错建议
+        // 兜底：老数据（队列里存的历史行）没有 advice 时，只描述已知证据 + **给缺省动作**。
+        // ⚠️ 2026-10-26 02:51 越哥定：缺省是 distinct，其余动作要正面证据才给。
+        // 这里拿不到两侧行数与标题，算不出形态 —— 那就**不许猜**，直接渲染缺省动作。
         if (kind == null) return "";
         String cov = SimilarityScorer.Score.pct(coverage);
-        return switch (kind) {
-            // ⚠️ 兜底文案虽短，也必须守住同一条底线（2026-10-26 02:2x）：母集-子集
-            // **两个方向都别判**，只挡 duplicate、放过 superseded 等于同一个坑换了个出口
-            case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致，覆盖较短那篇 "
-                    + cov + "）→ 先看两侧独有行数：两侧都很少才是真重复，可判 duplicate；"
-                    + "一侧很少是母集-子集、两侧各约一半是同模板实例，这两种都别判 duplicate。"
-                    + SimilarityScorer.Score.SUBSET_RULE_SHORT;
+        String evidence = switch (kind) {
+            case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致，覆盖较短那篇 " + cov
+                    + "）—— 这是老队列行，没存两侧独有行数，形态判不了";
             case SERIES -> sharedLines > 0
-                    ? "🔗 **共用骨架**（只重 " + sharedLines + " 行、覆盖仅 " + cov
-                      + "，像同一模板的不同实例）→ 别判 duplicate；"
-                      + "先确认不是母集-子集（" + SimilarityScorer.Score.SUBSET_RULE_SHORT
-                      + "），确实是新阶段才判 superseded"
-                    : "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 没内容证据时不判 superseded，"
-                      + "先排除同模板实例与母集-子集，确认是同一件事的新阶段才判；拿不准判 distinct";
-            case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）→ 建议人工读一眼";
-            case PROGRESS -> "📅 **两侧都是进度/日志记录** → 这类天然是同一件事的分阶段记录，"
-                    + "**一般不用判**（除非确认是同一条写了两遍）";
+                    ? "🔗 **共用骨架**（只重 " + sharedLines + " 行、覆盖仅 " + cov + "）"
+                    : "🔗 **只有标签/标题像**（正文 0 行重合 —— 没有任何内容证据）";
+            case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）";
+            case PROGRESS -> "📅 **两侧都是进度/日志记录**";
         };
+        SimilarityScorer.Action act = kind == SimilarityScorer.Kind.PROGRESS
+                ? SimilarityScorer.Action.NONE : SimilarityScorer.Action.DISTINCT;
+        return evidence + "。\n　　" + SimilarityScorer.actionSentence(act, 0);
     }
 
     /** L0 查重结果转成人能秒读的几行；查重失败也只说失败，不影响主回执 */
@@ -2213,7 +2209,8 @@ public class ExpHubTools {
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）。允许区间 [0.30, 0.95]，**超出区间会被直接拒绝并说明收到了多少**（不再静默改成 0.30 —— 静默修改会让「参数没生效」这种链路问题查不出来）", required = false) Double threshold,
             @ToolParam(description = "可选。最多返回/入队几条，默认 20，上限 50", required = false) Integer limit,
-            @ToolParam(description = "可选。一篇文档最多出现在几条候选里，默认 2 —— 防止同一个模板族（如一批同格式提示词）把队列占满", required = false) Integer maxPerDoc,
+            @ToolParam(description = "可选。一篇文档最多出现在几条候选里，默认 2 —— 防止同一个模板族（如一批同格式提示词）把队列占满。⚠️ 只在①层（疑似字面重复）豁免：一篇母档命中多个子页要一起判；②层及以下照常限流", required = false) Integer maxPerDoc,
+            @ToolParam(description = "可选。**进度/日志层最多展示几条，默认 5，传 0 = 不限**。这类记录天然是分阶段记录、一般不用判，摆一堆会吃掉①②层的名额（实测曾占 60%）", required = false) Integer progressSample,
             @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
             @ToolParam(description = "可选。**谁改的**——操作人署名（建议统一用这个）。不传=用当前 API Key 绑定的助手名", required = false) String updatedName) {
         try {
@@ -2223,8 +2220,8 @@ public class ExpHubTools {
             }
             boolean dry = Boolean.TRUE.equals(dryRun);
             String operator = resolveAuthor(updatedName, assistant);
-            SimilarityService.ScanResult r = similarityService.scan(projectId, threshold, limit, maxPerDoc, dry,
-                    operator);
+            SimilarityService.ScanResult r = similarityService.scan(projectId, threshold, limit, maxPerDoc,
+                    progressSample, dry, operator);
             if (!r.ok()) {
                 return "❌ " + r.summary();
             }
@@ -2292,6 +2289,10 @@ public class ExpHubTools {
                                 if (!d.droppedSamples().isEmpty()) {
                                     sb.append("：").append(String.join("、", d.droppedSamples()));
                                 }
+                            }
+                            if (d.droppedBySample() > 0) {
+                                sb.append("｜另有 ").append(d.droppedBySample())
+                                  .append(" 条进度类默认抽样省略（要全看传 progressSample=0）");
                             }
                             if (d.droppedByLimit() > 0) {
                                 sb.append("｜另有 ").append(d.droppedByLimit()).append(" 对被 limit 截断");

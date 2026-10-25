@@ -234,6 +234,92 @@ public final class SimilarityScorer {
     private static final java.util.regex.Pattern SUPPLEMENT_P = java.util.regex.Pattern.compile(
             "补充|补遗|补记|追加|附记|附录|续篇|（续）|\\(续\\)|第[一二三四五六七八九十\\d]{1,3}部分");
 
+    /**
+     * 一对候选最终该做的<b>唯一动作</b>（2026-10-26 02:51 越哥定）。
+     *
+     * <p><b>为什么要有枚举，而不是继续在文案里写建议</b>：连续 8 轮都是「加一条建议 → 冒出新的自相矛盾」，
+     * 根因是文案由自由拼接长出来，任意两句都可能互斥（「0 行重合」与「可能整篇被包住」就是这么来的）。
+     * 枚举把「能同时给出两个动作」这件事从<b>结构上</b>消掉：一对候选只渲染一个动作。
+     *
+     * <p><b>证据同源硬约束（越哥补的那条，比枚举更要紧）</b>：
+     * <ul>
+     *   <li>内容类动作（{@link #DUPLICATE}、{@link #SUPERSEDED}）<b>必须</b>有内容证据（共享行 ≥1）</li>
+     *   <li>结构信号（行数比 / 标题日期编号 / 补充页标记）<b>只能否决，不能立论</b> ——
+     *       它能说「这两份不是母子」，不能说「这两份是母子」</li>
+     *   <li>缺省是 {@link #DISTINCT}：其余动作都要<b>正面证据</b>才给，判不了就不判</li>
+     * </ul>
+     */
+    public enum Action {
+        /** 整篇复制（两侧独有都很少 + 有内容证据） */
+        DUPLICATE,
+        /** 旧被新取代（只写指针）—— 目前<b>没有</b>任何前置条件能正面支撑它，保留枚举以备将来 */
+        SUPERSEDED,
+        /** 先把小的那份并进大的、确认后再清（母集-子集 / 补充页） */
+        MERGE_THEN_CLEAR,
+        /** 两份都留着，谁也别并、谁也别清 —— <b>缺省动作</b> */
+        DISTINCT,
+        /** 进度/日志类，天然分阶段记录，一般不用判 */
+        NONE
+    }
+
+    /**
+     * 一对候选<b>唯一</b>的动作决策 —— 回执里渲染的动作句只能来自这里。
+     *
+     * <p>⚠️ 顺序即优先级：先让<b>结构信号否决</b>，再看内容证据，最后才给结构能支持的唯一例外
+     * （补充页 → 合并）。任何一步不满足就落 {@link Action#DISTINCT}。
+     */
+    public static Action decide(Kind kind, int sharedLines, int linesA, int linesB,
+                                String titleA, String titleB) {
+        if (kind == null) return Action.DISTINCT;
+        if (kind == Kind.PROGRESS) return Action.NONE;
+        if (kind == Kind.UNKNOWN) return Action.DISTINCT;
+        // ① 结构信号只能否决：日期/编号不同 → 两份独立记录，到此为止
+        if (siblingReason(titleA, titleB) != null) return Action.DISTINCT;
+
+        boolean contentEvidence = sharedLines >= 1;
+        if (kind == Kind.DUPLICATE) {
+            Shape sh = shapeFor(sharedLines, linesA, linesB);
+            if (sh == Shape.TRUE_DUP) return contentEvidence ? Action.DUPLICATE : Action.DISTINCT;
+            // 母集-子集必须有内容证据（共享行 ≥1）：0 行重合说明一行都没被包含，补不出「已含」
+            if (sh == Shape.SUBSET) return contentEvidence ? Action.MERGE_THEN_CLEAR : Action.DISTINCT;
+            return Action.DISTINCT;   // PARALLEL / UNKNOWN
+        }
+        // SERIES：有内容重合是「共用骨架」→ 两份独立
+        if (contentEvidence) return Action.DISTINCT;
+        // 0 行重合：唯一允许的结构例外 —— 标题明说是补充页，且行数悬殊（补充页 → 并进母档）
+        int big = Math.max(linesA, linesB), small = Math.min(linesA, linesB);
+        boolean ratioSubset = small > 0 && big >= small * MIN_LINES_RATIO_FOR_SUBSET;
+        if (ratioSubset && isSupplementTitle(linesA <= linesB ? titleA : titleB)) {
+            return Action.MERGE_THEN_CLEAR;
+        }
+        return Action.DISTINCT;
+    }
+
+    /** 动作句 —— 只此一份；{@code kidLines} 是要保住/要并过去的那几行 */
+    public static String actionSentence(Action a, int kidLines) {
+        if (a == null) return "";
+        return switch (a) {
+            case DUPLICATE -> "✅ **动作：判 duplicate**（只打重复标记，不合并正文、不删任何东西）";
+            case SUPERSEDED -> "✅ **动作：判 superseded**（只写指针；仅当你确认「后者确是前者的新阶段、"
+                    + "且前者独有内容已并入后者」时用）";
+            case MERGE_THEN_CLEAR -> "✅ **动作：先把这 " + kidLines + " 行并进另一份、确认后清掉这一份**"
+                    + "（并完打开另一份读一遍，确认真读到了；并不了 / 不知道该并到哪就改判 distinct，两份都留着）";
+            case DISTINCT -> "⛔ **动作：判 distinct**（两份都留着，谁也别并、谁也别清 —— "
+                    + "判 duplicate / superseded 才是可能丢内容的那一步）";
+            case NONE -> "⏭ **动作：不用判**（这类天然是同一件事的分阶段记录；除非确认同一条写了两遍）";
+        };
+    }
+
+    /** 共享的形态判定（advice 与 decide 必须用同一套，否则两处会给出不同结论） */
+    public static Shape shapeFor(int sharedLines, int linesA, int linesB) {
+        if (linesA == 0 || linesB == 0) return Shape.UNKNOWN;
+        double oa = (double) Math.max(0, linesA - sharedLines) / linesA;
+        double ob = (double) Math.max(0, linesB - sharedLines) / linesB;
+        if (Math.max(oa, ob) <= MAX_OWN_SHARE_FOR_TRUE_DUP) return Shape.TRUE_DUP;
+        if (Math.min(oa, ob) <= MAX_OWN_SHARE_FOR_SUBSET) return Shape.SUBSET;
+        return Shape.PARALLEL;
+    }
+
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
     public static final double W_CONTENT = 0.33;
@@ -642,110 +728,72 @@ public final class SimilarityScorer {
         int ub = Math.max(0, linesB - sharedLines);
         double oa = linesA == 0 ? 0 : (double) ua / linesA;
         double ob = linesB == 0 ? 0 : (double) ub / linesB;
-        Shape shape;
-        if (linesA == 0 || linesB == 0) shape = Shape.UNKNOWN;
-        else if (Math.max(oa, ob) <= MAX_OWN_SHARE_FOR_TRUE_DUP) shape = Shape.TRUE_DUP;
-        else if (Math.min(oa, ob) <= MAX_OWN_SHARE_FOR_SUBSET) shape = Shape.SUBSET;
-        else shape = Shape.PARALLEL;
+        Shape shape = shapeFor(sharedLines, linesA, linesB);
         String cov = Score.pct(lineCoverage);
-        return switch (kind) {
+        String sib = siblingReason(titleA, titleB);
+        // ⚠️ 动作只从这里出（2026-10-26 02:51 越哥定）：文案只描述证据，动作由 decide() 决定并渲染。
+        // 这样「同一对同时给出两个动作」在结构上不可能出现。
+        Action act = decide(kind, sharedLines, linesA, linesB, titleA, titleB);
+        int kidLines = linesA <= linesB ? ua : ub;
+
+        String evidence = switch (kind) {
             case DUPLICATE -> "**正文重合度高**（共享 " + sharedLines + " 行，平均 " + sharedAvgLen
                     + " 字，覆盖较短那篇 " + cov + "）\n"
-                    + "　⚠️ 重合高 ≠ 就是重复：这一层混着三种形态，用独有行数分辨 —— "
-                    + "A 独有 " + ua + " 行（占 " + Score.pct(oa) + "）、"
-                    + "B 独有 " + ub + " 行（占 " + Score.pct(ob) + "）。\n"
-                    + switch (shape) {
-                        case TRUE_DUP -> "　→ 两侧独有都很少（整篇复制）：**可以判 duplicate**";
-                        case SUBSET -> {
-                            String sib = siblingReason(titleA, titleB);
-                            if (sib != null) {
-                                yield "　→ 一侧几乎整篇在另一侧里，**但 " + sib + "** —— "
-                                        + "这是两份独立记录，**不是母集-子集**，别拿「被包含」当「该被取代」。\n"
-                                        + "　　**别判 duplicate，也别判 superseded**，判 **distinct**："
-                                        + "谁也别并、谁也别清（照母集-子集办就是把一份并进另一份）。";
-                            }
-                            int kidLines = oa <= ob ? ua : ub;
-                            double kidShare = Math.min(oa, ob);
-                            yield "　→ 一侧几乎整篇在另一侧里（母集-子集）："
-                                    + (oa <= ob ? "A" : "B") + " 侧独有 " + kidLines
-                                    + " 行（占 " + Score.pct(kidShare) + "），像另一侧的子页。"
-                                    + (kidShare >= MAX_OWN_SHARE_FOR_TRUE_DUP
-                                       ? "⚠️ 这个占比已贴近「真重复」上限 " + Score.pct(MAX_OWN_SHARE_FOR_TRUE_DUP)
-                                         + "，属边界样本 —— 先打开两边看那 " + kidLines
-                                         + " 行到底是新增内容还是改写。" : "")
-                                    + "\n　　"
-                                    + Score.subsetAction(kidLines);
-                        }
-                        case PARALLEL -> "　→ 两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）："
-                                + "**别判 duplicate** —— 判了等于用其中一份取代另一份，一般判 distinct；"
-                                + "只有确认后者是前者同一件事的新阶段、且两侧不是不同日期/编号/主体，才 superseded"
-                                + "（确认不了就 distinct —— 别为了「收敛」硬判）";
-                        case UNKNOWN -> "　→ 行口径不可用，形态分不出，人工读一眼再定";
-                    };
+                    + "　⚠️ 重合高 ≠ 就是重复：这一层混着三种形态，用独有行数分辨 —— A 独有 " + ua
+                    + " 行（占 " + Score.pct(oa) + "）、B 独有 " + ub + " 行（占 " + Score.pct(ob) + "）。\n"
+                    + "　→ 形态：" + switch (shape) {
+                        case TRUE_DUP -> "两侧独有都很少（整篇复制）";
+                        case SUBSET -> "一侧几乎整篇在另一侧里（母集-子集），"
+                                + (oa <= ob ? "A" : "B") + " 侧独有 " + kidLines + " 行（占 "
+                                + Score.pct(Math.min(oa, ob)) + "），像另一侧的子页"
+                                + (Math.min(oa, ob) >= MAX_OWN_SHARE_FOR_TRUE_DUP
+                                   ? "。⚠️ 这个占比已贴近「真重复」上限 "
+                                     + Score.pct(MAX_OWN_SHARE_FOR_TRUE_DUP)
+                                     + "，属边界样本 —— 先打开两边看那 " + kidLines
+                                     + " 行是新增内容还是改写" : "");
+                        case PARALLEL -> "两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）";
+                        case UNKNOWN -> "行口径不可用，形态分不出";
+                      }
+                    + (sib == null ? "" : "\n　→ **但 " + sib + "** —— 两份独立记录，"
+                       + "形态上的「被包含」不等于「该被取代」");
             case SERIES -> {
                 int big = Math.max(linesA, linesB), small = Math.min(linesA, linesB);
                 boolean ratioSubset = small > 0 && big >= small * MIN_LINES_RATIO_FOR_SUBSET;
                 String ratio = "两侧行数 " + linesA + " : " + linesB
                         + (ratioSubset ? "（约 " + Math.round((double) big / small) + ":1）" : "");
                 if (sharedLines > 0) {
-                    yield "**共用骨架**（" + ratio + "，只重 " + sharedLines + " 行、平均仅 "
-                            + sharedAvgLen + " 字、覆盖 " + cov + "，两侧还各有 " + ua + " / " + ub
-                            + " 行独有）→ 同一模板的不同实例：**别判 duplicate**，一般判 distinct；"
-                            + "只有确认一侧确实是另一侧的新阶段才 superseded";
+                    yield "**共用骨架**（" + ratio + "，只重 " + sharedLines + " 行、平均仅 " + sharedAvgLen
+                            + " 字、覆盖 " + cov + "，两侧还各有 " + ua + " / " + ub
+                            + " 行独有）→ 同一模板的不同实例";
                 }
-
-                // ⚠️ 0 行重合是**最强的反向证据**，优先级高于行数比（2026-10-26 02:42 越哥实测）：
-                // 上一版写「0 行重合 …… 短的那篇可能整篇被长的那篇包住」—— 两句互斥。
-                // 真被包住，重合度该接近 100%；0 行重合说明短的那篇一个字都没出现过。
-                // 结果是把 #514↔#542（标题明说是「补充」页）引向「确认长篇已包含它」——
-                // 那个确认必然失败，于是永远只能判 distinct，把一个本该合并的补充页钉在队列里。
+                // 0 行重合：这是最强的反向证据，**优先于行数比**（结构信号只能否决，不能立论）
+                if (ratioSubset && sib != null) {
+                    yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
+                            + "行数比只说明长短，说明不了谁属于谁";
+                }
+                if (ratioSubset && isSupplementTitle(linesA <= linesB ? titleA : titleB)) {
+                    yield "**" + ratio + "，但正文 0 行重合 —— 短的那篇一个字都没出现在长的那篇里**，"
+                            + "而标题明说它是**补充页**：所以「已经包含」不成立"
+                            + "（❌ 别去找那个证据，一定找不到）";
+                }
                 if (ratioSubset) {
-                    // ⚠️ 排除项必须**只在「长短悬殊」成立时**才用（2026-10-26 02:46 部署后实测踩到：
-                    // 40 : 44 根本不悬殊，却也被写成「长短悬殊，但标题里的编号不同」——
-                    // 把一句本来只描述「行数差」的话，硬套到行数差不大的对上）。
-                    String sib = siblingReason(titleA, titleB);
-                    if (sib != null) {
-                        yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
-                                + "这是两份独立记录，**不是母集-子集**（行数比只说明长短，说明不了谁属于谁）。\n　　"
-                                + "**判 distinct**：谁也别并、谁也别清 —— 照母集-子集办"
-                                + "就是把一份的内容并进另一份里，等于把日期/编号弄混。";
-                    }
-                    boolean aIsShort = linesA <= linesB;
-                    if (isSupplementTitle(aIsShort ? titleA : titleB)) {
-                        yield "**" + ratio + "，但正文 0 行重合 —— 短的那篇一个字都没出现在长的那篇里**，"
-                                + "而标题明说它是**补充页**。所以：\n　　"
-                                + "❌ **不要去找「长的那篇已包含它」的证据**（0 行重合，一定找不到，"
-                                + "也别按母集-子集办 —— 那套的前提是「已包含」）；\n　　"
-                                + "✅ **把这 " + small + " 行并进长那篇的对应章节**，并完打开长的那篇读一遍、"
-                                + "确认真读到了，再把短的那篇标为被取代 / 清掉；"
-                                + "拿不准该并到哪一章就判 **distinct**（两份都留着，别丢）";
-                    }
-                    yield "**" + ratio + "，但正文 0 行重合 —— 一行交集都没有**，所以"
-                            + "**不可能是「短的那篇整篇被包住」**（真被包住的话重合度该接近 100%）。"
-                            + "两份都不包含对方。\n　　"
-                            + "两种可能，选一个：① 同一条记录的两半 → **把短的那篇并进长的那篇**，"
-                            + "并完确认再清；② 两份独立记录 → 判 **distinct**（谁也别并、谁也别清）。"
-                            + "\n　　" + SimilarityScorer.SIBLING_EXCLUSIONS + "；都排除不掉又拿不准 → distinct";
+                    yield "**" + ratio + "，但正文 0 行重合 —— 一行交集都没有**，"
+                            + "所以不可能是「短的那篇整篇被包住」"
+                            + "（真被包住重合度该接近 100%）；两份都不包含对方。\n　　"
+                            + SimilarityScorer.SIBLING_EXCLUSIONS;
                 }
-                // 行数差不多、但标题的日期/编号不同 → 独立记录，直接 distinct（别留「先排除母集」这种话，
-                // 免得上一条排除结论和这条兜底自相矛盾）
-                String sib2 = siblingReason(titleA, titleB);
-                if (sib2 != null) {
-                    yield "**" + ratio + "**，而 " + sib2 + " —— 两份**独立记录**："
-                            + "正文 0 行重合、也没有任何内容证据支持合并。**判 distinct**："
-                            + "谁也别并、谁也别清（这两份各自有效，别为了「收敛」硬判 superseded）。";
+                if (sib != null) {
+                    yield "**" + ratio + "**，而 " + sib + " —— 两份**独立记录**，"
+                            + "且正文 0 行重合，没有任何内容证据支持合并";
                 }
-                yield "**只有标签/标题像**（" + ratio + "，正文 0 行重合 —— "
-                        + "没有任何内容证据）：可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
-                        + "（**别照抄示例去猜类型，看标题和正文各写了什么**）。"
-                        + "⚠️ **没内容证据时不要判 superseded** —— 那等于用其中一份取代另一份。"
-                        + "先排除母集-子集与同模板实例，确认是同一件事的新阶段才 superseded；拿不准判 distinct";
+                yield "**只有标签/标题像**（" + ratio + "，正文 0 行重合 —— 没有任何内容证据）："
+                        + "可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
+                        + "（**别照抄示例去猜类型，看标题和正文各写了什么**）";
             }
-            case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
-            case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）→ "
-                    + "这类天然是同一件事的分阶段记录，**一般不用判**；"
-                    + "除非确认是同一条写了两遍，否则忽略";
+            case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底，形态分不出）";
+            case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）";
         };
+        return evidence + "。\n　　" + actionSentence(act, kidLines);
     }
 
     /**
