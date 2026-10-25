@@ -488,8 +488,8 @@ public final class SimilarityScorer {
                         case TRUE_DUP -> "　→ 两侧独有都很少（整篇复制）：**可以判 duplicate**";
                         case SUBSET -> "　→ 一侧几乎整篇在另一侧里（母集-子集）：**别判 duplicate**；"
                                 + "先看是不是 superseded（母集取代子集），都不是就判 distinct";
-                        case PARALLEL -> "　→ 两侧各有约一半独有行（同一模板的两个实例 / 并列记录）："
-                                + "**别判 duplicate** —— 判了等于用一个实体取代另一个，一般判 distinct；"
+                        case PARALLEL -> "　→ 两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）："
+                                + "**别判 duplicate** —— 判了等于用其中一份取代另一份，一般判 distinct；"
                                 + "只有确认后者是前者同一件事的新阶段才 superseded";
                         case UNKNOWN -> "　→ 行口径不可用，形态分不出，人工读一眼再定";
                     };
@@ -498,8 +498,9 @@ public final class SimilarityScorer {
                       + cov + "，两侧还各有 " + ua + " / " + ub + " 行独有）→ 同一模板的不同实例："
                       + "**别判 duplicate**，一般判 distinct；只有确认一侧确实是另一侧的新阶段才 superseded"
                     : "**只有标签/标题像**（正文 " + sharedLines + " 行重合 —— 没有任何内容证据）："
-                      + "可能是同话题演进链，也可能是同一模板的两个实例（不同的宠物 / 专家 / 角色）。"
-                      + "⚠️ **没内容证据时不要判 superseded** —— 那等于用一个实体取代另一个。"
+                      + "可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
+                      + "（**别照抄示例去猜类型，看标题和正文各写了什么**）。"
+                      + "⚠️ **没内容证据时不要判 superseded** —— 那等于用其中一份取代另一份。"
                       + "先排除母集-子集与同模板实例，确认是同一件事的新阶段才 superseded；拿不准判 distinct";
             case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
             case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）→ "

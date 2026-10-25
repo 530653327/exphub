@@ -2071,7 +2071,7 @@ public class ExpHubTools {
               .append("· skip = 本次忽略，下次还会提出来\n")
               .append("⚠️ 别凭「重合多」直接判 duplicate：两侧独有行都很少才是真重复；"
                       + "一侧很少是母集-子集（别判 duplicate）；两侧各约一半是同模板实例（判 distinct）。"
-                      + "正文 0 行重合时也没有内容证据，不要判 superseded —— 那等于用一个实体取代另一个");
+                      + "正文 0 行重合时也没有内容证据，不要判 superseded —— 那等于用其中一份取代另一份");
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.listReviewCandidates: FAILED", e);
@@ -2171,21 +2171,33 @@ public class ExpHubTools {
               .append("· 两侧独有行都很少（整篇复制）→ duplicate（只打标记不合并）\n")
               .append("· 确认后者是前者同一件事的新阶段（**先排除母集-子集与同模板实例**）→ superseded（只写指针）\n")
               .append("· 是两个不同实体/不同角色，或拿不准 → distinct（此后这一对不再打扰）\n")
-              .append("⚠️ 0 行正文重合时不要判 superseded：那只是标签/标题像，判了等于用一个实体取代另一个\n");
+              .append("⚠️ 0 行正文重合时不要判 superseded：那只是标签/标题像，判了等于用其中一份取代另一份\n");
         }
         return sb.toString();
     }
 
-    /** 分层分组标题 */
+    /**
+     * 分层分组标题 —— **不带编号**。
+     *
+     * <p>⚠️ 2026-10-26 02:1x 越哥实测发现：原来编号是写死的（①DUPLICATE ②SERIES ③UNKNOWN ④PROGRESS），
+     * 而某一层可能一对都没有（例如 ③ 信息不足常常 0 对），于是回执出现「①②④」——
+     * 读的人会以为漏了一层。**编号必须按「这次实际出现的层」顺排**，见 {@link #circle}。
+     */
     private String kindGroupTitle(SimilarityScorer.Kind kind) {
         if (kind == null) return "其他";
         return switch (kind) {
-            case DUPLICATE -> "① 疑似字面重复 —— 正文有重合，最该先判"
+            case DUPLICATE -> "疑似字面重复 —— 正文有重合，最该先判"
                     + "（⚠️ 这一层混着真重复 / 母集-子集 / 同模板实例三种，看每对的独有行数分辨）";
-            case SERIES -> "② 同话题演进链 —— 正文一行不重，别当重复判";
-            case UNKNOWN -> "③ 信息不足 —— 需人工读一眼";
-            case PROGRESS -> "④ 进度/日志记录 —— 天然是演进链，一般不用判";
+            case SERIES -> "同话题演进链 / 共用骨架 —— 正文一行不重、或只共用骨架，别当重复判";
+            case UNKNOWN -> "信息不足 —— 需人工读一眼";
+            case PROGRESS -> "进度/日志记录 —— 天然是演进链，一般不用判";
         };
+    }
+
+    /** 动态层号：按本次实际出现的顺序给 ① ② ③…，不再跟枚举序号绑定 */
+    private static String circle(int n) {
+        String[] c = {"①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"};
+        return n >= 1 && n <= c.length ? c[n - 1] : "(" + n + ")";
     }
 
     @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。结果按性质分层（疑似字面重复 / 同话题演进链 / 进度日志记录 / 信息不足），**层内才按分数排** —— 只看分数会把最该判的那对埋掉。⚠️ 分层统计基于**全部超阈值对**，不受 limit 影响（limit 只决定这次展示几条）；所以别用「改 limit 后进度层不见了」判断降级是否生效。建议先 dryRun=true 看清单再决定是否入队。")
@@ -2250,12 +2262,35 @@ public class ExpHubTools {
                 }
                 sb.append("\n\n");
                 int i = 1;
+                int groupNo = 0;
                 SimilarityScorer.Kind last = null;
                 for (SimilarityService.Row row : r.rows()) {
                     // 层与层之间插一条分隔，让「分数低的反而更重要」这件事无法被忽略
                     if (row.kind() != last) {
                         if (last != null) sb.append("---\n");
-                        sb.append("**【").append(kindGroupTitle(row.kind())).append("】**\n");
+                        groupNo++;
+                        sb.append("**【").append(circle(groupNo)).append(" ")
+                          .append(kindGroupTitle(row.kind())).append("】**");
+                        // 每层自证：全库 X 对 / 本次展示 Y 条 / 挤掉哪些（2026-10-26 02:1x 越哥要求）
+                        SimilarityScorer.Kind kk = row.kind() == null
+                                ? SimilarityScorer.Kind.UNKNOWN : row.kind();
+                        SimilarityService.TierDetail d = r.tierDetail().get(kk);
+                        if (d != null) {
+                            sb.append("（全库 ").append(d.above()).append(" 对｜本次展示 ")
+                              .append(d.shown()).append(" 条");
+                            if (d.droppedPerDoc() > 0) {
+                                sb.append("｜另有 ").append(d.droppedPerDoc())
+                                  .append(" 对被「单篇最多 ").append(r.maxPerDoc()).append(" 条候选」的限流挤掉");
+                                if (!d.droppedSamples().isEmpty()) {
+                                    sb.append("：").append(String.join("、", d.droppedSamples()));
+                                }
+                            }
+                            if (d.droppedByLimit() > 0) {
+                                sb.append("｜另有 ").append(d.droppedByLimit()).append(" 对被 limit 截断");
+                            }
+                            sb.append("）");
+                        }
+                        sb.append("\n");
                         last = row.kind();
                     }
                     sb.append(i++).append(". ").append(SimilarityScorer.Score.fmt(row.score()))
@@ -2267,6 +2302,10 @@ public class ExpHubTools {
                 }
             }
             sb.append("\n---\n");
+            sb.append("· **分层优先于 limit**：清单按「层先、分数后」排，截断只可能发生在最后一层；")
+              .append("①层（最该先判、对数最少）**不受「单篇最多 N 条候选」的限流约束** —— ")
+              .append("否则一篇母文档命中多个子页的族会被砍到只剩 2 条，看起来像「分层没生效」")
+              .append("（2026-10-26 02:1x 越哥实测：①层统计 6 对、清单只有 4 条，根因就是这个）\n");
             sb.append("· **分数只反映「三路信号加权相似度」，不承担排序职责**：先按「正文有没有重合」分层，")
               .append("层内再比分数。实测教训——正文 0 行重合的演进链能拿 0.62，正文 33 行一致的真重复只有 0.51，")
               .append("只按分数排会把最该判的那对压到十几名之后\n");

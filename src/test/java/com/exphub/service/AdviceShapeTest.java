@@ -158,7 +158,7 @@ class AdviceShapeTest {
         String d = s.diagnosis();
         assertTrue(d.contains("别判 duplicate"), "同模板实例不能建议判 duplicate：" + d);
         assertFalse(d.contains("可以判 duplicate"), d);
-        assertTrue(d.contains("用一个实体取代另一个"), "要说清判错的后果：" + d);
+        assertTrue(d.contains("取代另一份"), "要说清判错的后果：" + d);
     }
 
     @Test
@@ -169,7 +169,7 @@ class AdviceShapeTest {
         assertEquals(0, s.sharedLines(), "正文确实一行不重");
         String d = s.diagnosis();
         assertFalse(d.contains("大概率"),
-                "没有内容证据时，不许把猜测写成「大概率」—— 判 superseded 会用一个实体取代另一个：" + d);
+                "没有内容证据时，不许把猜测写成「大概率」—— 判 superseded 等于用其中一份取代另一份：" + d);
         assertFalse(d.contains("该判 superseded"), d);
         assertTrue(d.contains("distinct"), "要给出拿不准时的默认动作：" + d);
     }

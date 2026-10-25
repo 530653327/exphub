@@ -134,8 +134,13 @@ class SimilarityCandidateFlowTest {
     }
 
     @Test
-    void scanAppliesPerDocCap() {
-        // 三篇几乎完全一样的文档 → 三对都超阈值；maxPerDoc=1 时只能留下 1 对
+    void tierOneIsNotCappedByPerDoc() {
+        // 三篇几乎完全一样的文档 → 三对都超阈值（①层）。
+        //
+        // ⚠️ 2026-10-26 02:1x 改判：原来断言「maxPerDoc=1 → 只留 1 对」，
+        // 但那正是越哥实测发现的问题 —— ①层一篇命中多个子页时（#63↔65/66/67/68）
+        // 被砍到只剩 2 条，最该人判的一批少一半，低层却把空出的名额填满。
+        // 现在①层豁免 per-doc（②层及以下的限流见 SelectionLimitTest）。
         List<Doc> store = new ArrayList<>(List.of(
                 doc(1L, "ExpHub 部署流程", "exphub,部署", BODY, null),
                 doc(2L, "ExpHub 部署流程说明", "exphub,部署", BODY, null),
@@ -153,8 +158,8 @@ class SimilarityCandidateFlowTest {
 
         assertTrue(r.ok());
         assertEquals(3, r.aboveThreshold(), "阈值之上的原始对数应如实统计");
-        assertEquals(1, r.rows().size(), "per-doc=1 时每个文档最多出现一次");
-        assertEquals(1, r.enqueued());
+        assertEquals(3, r.rows().size(), "①层不受 per-doc 限制，三对全部展示");
+        assertEquals(3, r.enqueued(), "展示 3 对就入队 3 对（dryRun=false）");
         verify(candidateService, atLeastOnce()).enqueue(anyLong(), anyLong(), any(), anyString(), anyString());
     }
 
