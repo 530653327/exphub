@@ -48,6 +48,12 @@ public class Doc {
     private String flagNote;         // 标记说明
     private String flagMarkedBy;     // 打标记的助手名
     private LocalDateTime flagMarkedAt; // 打标记的时间
+    // ===== D1 取代链（2026-10-25）=====
+    // 只存「被谁取代」这一个方向：反向关系（本条取代了谁）用 WHERE superseded_by=id 反查。
+    // 存两列必然出现「A 说被 B 取代、B 的列表里没有 A」这种双写漂移。
+    // 与 flags 的关系：flags=superseded 表示「疑似被取代但不知道是谁」，
+    // superseded_by 一旦有值就是确定关系，展示时以它为准。
+    private Long supersededBy;       // 取代本条的文档 ID，NULL=未被取代
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

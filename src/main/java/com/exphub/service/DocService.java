@@ -1045,6 +1045,104 @@ public class DocService {
         return docMapper.selectById(id);
     }
 
+    // ==================== D1 施工包 1：取代链（2026-10-25） ====================
+    //
+    // 只做「谁取代谁」这一个指针，不合并正文、不删除旧条。
+    // 理由：合并错了不可逆，而「标记 + 保留原文」错了随时能撤。
+
+    /** markSuperseded 的结果：ok=false 时 message 直接给调用方看，不抛异常 */
+    public record SupersedeResult(boolean ok, String message, Doc doc) {}
+
+    /**
+     * 标记「id 被 byId 取代」。
+     *
+     * <p>只写 superseded_by 一列：<b>不动 version、不写版本快照、不动 updated_at</b>。
+     * 关系变更属元信息，跟 set_flags 是同一类操作 —— 整理动作不该产生版本垃圾。
+     *
+     * @param id   被取代的旧条
+     * @param byId 取代它的新条
+     * @param by   操作人（助手代号），写日志用
+     */
+    @Transactional
+    public SupersedeResult markSuperseded(Long id, Long byId, String by) {
+        Doc old = docMapper.selectById(id);
+        if (old == null) {
+            return new SupersedeResult(false, "未找到 ID 为 " + id + " 的经验", null);
+        }
+        Doc rep = docMapper.selectById(byId);
+        if (rep == null) {
+            return new SupersedeResult(false, "未找到 ID 为 " + byId + " 的经验（取代者必须真实存在）", null);
+        }
+        if (id.equals(byId)) {
+            return new SupersedeResult(false, "不能自己取代自己", null);
+        }
+        if (old.getSupersededBy() != null && old.getSupersededBy().equals(byId)) {
+            return new SupersedeResult(true, "该取代关系已存在，未做改动", old);
+        }
+        // 防环：若从「取代者」顺着它自己的取代链能走回本条，再加这条边就成环
+        if (chainReaches(byId, id, pid -> {
+            Doc d = docMapper.selectById(pid);
+            return d == null ? null : d.getSupersededBy();
+        }, MAX_SUPERSEDE_HOPS)) {
+            return new SupersedeResult(false,
+                    "#" + byId + " 已经（直接或间接）被 #" + id + " 取代，再标一次会形成环。"
+                            + "请先 clear_superseded 解掉旧关系再标。", null);
+        }
+
+        UpdateWrapper<Doc> uw = new UpdateWrapper<>();
+        uw.eq("id", id).set("superseded_by", byId);
+        docMapper.update(null, uw);
+        callLogService.logUpdate(old);
+        log.info("markSuperseded: doc={} supersededBy={} by={}", id, byId, by);
+        return new SupersedeResult(true, "已标记 #" + id + " 被 #" + byId + " 取代", docMapper.selectById(id));
+    }
+
+    /** 撤销取代关系。只清指针，不动正文与状态。 */
+    @Transactional
+    public Doc clearSuperseded(Long id) {
+        Doc doc = docMapper.selectById(id);
+        if (doc == null) {
+            return null;
+        }
+        UpdateWrapper<Doc> uw = new UpdateWrapper<>();
+        uw.eq("id", id).set("superseded_by", null);
+        docMapper.update(null, uw);
+        log.info("clearSuperseded: doc={}", id);
+        return docMapper.selectById(id);
+    }
+
+    /** 反查：本条取代了哪些（用于详情页展示「本条取代了 #A、#B」） */
+    public List<Doc> listSuperseding(Long id) {
+        if (id == null) return List.of();
+        return docMapper.selectList(new QueryWrapper<Doc>().eq("superseded_by", id));
+    }
+
+    /** 批量取（候选队列展示用，避免逐条查导致 N+1） */
+    public List<Doc> listByIds(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return docMapper.selectBatchIds(ids);
+    }
+
+    /** 取代链最大深度：超过这个长度说明数据已经不对劲，不再往下走 */
+    public static final int MAX_SUPERSEDE_HOPS = 20;
+
+    /**
+     * 从 from 顺着取代链走，看能不能走到 target。用于防环（包级可见便于单测）。
+     *
+     * @param lookup 取「某条被谁取代」，走到尽头返回 null
+     */
+    public static boolean chainReaches(Long from, Long target,
+                                       java.util.function.Function<Long, Long> lookup,
+                                       int maxHops) {
+        if (from == null || target == null || lookup == null) return false;
+        Long cur = from;
+        for (int i = 0; i < maxHops && cur != null; i++) {
+            if (cur.equals(target)) return true;
+            cur = lookup.apply(cur);
+        }
+        return false;
+    }
+
     public void updateCallResult(Long docId, boolean success) {
         if (docId == null) return;
         Doc doc = docMapper.selectById(docId);
@@ -1337,6 +1435,18 @@ public class DocService {
      * @param cursor   上一页返回的游标，首页传 null；非法格式按首页处理
      */
     public RecentPage listRecentAccessible(int pageSize, String cursor) {
+        return listRecentAccessible(pageSize, cursor, null);
+    }
+
+    /**
+     * 同上，多一个时间下界（D1 施工包 2：L1「每日增量」需要「只看今天新增/改动的」）。
+     *
+     * <p>为什么必须有它：原来只能靠游标一页页翻来判断「今天有什么」，条目一多就不可靠
+     * —— 翻到第 5 页时前面可能已经被新写入挤走了。
+     *
+     * @param since 只看 updated_at &gt;= since 的；null=不限
+     */
+    public RecentPage listRecentAccessible(int pageSize, String cursor, LocalDateTime since) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
 
@@ -1364,6 +1474,10 @@ public class DocService {
                 scope.or().in("project_id", projectIds);
             }
         });
+
+        if (since != null) {
+            wrapper.ge("updated_at", since);
+        }
 
         Cursor c = parseCursor(cursor);
         if (c != null) {

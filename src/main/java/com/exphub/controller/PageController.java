@@ -2,11 +2,13 @@ package com.exphub.controller;
 
 import com.exphub.entity.User;
 import com.exphub.entity.Doc;
+import com.exphub.entity.ReviewCandidate;
 import com.exphub.entity.AiAssistant;
 import com.exphub.mapper.DocMapper;
 import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
+import com.exphub.service.ReviewCandidateService;
 import com.exphub.service.ToolStatsService;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +43,9 @@ public class PageController extends BaseController {
 
     @Autowired
     private ToolStatsService toolStatsService;
+
+    @Autowired
+    private ReviewCandidateService reviewCandidateService;
 
     // 登录页
     @GetMapping("/login")
@@ -93,6 +98,7 @@ public class PageController extends BaseController {
                        @RequestParam(required = false) String templateType,
                        @RequestParam(required = false) String status,
                        @RequestParam(required = false) String flag,
+                       @RequestParam(required = false) String view,
                        @RequestParam(defaultValue = "1") int page,
                        Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
@@ -105,6 +111,7 @@ public class PageController extends BaseController {
         model.addAttribute("templateType", templateType != null ? templateType : "");
         model.addAttribute("status", status != null ? status : "");
         model.addAttribute("flag", flag != null ? flag : "");
+        model.addAttribute("view", view != null ? view : "");
 
         Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -156,6 +163,19 @@ public class PageController extends BaseController {
         model.addAttribute("needsReviewCount",
                 docMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
                         .like("flags", "needs_review")));
+
+        // D1 施工包 3：整理候选队列（/docs?view=candidates）
+        // 角标常驻，因为候选队列的价值就在于「有人会去看」，藏在二级入口等于没有
+        model.addAttribute("candidateCount", reviewCandidateService.pendingCount());
+        if ("candidates".equalsIgnoreCase(view)) {
+            java.util.List<ReviewCandidate> candidates = reviewCandidateService.listByStatus(ReviewCandidate.PENDING, 50);
+            java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
+            for (ReviewCandidate c : candidates) { ids.add(c.getDocA()); ids.add(c.getDocB()); }
+            java.util.Map<Long, Doc> docMap = new java.util.HashMap<>();
+            for (Doc d : docService.listByIds(ids)) docMap.put(d.getId(), d);
+            model.addAttribute("candidates", candidates);
+            model.addAttribute("candDocMap", docMap);
+        }
 
         // A3：版本表占用（只读展示，让「快照在膨胀」这件事可见；清理动作不在界面里，删正文不可逆）
         model.addAttribute("versionStats", docService.versionStats());
@@ -311,6 +331,20 @@ public class PageController extends BaseController {
     public String logout(HttpSession session) {
         session.invalidate();
         return "redirect:/login";
+    }
+
+    // D1 施工包 3：处理一条整理候选
+    @PostMapping("/candidates/{id}/resolve")
+    public String resolveCandidate(HttpSession session,
+                                   @PathVariable Long id,
+                                   @RequestParam String action,
+                                   @RequestParam(required = false) String note) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        String by = user.getDisplayName() != null ? user.getDisplayName() : user.getUsername();
+        reviewCandidateService.resolve(id, action, note, by);
+        return "redirect:/docs?view=candidates";
     }
 
     // 删除经验（后台管理）

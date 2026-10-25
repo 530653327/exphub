@@ -222,9 +222,9 @@ docker compose restart exphub  # 重启应用
 
 ---
 
-## 📦 MCP 工具列表（共 30 个）
+## 📦 MCP 工具列表（共 35 个）
 
-### 全局经验库（17 个）
+### 全局经验库（22 个）
 
 | 工具 | 功能 |
 |---|---|
@@ -245,6 +245,11 @@ docker compose restart exphub  # 重启应用
 | `mark_for_deletion` | **标记待删**（不是删除）：必须写原因，标记后立刻从检索结果消失，内容仍在库里，由用户在后台确认才真正删除 |
 | `cancel_deletion` | 撤销待删标记，恢复为正常状态 |
 | `set_flags` | **打机器可读标记**（待复核/疑似重复/已被取代/可能失效/质量存疑）：不递增版本、不写版本快照、不动更新时间，反复打标记不会让版本表膨胀 |
+| `mark_superseded` | **标记旧经验已被新经验取代**（D1 整理）：只写一条指针，不合并正文、不改状态、不递增版本；检索与详情会在旧条上显示「⛔ 已被 #N 取代」 |
+| `clear_superseded` | 撤销取代关系，恢复为独立条目 |
+| `add_review_candidate` | 把一对疑似重复的经验放进**整理候选队列**（不入队等于没发现）：不改任何数据；已判为「不同」的对不会重新入队 |
+| `list_review_candidates` | 查看候选队列（默认待判断，按得分倒序），带得分、理由、来源、两条标题 |
+| `resolve_candidate` | 处理候选：`duplicate`（两条都打标记，**不合并**）/ `superseded`（旧→新指针）/ `distinct`（判为不同，此后不再入队）/ `skip` |
 
 ### 三个「列表」工具怎么选（职责边界）
 
@@ -252,7 +257,7 @@ docker compose restart exphub  # 重启应用
 
 | 你要做的事 | 用哪个 | 行为 |
 |---|---|---|
-| 想知道「最近有什么新东西」 | `list_recent_memories` | 按 `updated_at` 倒序，游标分页（`pageSize` + `cursor`），不做相关度排序 |
+| 想知道「最近有什么新东西」 | `list_recent_memories` | 按 `updated_at` 倒序，游标分页（`pageSize` + `cursor`）；`since` 可只看某时间之后（`today` / `-7d` / 日期），整理记忆用这个，别靠翻页数 |
 | 想枚举某个项目的全部经验 | `list_project_experiences` | 按项目归属筛选，`pageSize`（默认 10 / 上限 50）+ `offset` |
 | 想按关键词找内容 | `search_experience` | ngram 全文 + 相关度排序，`projectName` 可限定项目；`limit`/`offset` 翻页，`brief` 精简 |
 
@@ -330,6 +335,8 @@ exphub/
 - **权限分级**：支持搜索/创建/更新权限分别控制
 - **密码加密**：Spring Security BCrypt 加密存储
 - **改动先小后大**：`append_experience` / `patch_experience` 由服务端读改写全文，客户端永不持有全文，从机制上避免「读到截断版 → 整篇写回 → 丢后半段」这类事故
+- **整理只标记、不合并**：`mark_superseded` 只写指针、`resolve_candidate` 只打标记，两者都不改正文、不删数据。合并错了不可逆，比不整理更糟
+- **候选队列不是自动清理队列**：`review_candidates` 只记录「待判断」，界面里没有「合并」「删除」按钮；真正的删除仍要人先在后台确认
 - **标记不产生版本垃圾**：`set_flags` 只改 `flags` 列，不递增版本、不写版本快照；删除经验时级联清理该文档的全部历史快照（否则主表删了、正文全文仍在库里且界面不可见）
 - **模型无删除权**：MCP 侧只能 `mark_for_deletion`（必须写原因），真正删除只能在后台由人执行；待删项对检索不可见，可一键恢复
 - **敏感信息提醒**：创建经验时提醒 AI 不记录密码、Token 等敏感数据

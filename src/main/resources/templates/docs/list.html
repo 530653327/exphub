@@ -101,6 +101,13 @@
                     <span class="badge badge-warning ml-1" th:if="${needsReviewCount != null and needsReviewCount > 0}"
                           th:text="${needsReviewCount}">0</span>
                 </a>
+                <a th:href="@{/docs(view='candidates')}" class="btn btn-outline-secondary ml-2"
+                   th:classappend="${view == 'candidates'} ? 'active'"
+                   title="AI/相似度算出的疑似重复对，等人判断。判断只打标记或写指针，不合并、不删除">
+                    <i class="fas fa-clone mr-1"></i> 整理候选
+                    <span class="badge badge-secondary ml-1" th:if="${candidateCount != null and candidateCount > 0}"
+                          th:text="${candidateCount}">0</span>
+                </a>
                 <a th:href="@{/docs/edit}" class="btn btn-primary ml-2">
                     <i class="fas fa-plus mr-1"></i> 新建经验
                 </a>
@@ -115,7 +122,71 @@
             </div>
         </div>
 
-        <div class="card">
+        <!-- D1 施工包 3：整理候选队列。判断只打标记 / 写指针，界面里没有「合并」「删除」按钮 -->
+        <div class="card" th:if="${view == 'candidates'}">
+            <div class="card-header">
+                <i class="fas fa-clone mr-1"></i>整理候选队列，待判断
+                <span th:text="${candidates != null ? candidates.size() : 0}">0</span> 条
+                <span class="text-muted ml-2" style="font-size:0.85rem;font-weight:normal;">
+                    判定为重复 = 两条都打标记（不合并正文）；判定为取代 = 旧条指向新条（原文保留）
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <div th:if="${candidates == null or #lists.isEmpty(candidates)}" class="text-center text-muted py-5">
+                    <i class="fas fa-check-circle fa-3x mb-3"></i>
+                    <p class="mb-1">队列是空的，暂时没有待判断的重复候选。</p>
+                    <p class="mb-0" style="font-size:0.85rem;">
+                        AI 整理记忆时发现两条高度重合，会用 add_review_candidate 入队，届时这里会出现。
+                    </p>
+                </div>
+                <div class="doc-item" th:each="c : ${candidates}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <div class="mb-1">
+                                <span class="badge badge-secondary mr-2">候选 #<span th:text="${c.id}">0</span></span>
+                                <span class="text-muted" style="font-size:0.82rem;">
+                                    相似度 <span th:text="${c.score != null ? c.score : '-'}">-</span>
+                                    · 来源 <span th:text="${c.source}">-</span>
+                                    · <span th:text="${c.createdAt}"></span>
+                                </span>
+                            </div>
+                            <div>
+                                <a class="doc-title" th:href="@{/docs/{id}(id=${c.docA})}"
+                                   th:text="|#${c.docA} ${candDocMap.get(c.docA) != null ? candDocMap.get(c.docA).title : '（该条已不存在）'}|">A</a>
+                                <span class="badge badge-broken ml-1"
+                                      th:if="${candDocMap.get(c.docA) != null and candDocMap.get(c.docA).supersededBy != null}"
+                                      th:text="|已被 #${candDocMap.get(c.docA).supersededBy} 取代|">已取代</span>
+                            </div>
+                            <div class="mt-1">
+                                <a class="doc-title" th:href="@{/docs/{id}(id=${c.docB})}"
+                                   th:text="|#${c.docB} ${candDocMap.get(c.docB) != null ? candDocMap.get(c.docB).title : '（该条已不存在）'}|">B</a>
+                                <span class="badge badge-broken ml-1"
+                                      th:if="${candDocMap.get(c.docB) != null and candDocMap.get(c.docB).supersededBy != null}"
+                                      th:text="|已被 #${candDocMap.get(c.docB).supersededBy} 取代|">已取代</span>
+                            </div>
+                            <div class="text-muted mt-1" style="font-size:0.85rem;"
+                                 th:if="${c.reasons != null and !c.reasons.isEmpty()}">
+                                <i class="fas fa-info-circle mr-1"></i><span th:text="${c.reasons}">理由</span>
+                            </div>
+                        </div>
+                        <div class="text-right ml-3" style="min-width:230px;">
+                            <form th:action="@{/candidates/{id}/resolve(id=${c.id})}" method="post" class="d-inline">
+                                <button class="btn btn-sm btn-outline-danger" name="action" value="duplicate"
+                                        title="两条都打 duplicate 标记并互指，不合并正文">判为重复</button>
+                                <button class="btn btn-sm btn-outline-warning" name="action" value="superseded"
+                                        title="较旧那条标记为被较新那条取代，只写指针">标取代</button>
+                                <button class="btn btn-sm btn-outline-secondary" name="action" value="distinct"
+                                        title="判为不同，此后这一对不再重新入队">不同</button>
+                                <button class="btn btn-sm btn-outline-light text-muted" name="action" value="skip"
+                                        title="本次忽略，下次相似度再算到仍会提出">忽略</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" th:if="${view != 'candidates'}">
             <div class="card-header">
                 <span th:if="${status == 'PENDING_DELETE'}" class="text-danger font-weight-bold">
                     <i class="fas fa-trash-restore mr-1"></i>待删队列，共 <span th:text="${totalRows}">0</span> 条
@@ -200,6 +271,8 @@
                             <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">已失效</span>
                             <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已过期</span>
                             <span th:if="${doc.status == 'PENDING_DELETE'}" class="badge badge-broken">待删</span>
+                            <span th:if="${doc.supersededBy != null}" class="badge badge-deprecated"
+                                  th:text="|已被 #${doc.supersededBy} 取代|">已被取代</span>
                             <button th:if="${doc.status == 'PENDING_DELETE'}" class="btn btn-sm btn-outline-success ml-2 restore-btn"
                                     th:attr="data-doc-id=${doc.id}" title="撤销待删标记，恢复为正常">
                                 <i class="fas fa-undo"></i>

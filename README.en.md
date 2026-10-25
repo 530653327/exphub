@@ -142,9 +142,9 @@ java -jar target/exphub-1.0.0.jar
 
 ---
 
-## 📦 MCP Tools (30 total)
+## 📦 MCP Tools (35 total)
 
-### Global Experience Library (17)
+### Global Experience Library (22)
 
 | Tool | Purpose |
 |---|---|
@@ -165,6 +165,11 @@ java -jar target/exphub-1.0.0.jar
 | `mark_for_deletion` | **Mark for deletion** (not delete): reason required, disappears from search, user confirms in admin |
 | `cancel_deletion` | Cancel a deletion mark |
 | `set_flags` | **Machine-readable flags** (needs_review / duplicate / superseded / stale / low_quality): no version bump, no snapshot, does not touch `updated_at` |
+| `mark_superseded` | Mark an old experience as replaced by a newer one (pointer only: no merge, no version bump) |
+| `clear_superseded` | Remove the replaced-by pointer |
+| `add_review_candidate` | Queue a suspected duplicate pair for human review (changes no data) |
+| `list_review_candidates` | List the review queue (PENDING by default, ordered by score) |
+| `resolve_candidate` | Resolve a candidate: `duplicate` (flag both, no merge) / `superseded` / `distinct` / `skip` |
 
 ### Project Spaces (13)
 

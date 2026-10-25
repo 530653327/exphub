@@ -8,6 +8,8 @@ import com.exphub.entity.Project;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
+import com.exphub.service.ReviewCandidateService;
+import com.exphub.entity.ReviewCandidate;
 import com.exphub.service.DocTemplateService;
 import com.exphub.service.ProjectService;
 import org.slf4j.Logger;
@@ -46,6 +48,9 @@ public class ExpHubTools {
 
     @Autowired
     private ProjectService projectService;
+
+    @Autowired
+    private ReviewCandidateService reviewCandidateService;
 
     /**
      * 获取当前调用者权限信息
@@ -147,6 +152,10 @@ public class ExpHubTools {
         sb.append("**作者**: ").append(doc.getAuthorName()).append("\n");
         sb.append("**版本**: v").append(doc.getVersion()).append("\n");
         sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+        // D1 取代链：放在标记之前 —— 「已被取代」比「待复核」更硬，
+        // 先告诉调用方结论以哪条为准，再谈其他标记
+        sb.append(renderSupersedeBlock(doc, id));
+
         // set_flags：标记放在正文之前，避免 AI 读完长文才发现结论存疑
         if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
             sb.append("**⚑ 标记**: ").append(DocService.flagLabelText(doc.getFlags()))
@@ -684,9 +693,12 @@ public class ExpHubTools {
         if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
             flagMark = " ⚑" + DocService.flagLabelText(doc.getFlags());
         }
+        // D1 取代链：被取代的条目必须一眼可见，否则 AI 会把旧结论当现行结论用
+        String supersededMark = (doc.getSupersededBy() != null)
+                ? " ⛔已被#" + doc.getSupersededBy() + "取代" : "";
         return index + ". 【ID:" + doc.getId() + "】" + doc.getTitle()
                 + " —— " + getTemplateTypeLabel(doc.getTemplateType())
-                + " " + getStatusLabel(doc.getStatus()) + flagMark
+                + " " + getStatusLabel(doc.getStatus()) + flagMark + supersededMark
                 + " · " + previewSummary(doc.getSummary()) + "\n";
     }
 
@@ -721,6 +733,10 @@ public class ExpHubTools {
                     sb.append("｜说明: ").append(abbreviate(doc.getFlagNote(), 80));
                 }
                 sb.append("\n");
+            }
+            if (doc.getSupersededBy() != null) {
+                sb.append("   ⛔ 已被 #").append(doc.getSupersededBy())
+                  .append(" 取代 —— 结论以新条为准，本条仅作历史留存\n");
             }
             sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n");
             // 📚 历史版本提示：用 doc.getVersion() 直接判断，不查库。
@@ -1308,6 +1324,19 @@ public class ExpHubTools {
         }
     }
 
+    /**
+     * 署名口径（B1）：调用方自报优先，其次 Key 绑定的助手名。
+     * 一个 Key 只能绑一个名字，而同一 Key 常被多个助手共用，所以必须允许自报。
+     */
+    static String resolveAuthor(String authorName, AiAssistant assistant) {
+        if (authorName != null && !authorName.trim().isEmpty()) return authorName.trim();
+        if (assistant != null && assistant.getAssistantName() != null
+                && !assistant.getAssistantName().trim().isEmpty()) {
+            return assistant.getAssistantName().trim();
+        }
+        return "unknown";
+    }
+
     /** 可被 clearFields 清空的字段白名单（title/content 不在内：清空它们没有合理语义） */
     static final java.util.Set<String> CLEARABLE_FIELDS = java.util.Set.of(
             "tags", "aliases", "summary", "relatedIds", "related_ids", "category");
@@ -1485,6 +1514,228 @@ public class ExpHubTools {
             n++;
         }
         return sb.toString();
+    }
+
+    /**
+     * 详情页的取代关系块。
+     *
+     * <p>双向都展示：被谁取代（硬结论，放最前）、本条取代了谁（留存历史用）。
+     * 反向查询只在详情做，列表不做 —— 列表每行查一次就是 N+1。
+     */
+    private String renderSupersedeBlock(Doc doc, Long id) {
+        StringBuilder sb = new StringBuilder();
+        if (doc.getSupersededBy() != null) {
+            Doc rep = docService.getById(doc.getSupersededBy());
+            sb.append("**⛔ 已被取代**: 本条（#").append(id).append("）已被 **#")
+              .append(doc.getSupersededBy()).append("**");
+            if (rep != null && rep.getTitle() != null) {
+                sb.append("「").append(rep.getTitle()).append("」");
+            }
+            sb.append(" 取代\n");
+            sb.append("> 结论以新条为准，本条保留仅为留存历史。若判断有误，"
+                    + "可调用 mark_superseded / clear_superseded 修正。\n\n");
+        }
+        var replaced = docService.listSuperseding(id);
+        if (!replaced.isEmpty()) {
+            sb.append("**📌 本条取代了**: ");
+            for (int i = 0; i < replaced.size(); i++) {
+                Doc r = replaced.get(i);
+                if (i > 0) sb.append("、");
+                sb.append("#").append(r.getId()).append("「").append(abbreviate(r.getTitle(), 40)).append("」");
+            }
+            sb.append("\n\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * D1 施工包 1：标记取代关系。
+     *
+     * <p>为什么不做「合并」：合并要重写正文，且合并错了不可逆。
+     * 只标指针，旧条原文完整保留，判断错了 clear 一下就行。
+     */
+    @Tool(name = "mark_superseded", description = "标记「旧经验已被新经验取代」（D1 整理动作）。只写一条指针：不合并正文、不改状态、不递增版本、不写版本快照，旧条原文完整保留。之后检索和详情会在被取代的那条上显示「⛔ 已被 #N 取代」，让 AI 知道结论以新条为准。⚠️ 只标关系，不删除任何内容；关系错了用 clear_superseded 撤销。")
+    public String markSuperseded(
+            @ToolParam(description = "被取代的旧经验 ID") Long id,
+            @ToolParam(description = "取代它的新经验 ID（必须真实存在）。通常是内容更准确、时间更新的那一条") Long byId,
+            @ToolParam(description = "可选。操作人署名，仅写日志。不传=用当前 API Key 的助手名", required = false) String authorName) {
+
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            if (id == null || byId == null) {
+                return "❌ id 与 byId 都必填。id=被取代的旧条，byId=取代它的新条。";
+            }
+            String by = resolveAuthor(authorName, assistant);
+            DocService.SupersedeResult r = docService.markSuperseded(id, byId, by);
+            if (!r.ok()) {
+                return "❌ " + r.message() + "\n\n未做任何改动。";
+            }
+            Doc updated = r.doc();
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ ").append(r.message()).append("\n\n");
+            sb.append("**被取代**: #").append(id).append("「").append(abbreviate(updated.getTitle(), 50)).append("」\n");
+            Doc rep = docService.getById(byId);
+            sb.append("**取代者**: #").append(byId).append("「")
+              .append(rep != null ? abbreviate(rep.getTitle(), 50) : "?").append("」\n");
+            sb.append("**版本**: v").append(updated.getVersion()).append("（未变）｜")
+              .append("**版本快照**: 未产生（本工具只写关系，不写版本表）\n\n");
+            sb.append("检索与详情现在会在 #").append(id).append(" 上显示「⛔ 已被 #")
+              .append(byId).append(" 取代」。原文完整保留，随时可 clear_superseded 撤销。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.markSuperseded: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "标记取代关系失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 撤销取代关系（把指针清空，两条都回到「谁也没取代谁」） */
+    @Tool(name = "clear_superseded", description = "撤销「已被取代」标记，把该经验恢复成独立条目（不影响正文、状态、标记）。用于标错了、或两条其实都还有效的情况。")
+    public String clearSuperseded(
+            @ToolParam(description = "要撤销取代关系的经验 ID（原本被标记为「已被取代」的那条）") Long id,
+            @ToolParam(description = "可选。操作人署名，仅写日志", required = false) String authorName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            Doc before = docService.getById(id);
+            if (before == null) {
+                return "❌ 未找到 ID 为 " + id + " 的经验";
+            }
+            if (before.getSupersededBy() == null) {
+                return "ℹ️ #" + id + " 本来就没有被标记为「已被取代」，未做改动。";
+            }
+            Long was = before.getSupersededBy();
+            Doc updated = docService.clearSuperseded(id);
+            return "✅ 已撤销取代关系\n\n**ID**: " + id
+                    + "\n**原来被 #" + was + " 取代**，现已恢复为独立条目"
+                    + "\n**版本**: v" + updated.getVersion() + "（未变）｜**版本快照**: 未产生";
+        } catch (Exception e) {
+            log.error("ExpHubTools.clearSuperseded: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "撤销失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    // ==================== D1 施工包 3：整理候选队列 ====================
+    //
+    // 候选对必须落库。只放在返回文本里的话，下一次调用就没了，人也没机会判断，
+    // 于是同一对重复被算出来、重复被忽略 —— 整理永远推进不下去。
+
+    /**
+     * 入队一对候选。L0/L1/L2 或人工都能调。
+     * 已经判成「不同」的对不会重新入队，避免每周重复打扰。
+     */
+    @Tool(name = "add_review_candidate", description = "把一对「可能重复/可能互相取代」的经验放进整理候选队列，等人工或后续判断。用于整理记忆时发现两条内容高度重合的场景。⚠️ 入队本身**不改任何数据**，只是记一笔待判断；同一对不会重复入队，已判为「不同」的更不会。")
+    public String addReviewCandidate(
+            @ToolParam(description = "候选对的第一条经验 ID") Long docA,
+            @ToolParam(description = "候选对的第二条经验 ID") Long docB,
+            @ToolParam(description = "可选。相似度得分 0~1，只用于排序，不是判决依据。没有把握就不传", required = false) java.math.BigDecimal score,
+            @ToolParam(description = "可选但强烈建议。为什么判为相似，例如「标签交集:3（nginx,https,证书）；标题重叠 0.62；正文共享 2-gram 41%」。写清理由，人才判得快", required = false) String reasons,
+            @ToolParam(description = "可选。来源标记：L0_CREATE / L1_DAILY / L2_WEEKLY / MANUAL。默认 MANUAL", required = false) String source) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            ReviewCandidateService.EnqueueResult r =
+                    reviewCandidateService.enqueue(docA, docB, score, reasons, source);
+            if (r.candidate() == null) {
+                return "❌ " + r.message();
+            }
+            return (r.created() ? "✅ " : "ℹ️ ") + r.message()
+                    + "\n\n用 list_review_candidates 查看队列，用 resolve_candidate 做判断。";
+        } catch (Exception e) {
+            log.error("ExpHubTools.addReviewCandidate: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "入队失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 列出候选队列（默认只看待判断的） */
+    @Tool(name = "list_review_candidates", description = "查看记忆整理候选队列：哪些经验对可能重复或互相取代、相似度多少、为什么判为相似。默认只看 PENDING（待判断）的，按得分倒序。看完用 resolve_candidate 处理。")
+    public String listReviewCandidates(
+            @ToolParam(description = "可选。状态：PENDING（默认，待判断）/ DUPLICATE / SUPERSEDED / DISTINCT / SKIPPED", required = false) String status,
+            @ToolParam(description = "可选。最多返回几条，默认 20，上限 50", required = false) Integer limit) {
+        try {
+            int size = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
+            List<ReviewCandidate> list = reviewCandidateService.listByStatus(status, size);
+            String st = (status == null || status.trim().isEmpty()) ? ReviewCandidate.PENDING : status.trim().toUpperCase();
+            if (list.isEmpty()) {
+                return "📭 队列为空（状态 " + st + "）。\n\n"
+                        + "整理新候选：发现两条内容高度重合时用 add_review_candidate 入队。";
+            }
+            // 批量取标题，避免逐条查
+            java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
+            for (ReviewCandidate c : list) { ids.add(c.getDocA()); ids.add(c.getDocB()); }
+            Map<Long, Doc> docMap = new HashMap<>();
+            for (Doc d : docService.listByIds(ids)) docMap.put(d.getId(), d);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("🗂 整理候选队列 · ").append(st).append("（").append(list.size()).append(" 条）\n\n");
+            int i = 1;
+            for (ReviewCandidate c : list) {
+                Doc a = docMap.get(c.getDocA());
+                Doc b = docMap.get(c.getDocB());
+                sb.append(i++).append(". 「候选 #").append(c.getId()).append("」");
+                if (c.getScore() != null) sb.append(" 相似度 ").append(c.getScore());
+                sb.append("｜来源 ").append(c.getSource()).append("\n");
+                sb.append("   A: #").append(c.getDocA()).append("「")
+                  .append(a != null ? abbreviate(a.getTitle(), 50) : "已不存在").append("」")
+                  .append(a != null && a.getSupersededBy() != null ? " ⛔已被#" + a.getSupersededBy() + "取代" : "").append("\n");
+                sb.append("   B: #").append(c.getDocB()).append("「")
+                  .append(b != null ? abbreviate(b.getTitle(), 50) : "已不存在").append("」")
+                  .append(b != null && b.getSupersededBy() != null ? " ⛔已被#" + b.getSupersededBy() + "取代" : "").append("\n");
+                if (c.getReasons() != null && !c.getReasons().isBlank()) {
+                    sb.append("   理由: ").append(abbreviate(c.getReasons(), 160)).append("\n");
+                }
+                sb.append("\n");
+            }
+            sb.append("---\n处理方式：resolve_candidate(candidateId=..., action=duplicate|superseded|distinct|skip, note=...)\n")
+              .append("· duplicate = 两条都打重复标记（**不合并**）\n")
+              .append("· superseded = 较旧那条标为被较新那条取代（**只写指针**）\n")
+              .append("· distinct = 判为不同，以后不再重新入队\n")
+              .append("· skip = 本次忽略，下次还会提出来");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listReviewCandidates: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "查询候选队列失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 处理一条候选 */
+    @Tool(name = "resolve_candidate", description = "处理一条整理候选：判为重复（duplicate）/ 标取代（superseded）/ 判为不同（distinct）/ 忽略（skip）。⚠️ duplicate 只打标记不合并正文；superseded 只写指针；两种都不会删除任何内容。distinct 之后这一对不再重新入队。")
+    public String resolveCandidate(
+            @ToolParam(description = "候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
+            @ToolParam(description = "处理动作：duplicate（确为重复）/ superseded（旧被新取代）/ distinct（判为不同）/ skip（忽略）") String action,
+            @ToolParam(description = "可选。判断依据，例如「两条命令完全相同，后者多了 systemd 部分」。写下来，日后回看才知道当时为什么这么判", required = false) String note,
+            @ToolParam(description = "可选。处理人署名", required = false) String authorName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            String by = resolveAuthor(authorName, assistant);
+            ReviewCandidateService.ResolveResult r =
+                    reviewCandidateService.resolve(candidateId, action, note, by);
+            if (!r.ok()) {
+                return "❌ " + r.message();
+            }
+            String extra = ReviewCandidate.DUPLICATE.equals(r.candidate().getStatus())
+                    || ReviewCandidate.SUPERSEDED.equals(r.candidate().getStatus())
+                    ? "\n\n记住：没有删除、没有合并正文。要彻底清理仍需人用 mark_for_deletion 标记后由用户在后台确认。"
+                    : "";
+            return r.message() + "\n\n**候选 #" + candidateId + " 状态** → " + r.candidate().getStatus() + extra;
+        } catch (Exception e) {
+            log.error("ExpHubTools.resolveCandidate: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "处理候选失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
     }
 
     // ==================== 项目空间工具（2026-09-20 新增）====================
@@ -2041,16 +2292,24 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "list_recent_memories", description = "按更新时间倒序列出当前 API Key 的记忆（自己的全局经验 + 自有项目内经验），游标分页。用于「最近记忆 / 记忆列表」这类枚举场景；要按关键词找内容请用 search_experience。")
+    @Tool(name = "list_recent_memories", description = "按更新时间倒序列出当前 API Key 的记忆（自己的全局经验 + 自有项目内经验），游标分页。用于「最近记忆 / 记忆列表」这类枚举场景；要按关键词找内容请用 search_experience。整理记忆时用 since 只看最近一段（如 since=today 看今天新增/改动），不要靠翻页去数。")
     public String listRecentMemories(
             @ToolParam(description = "每页条数，默认 10，上限 50（超过 50 按 50）", required = false) Integer pageSize,
-            @ToolParam(description = "翻页游标：首页不传；后续页传上一页返回的 NEXT_CURSOR 值。非法格式按首页处理", required = false) String cursor) {
+            @ToolParam(description = "翻页游标：首页不传；后续页传上一页返回的 NEXT_CURSOR 值。非法格式按首页处理", required = false) String cursor,
+            @ToolParam(description = "可选。只看某时间之后更新过的（D1 每日增量用）。支持：today / yesterday / -7d（近 7 天）/ -12h（近 12 小时）/ 2026-10-25 / \"2026-10-25 08:00\"。不传=不限时间", required = false) String since) {
         try {
             int size = (pageSize == null || pageSize < 1) ? 10 : Math.min(pageSize, 50);
-            DocService.RecentPage page = docService.listRecentAccessible(size, cursor);
+            java.time.LocalDateTime sinceAt;
+            try {
+                sinceAt = parseSince(since);
+            } catch (IllegalArgumentException bad) {
+                return "❌ " + bad.getMessage();
+            }
+            DocService.RecentPage page = docService.listRecentAccessible(size, cursor, sinceAt);
 
             if (page.docs().isEmpty()) {
-                return "没有更多记忆了。\nNEXT_CURSOR: -";
+                return (sinceAt != null ? "「" + since.trim() + "」之后没有更新的记忆了。" : "没有更多记忆了。")
+                        + "\nNEXT_CURSOR: -";
             }
 
             Map<Long, String> projectNames = new HashMap<>();
@@ -2059,6 +2318,10 @@ public class ExpHubTools {
             }
 
             StringBuilder sb = new StringBuilder();
+            if (sinceAt != null) {
+                sb.append("（范围：").append(since.trim()).append(" 之后，即 ")
+                  .append(MEMORY_TIME.format(sinceAt)).append(" 起）\n");
+            }
             for (Doc d : page.docs()) {
                 String project = (d.getProjectId() == null)
                         ? "全局" : projectNames.getOrDefault(d.getProjectId(), "未知项目");
@@ -2075,6 +2338,49 @@ public class ExpHubTools {
             log.error("ExpHubTools.listRecentMemories: FAILED", e);
             return "查询失败: " + e.getMessage();
         }
+    }
+
+    /**
+     * 解析 since 参数（D1 施工包 2）。包级静态便于单测。
+     *
+     * <p>为什么要有它：L1「每日增量」的前提是能准确回答「今天动过哪些」。
+     * 靠游标翻页去数，条目一多就不可靠（翻到第 5 页时前面可能已被新写入挤走）。
+     *
+     * @return null = 不限时间
+     * @throws IllegalArgumentException 无法识别的格式（由工具层转成可读提示，不抛给框架）
+     */
+    static java.time.LocalDateTime parseSince(String since) {
+        if (since == null || since.trim().isEmpty()) return null;
+        // 只转小写，不在这里把 T 换成空格 —— toLowerCase 之后 'T' 已经变成 't'，
+        // 提前替换等于白替换（第一次跑测试就踩到了）。日期带 T 的分支里单独处理。
+        String v = since.trim().toLowerCase();
+        if ("today".equals(v) || "今天".equals(v)) return java.time.LocalDate.now().atStartOfDay();
+        if ("yesterday".equals(v) || "昨天".equals(v))
+            return java.time.LocalDate.now().minusDays(1).atStartOfDay();
+
+        // 相对天数：-7d / 7d / -7天
+        java.util.regex.Matcher dm = java.util.regex.Pattern.compile("^-?(\\d+)d$|^-?(\\d+)天$").matcher(v);
+        if (dm.matches()) {
+            int n = Integer.parseInt(dm.group(1) != null ? dm.group(1) : dm.group(2));
+            return java.time.LocalDate.now().minusDays(n).atStartOfDay();
+        }
+        // 相对小时：-12h
+        java.util.regex.Matcher hm = java.util.regex.Pattern.compile("^-?(\\d+)h$").matcher(v);
+        if (hm.matches()) {
+            return java.time.LocalDateTime.now().minusHours(Long.parseLong(hm.group(1)));
+        }
+        // 纯日期
+        if (v.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
+            return java.time.LocalDate.parse(v).atStartOfDay();
+        }
+        // 日期 + 时分（秒可省）；同时接受 ISO 的 T 分隔符（已转小写，这里按 't' 判断）
+        if (v.matches("^\\d{4}-\\d{2}-\\d{2}[ t]\\d{2}:\\d{2}(:\\d{2})?$")) {
+            String norm = v.replace('t', ' ');
+            norm = norm.length() == 16 ? norm + ":00" : norm;
+            return java.time.LocalDateTime.parse(norm.replace(' ', 'T'));
+        }
+        throw new IllegalArgumentException("无法识别的 since 格式：" + since
+                + "。可用：today / yesterday / -7d / -12h / 2026-10-25 / \"2026-10-25 08:00\"");
     }
 
     private static final DateTimeFormatter MEMORY_TIME =
