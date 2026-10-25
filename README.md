@@ -222,9 +222,9 @@ docker compose restart exphub  # 重启应用
 
 ---
 
-## 📦 MCP 工具列表（共 27 个）
+## 📦 MCP 工具列表（共 29 个）
 
-### 全局经验库（14 个）
+### 全局经验库（16 个）
 
 | 工具 | 功能 |
 |---|---|
@@ -235,7 +235,9 @@ docker compose restart exphub  # 重启应用
 | `get_experience_history` | 查看经验的历史版本（平台每次更新自动留存快照） |
 | `get_template` | 获取创建经验的模板 |
 | `create_experience` | 创建新经验 |
-| `update_experience` | 更新已有经验 |
+| `update_experience` | 更新已有经验的**指定字段**（不传=不改）；要清空字段用 `clearFields` 显式声明 |
+| `append_experience` | **在正文末尾追加一段**（服务端拼接，不读全文 → 不会因截断丢原文）。补充进展的首选 |
+| `patch_experience` | **局部替换**正文（find→replace，必须唯一命中）。改错字/更新一行结论的首选，别用整篇写回 |
 | `update_experience_status` | 更新经验生命周期状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED） |
 | `export_document` | 导出完整文档（无截断，适合长文档） |
 | `import_document` | 导入替换内容（与 export 配对，自动留存版本快照） |
@@ -314,6 +316,7 @@ exphub/
 - **身份上下文跨线程传播**：MCP 工具实际运行在框架内部的 Reactor 线程上，身份通过 `Schedulers.onScheduleHook` 在调度时捕获、执行时恢复 —— 确保多 Key 场景下隔离**始终可靠**（不依赖裸 `ThreadLocal`，避免池化线程复用导致的身份串号）
 - **权限分级**：支持搜索/创建/更新权限分别控制
 - **密码加密**：Spring Security BCrypt 加密存储
+- **改动先小后大**：`append_experience` / `patch_experience` 由服务端读改写全文，客户端永不持有全文，从机制上避免「读到截断版 → 整篇写回 → 丢后半段」这类事故
 - **模型无删除权**：MCP 侧只能 `mark_for_deletion`（必须写原因），真正删除只能在后台由人执行；待删项对检索不可见，可一键恢复
 - **敏感信息提醒**：创建经验时提醒 AI 不记录密码、Token 等敏感数据
 
