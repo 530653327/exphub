@@ -442,8 +442,19 @@ public class SimilarityService {
     private ScopeIndex buildIndex(Long projectId) {
         String apiKey = callerKey();
         QueryWrapper<Doc> qw = new QueryWrapper<>();
-        qw.select("id", "title", "tags", "aliases", "category", "project_id", "status",
-                "superseded_by", "content");
+        // ⚠️ 这里**故意不调 qw.select(...) 白名单**，查全部列。
+        //
+        // 2026-10-26 00:18 踩的坑：原来是
+        //     qw.select("id","title","tags","aliases","category","project_id","status","superseded_by","content")
+        // 后来打分需要 template_type（判断进度类降级），但白名单没加 → getTemplateType() 恒为 null
+        // → 新功能在线上完全不生效，而编译、测试、回执全都不报错。
+        //
+        // 这是**同一天第三次**「白名单漏字段」：
+        //   ① 忆阁 ToolRegistry.updateStatus 白名单漏 updatedName
+        //   ② 忆阁 createExperience 的注释里早就写着「不能只挑已知字段，否则静默丢参数」
+        //   ③ 这里
+        // 三次都是同一形态：**白名单在加字段时不会提醒你**。
+        // Doc 表列不多、content 本来就要查，全查更安全 —— 拿这点 IO 换「永不再漏」。
         if (projectId == null) {
             qw.isNull("project_id");
             if (apiKey != null) {
