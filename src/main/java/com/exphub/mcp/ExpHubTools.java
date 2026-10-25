@@ -1912,6 +1912,8 @@ public class ExpHubTools {
                       + "，像同一模板的不同实例）→ 别判 duplicate；若确是同一件事的新阶段再判 superseded"
                     : "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded，别判 duplicate";
             case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）→ 建议人工读一眼";
+            case PROGRESS -> "📅 **两侧都是进度/日志记录** → 这类天然是同一件事的分阶段记录，"
+                    + "**一般不用判**（除非确认是同一条写了两遍）";
         };
     }
 
@@ -1944,6 +1946,7 @@ public class ExpHubTools {
             case DUPLICATE -> "① 疑似字面重复 —— 正文有重合，最该先判";
             case SERIES -> "② 同话题演进链 —— 正文一行不重，别当重复判";
             case UNKNOWN -> "③ 信息不足 —— 需人工读一眼";
+            case PROGRESS -> "④ 进度/日志记录 —— 天然是演进链，一般不用判";
         };
     }
 
@@ -1985,11 +1988,14 @@ public class ExpHubTools {
                 // 分层统计：让人一眼看出「有几条真该判 duplicate，有几条只是同话题」
                 long dup = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.DUPLICATE).count();
                 long ser = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.SERIES).count();
-                long unk = r.rows().size() - dup - ser;
+                long unk = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.UNKNOWN
+                        || x.kind() == null).count();
+                long prog = r.rows().size() - dup - ser - unk;
                 sb.append("\n**按性质分层**（正文有重合的排前面，不按分数混排）：")
                   .append("疑似字面重复 ").append(dup).append(" 对")
                   .append("｜同话题演进链 ").append(ser).append(" 对");
                 if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
+                if (prog > 0) sb.append("｜进度/日志记录 ").append(prog).append(" 对（一般不用判）");
                 sb.append("\n\n");
                 int i = 1;
                 SimilarityScorer.Kind last = null;

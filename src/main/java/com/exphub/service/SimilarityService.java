@@ -159,7 +159,8 @@ public class SimilarityService {
             // 必须走 index.prepare 而不是裸 Sketch.of：否则新文档拿不到「去模板行」，
             // 会以回退的 2-gram 口径参与比较，和 L2 的分数不一致（实测踩过）
             SimilarityScorer.Sketch self = index.prepare(SimilarityScorer.Sketch.of(doc.getId(), doc.getTitle(),
-                    doc.getTags(), doc.getAliases(), doc.getCategory(), doc.getProjectId(), doc.getContent()));
+                    doc.getTags(), doc.getAliases(), doc.getCategory(), doc.getProjectId(),
+                    doc.getTemplateType(), doc.getContent()));
 
             List<Suggestion> hits = new ArrayList<>();
             for (SimilarityScorer.Sketch other : index.sketches()) {
@@ -463,7 +464,7 @@ public class SimilarityService {
             String content = d.getContent();
             if (content == null || content.length() < SimilarityScorer.MIN_CONTENT_LEN) { skippedShort++; continue; }
             sketches.add(SimilarityScorer.Sketch.of(d.getId(), d.getTitle(), d.getTags(), d.getAliases(),
-                    d.getCategory(), d.getProjectId(), content));
+                    d.getCategory(), d.getProjectId(), d.getTemplateType(), content));
         }
         List<SimilarityScorer.Sketch> withDistinct = SimilarityScorer.applyDistinctLines(sketches);
         Map<String, Integer> df = SimilarityScorer.lineDf(sketches);

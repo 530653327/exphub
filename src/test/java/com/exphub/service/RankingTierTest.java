@@ -31,8 +31,13 @@ class RankingTierTest {
      * （`8a7c538`：L0 拿裸 Sketch 比对 → 永远回退 2-gram），测试里又踩了一次。
      */
     private static SimilarityScorer.Sketch series(long id, String title, String tagLine, String body) {
+        return series(id, title, tagLine, body, null);
+    }
+
+    private static SimilarityScorer.Sketch series(long id, String title, String tagLine, String body,
+                                                 String templateType) {
         return SimilarityScorer.applyDistinctLines(List.of(
-                SimilarityScorer.Sketch.of(id, title, tagLine, "", "运维", null, body))).get(0);
+                SimilarityScorer.Sketch.of(id, title, tagLine, "", "运维", null, templateType, body))).get(0);
     }
 
     /** 一对文档必须放进同一个作用域一起建索引，否则各自的 df 不一致、模板行剔不干净 */
@@ -243,5 +248,90 @@ class RankingTierTest {
         assertTrue(SimilarityScorer.Kind.SERIES.ordinal() < SimilarityScorer.Kind.UNKNOWN.ordinal());
         assertTrue(SimilarityScorer.MIN_SHARED_LINES >= 2,
                 "1 行重合几乎一定是残留套话，不能当证据");
+    }
+
+    // ==================== 进度/日志类降级（阁主 2026-10-26 判完 5 条后的结论） ====================
+
+    /**
+     * 两侧都是 `project_progress` 时必须降到 PROGRESS 层 —— 即使正文有明显重合。
+     *
+     * <p><b>为什么这条值得单独钉死</b>：阁主逐对读完 5 条候选后全判 distinct，
+     * 其中 #13–#16 涉及的 6 篇文档**全部是 project_progress**：
+     * 「要做成什么样」「做了什么」「上线后踩到什么」「这活归谁」——
+     * 它们天然标签全同、标题高度相似，却在语义上是不同角色的记录。
+     * 靠分数区分不了，只能靠 template_type 降级。
+     */
+    @Test
+    void progressRecordsAreDemotedEvenWithRealOverlap() {
+        String bodyA = String.join("\n",
+                "## 待开发：新增 MCP 工具 list_recent_memories",
+                "目标是给忆阁加一个枚举最近记忆的入口，先定参数：pageSize、cursor。",
+                "不支持按关键词搜索，那是 search_experience 的职责，不要混进来。",
+                "需要评估分页游标能否稳定，以及和现有搜索结果的边界在哪里。");
+        String bodyB = String.join("\n",
+                "## 实现 MCP 工具 list_recent_memories",
+                "目标是给忆阁加一个枚举最近记忆的入口，先定参数：pageSize、cursor。",
+                "不支持按关键词搜索，那是 search_experience 的职责，不要混进来。",
+                "已实现并部署上线，线上验证分页游标可用，返回 20 条，客户端需还原 JSON 编码。");
+
+        SimilarityScorer.Score s = scorePair(
+                series(470, "待开发：新增 MCP 工具 list_recent_memories", "进度,交接",
+                        bodyA, "project_progress"),
+                series(477, "实现 MCP 工具 list_recent_memories（待部署）", "进度,交接",
+                        bodyB, "project_progress"));
+
+        assertEquals(SimilarityScorer.Kind.PROGRESS, s.kind(),
+                "两侧都是 project_progress → 必须降级。reason=" + s.reason());
+        assertTrue(s.progressPair(), "progressPair 标记要置位");
+        assertTrue(s.diagnosis().contains("进度") || s.diagnosis().contains("不用判"), s.diagnosis());
+    }
+
+    /** 只要有一侧不是进度类，就按内容判定 —— 不能因为一侧是进度就整对放水 */
+    @Test
+    void progressOnOneSideOnlyIsNotDemoted() {
+        String full = String.join("\n",
+                "地图1 平原入口：缓坡草地，散落碎石，边缘有栅栏。",
+                "地图2 花田小径：成片野花，中间一条土路，两侧灌木。",
+                "地图3 北部丘陵：起伏地形，裸露岩层，顶部有废弃哨塔。",
+                "配色以青绿与土黄为主，避免高饱和，保持新手区观感。");
+        String summary = String.join("\n",
+                "地图2 花田小径：成片野花，中间一条土路，两侧灌木。",
+                "地图3 北部丘陵：起伏地形，裸露岩层，顶部有废弃哨塔。",
+                "配色以青绿与土黄为主，避免高饱和，保持新手区观感。");
+        SimilarityScorer.Score s = scorePair(
+                series(1, "中央平原地图设计", "百炼宠物,地图", full, "knowledge_doc"),
+                series(2, "中央平原地图3提示词", "百炼宠物,地图", summary, "project_progress"));
+        assertFalse(s.progressPair(), "只有一侧是进度类，不该整体降级");
+        assertEquals(SimilarityScorer.Kind.DUPLICATE, s.kind(),
+                "另一侧是知识文档，内容重复就照常报重复。reason=" + s.reason());
+    }
+
+    @Test
+    void progressTypeRecognition() {
+        assertTrue(SimilarityScorer.isProgressType("project_progress"));
+        assertTrue(SimilarityScorer.isProgressType("todo_list"));
+        // 大小写/空格容错：库里存在手填值
+        assertTrue(SimilarityScorer.isProgressType(" PROJECT_PROGRESS "));
+        // 这些不是进度类 —— 用标题正则替代会把这几种误伤（实测 62 篇）
+        assertFalse(SimilarityScorer.isProgressType("knowledge_doc"));
+        assertFalse(SimilarityScorer.isProgressType("problem_solution"));
+        assertFalse(SimilarityScorer.isProgressType("bug_fix"));
+        assertFalse(SimilarityScorer.isProgressType(null));
+        assertFalse(SimilarityScorer.isProgressType(""));
+    }
+
+    /** 枚举顺序 = 排序顺序：PROGRESS 必须排最后，否则降级没有意义 */
+    @Test
+    void progressSortsLast() {
+        assertTrue(SimilarityScorer.Kind.PROGRESS.ordinal() > SimilarityScorer.Kind.UNKNOWN.ordinal(),
+                "PROGRESS 必须是序数最大的那层（排序最末）");
+        SimilarityService.Row prog = new SimilarityService.Row(1L, "A", 2L, "B", 0.99,
+                "x", null, SimilarityScorer.Kind.PROGRESS, 40, 0.9);
+        SimilarityService.Row dup = new SimilarityService.Row(3L, "C", 4L, "D", 0.51,
+                "y", null, SimilarityScorer.Kind.DUPLICATE, 39, 0.83);
+        List<SimilarityService.Row> rows = new java.util.ArrayList<>(List.of(prog, dup));
+        rows.sort(SimilarityService.Row.order());
+        assertEquals(3L, rows.get(0).docA(),
+                "哪怕进度对分数 0.99，也必须排在字面重复（0.51）之后");
     }
 }

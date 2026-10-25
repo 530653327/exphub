@@ -251,6 +251,7 @@ public final class SimilarityScorer {
                          Set<String> aliases,
                          String category,
                          Long projectId,
+                         String templateType,
                          Set<String> titleGrams,
                          Set<String> contentGrams,
                          Set<String> lines,
@@ -261,6 +262,12 @@ public final class SimilarityScorer {
         /** 构造快照；distinct 相关字段由作用域索引在统计完行 df 后回填 */
         public static Sketch of(Long id, String title, String tags, String aliases,
                                 String category, Long projectId, String content) {
+            return of(id, title, tags, aliases, category, projectId, null, content);
+        }
+
+        /** 带 templateType 的构造（进度类记录要据此降级） */
+        public static Sketch of(Long id, String title, String tags, String aliases,
+                                String category, Long projectId, String templateType, String content) {
             String body = content == null ? "" : content;
             // 必须写全类名：record 自己就有同名访问器，裸调用会被解析成无参版本
             return new Sketch(id,
@@ -269,6 +276,7 @@ public final class SimilarityScorer {
                     SimilarityScorer.tokens(aliases),
                     category,
                     projectId,
+                    templateType,
                     SimilarityScorer.titleGrams(title),
                     SimilarityScorer.contentGrams(body),
                     SimilarityScorer.lines(body),
@@ -278,7 +286,7 @@ public final class SimilarityScorer {
         }
 
         public Sketch withDistinctLines(Set<String> distinct, boolean reliable) {
-            return new Sketch(id, title, tags, aliases, category, projectId,
+            return new Sketch(id, title, tags, aliases, category, projectId, templateType,
                     titleGrams, contentGrams, lines, distinct, reliable, contentLen);
         }
     }
@@ -290,10 +298,12 @@ public final class SimilarityScorer {
      * @param lineCoverage    「较短那篇有多少比例的行出现在对方里」，仅 lineMode 时有意义
      * @param sharedAllLines  未剔模板时的原始共享行数，用于展示「骨架重合 vs 内容重合」的差异
      * @param sharedAvgLen    共享行的平均字数：骨架行短（约 15 字）、真正的内容行长（约 23~39 字）
+     * @param progressPair    两侧都是「进度/日志类」记录 —— 这类天然是演进链，单独降一级
      */
     public record Score(double total, double tag, double title, double content,
                         int sharedLines, int linesA, int linesB, boolean lineMode,
-                        double lineCoverage, int sharedAllLines, int sharedAvgLen) {
+                        double lineCoverage, int sharedAllLines, int sharedAvgLen,
+                        boolean progressPair) {
 
         /** 可读理由：人判断一对候选值不值得看，靠的就是这几行 */
         public String reason() {
@@ -331,6 +341,9 @@ public final class SimilarityScorer {
          * 比「共享了几行」有依据，也更好向人解释。
          */
         public Kind kind() {
+            // 进度类优先判断：两侧都是进度/待办记录时，即使正文重合也降级到最后。
+            // 原因见 Kind.PROGRESS 的注释 —— 这类记录的「像」是工作流决定的，不是内容重复。
+            if (progressPair) return Kind.PROGRESS;
             if (!lineMode) return Kind.UNKNOWN;
             boolean enough = sharedLines >= MIN_SHARED_LINES
                     && lineCoverage >= MIN_LINE_COVERAGE
@@ -356,6 +369,9 @@ public final class SimilarityScorer {
                         : "**同话题演进链**（正文共享仅覆盖 " + pct(lineCoverage)
                           + "，不够算重复）→ 大概率该判 superseded（后者是前者的新阶段），不该判 duplicate";
                 case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
+                case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）→ "
+                        + "这类天然是同一件事的分阶段记录，**一般不用判**；"
+                        + "除非确认是同一条写了两遍，否则忽略";
             };
         }
 
@@ -392,8 +408,30 @@ public final class SimilarityScorer {
         /** 正文共享覆盖不足：同话题的不同阶段记录（或只是共用模板骨架） */
         SERIES,
         /** 长段落型文档，没有行边界可比，信息不足 */
-        UNKNOWN
+        UNKNOWN,
+        /**
+         * 两侧都是「进度 / 待办」类记录。
+         *
+         * <p><b>为什么单独一层（2026-10-26 00:2x 阁主判完 5 条候选后的结论）</b>：
+         * 阁主逐对读正文后判了 5 条全 `distinct`，其中 #13–#16 全是
+         * `#464/#470/#471/#477/#478/#479` 这一簇，而它们<b>全部是 {@code project_progress}</b>：
+         * 「要做成什么样」「做了什么」「上线后踩到什么」「这活归谁」——
+         * 两两都是**不同角色**的记录，标签交集恒为 1.00，必然高分。
+         *
+         * <p>这类记录的「像」是<b>工作流形态决定的，不是内容重复</b>：
+         * 标题带阶段词/日期、标签同一批、正文每次全新。放进查重队列长期会有一大半是
+         * 「同一件事的分阶段日记」，人工判到手软，而且判也是白判。
+         *
+         * <p><b>为什么不直接排除</b>：排除会永久隐藏这一对 —— 万一真的是同一条写了两遍，
+         * 就再也发现不了。降级到最后既保住了信息，又不会占前排名额，
+         * 符合「只标记不删除」的精神。
+         */
+        PROGRESS
     }
+
+    /** 视为「进度 / 日志」类的 template_type：这类记录之间天然是演进链 */
+    public static final Set<String> PROGRESS_TEMPLATE_TYPES =
+            Set.of("project_progress", "todo_list");
 
     /**
      * 一对文档的相似度。
@@ -449,8 +487,15 @@ public final class SimilarityScorer {
             for (String ln : smaller) if (bigger.contains(ln)) totalChars += ln.length();
             avgLen = totalChars / shared;
         }
+        // 两侧都是进度/日志类 → 这一对天然是同一件事的分阶段记录（见 Kind.PROGRESS）
+        boolean progressPair = isProgressType(a.templateType()) && isProgressType(b.templateType());
         return new Score(total, tag, title, content, shared, ca.size(), cb.size(), lineMode,
-                coverage, sharedAll, avgLen);
+                coverage, sharedAll, avgLen, progressPair);
+    }
+
+    /** template_type 是否属于「进度 / 日志」类 */
+    public static boolean isProgressType(String templateType) {
+        return templateType != null && PROGRESS_TEMPLATE_TYPES.contains(templateType.trim().toLowerCase());
     }
 
     /** 统计一组文档的行频次（作用域内） */
