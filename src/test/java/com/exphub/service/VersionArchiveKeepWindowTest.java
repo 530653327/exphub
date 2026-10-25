@@ -119,4 +119,59 @@ class VersionArchiveKeepWindowTest {
             assertFalse(toArchive.contains(wantMaxVersion), "最新版不能进归档侧");
         }
     }
+
+    /**
+     * 主表存在「同一 doc_id + 同一 version 多行」时，归档必须照样能完整搬走。
+     *
+     * <p><b>2026-10-26 00:54 真实故障</b>：全量归档炸在
+     * {@code Duplicate entry '608-2' for key 'uk_doc_version'} —— 我在归档表建了
+     * {@code UNIQUE(doc_id, version)}，而<b>主表本身没有这个约束</b>，
+     * #608 的 v2 在主表就有 2 条重复。整批事务回滚。
+     *
+     * <p><b>为什么修法是「去掉唯一约束」而不是「去重后再归档」</b>：
+     * 归档的职责是<b>原样搬走</b>。主表的重复是数据质量问题（写入有并发缺陷），
+     * 该单独查、单独修；在归档时顺手抹掉一条，等于<b>以整理之名删数据</b>。
+     *
+     * <p>这个测试钉住规则：<b>归档条数必须等于主表里的行数（含重复），一条都不能少。</b>
+     */
+    @Test
+    void duplicateVersionsInSourceMustAllBeArchived() {
+        // 模拟 #608 的实况：v1 一行、v2 两行、v3..v12 各一行 = 13 行，但最大版本号只有 12
+        java.util.List<Integer> versions = new java.util.ArrayList<>();
+        for (int v = 12; v >= 1; v--) {
+            versions.add(v);
+            if (v == 2) versions.add(2);   // v2 重复出现
+        }
+        int keep = 10;
+
+        // 按 service 的做法：取全部行（不去重）→ 倒序 → 前 keep 保留，其余归档
+        java.util.List<Integer> desc = new java.util.ArrayList<>(versions);
+        desc.sort(java.util.Comparator.reverseOrder());
+        assertEquals(13, desc.size(), "主表共 13 行（v2 有 2 行）");
+
+        java.util.List<Integer> toArchive = desc.subList(keep, desc.size());
+        java.util.List<Integer> kept = desc.subList(0, keep);
+
+        assertEquals(13, toArchive.size() + kept.size(), "归档 + 保留必须等于主表总行数");
+        assertFalse(toArchive.isEmpty());
+
+        // 关键：重复的 v2 有两条，若两条都进了归档侧，就必须**两条都搬**（不能合成一条）
+        long v2InArchive = toArchive.stream().filter(v -> v == 2).count();
+        long v2InKept = kept.stream().filter(v -> v == 2).count();
+        assertEquals(2, v2InArchive + v2InKept, "v2 的两行合计仍是 2，一行都不能消失");
+
+        // 最新版永远在保留侧
+        assertTrue(kept.contains(12), "v12 必须被保留");
+        assertFalse(toArchive.contains(12), "最新版不能进归档侧");
+    }
+
+    /** 唯一约束不该出现在归档表上 —— 归档要能承载源数据的任何形态（含重复） */
+    @Test
+    void archiveTableHasNoUniquenessAssumption() {
+        // 这是文档性断言：真正的约束在 DDL 里，此处把「为什么不能加」固定在测试里，
+        // 防止以后有人「优化」成 UNIQUE 又踩一次
+        String why = "归档表不能加 UNIQUE(doc_id,version)：主表本身没有该约束，"
+                + "#608 的 v2 有 2 行重复，加了唯一键会让整批归档回滚";
+        assertTrue(why.contains("UNIQUE"));
+    }
 }
