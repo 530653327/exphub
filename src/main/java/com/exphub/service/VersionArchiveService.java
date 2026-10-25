@@ -259,15 +259,33 @@ public class VersionArchiveService {
         QueryWrapper<DocVersionArchive> c = new QueryWrapper<>();
         c.eq("doc_id", docId);
         long rows = archiveMapper.selectCount(c);
-
+        // ⚠️ 2026-10-26 03:0x 越哥读 #668 时报错，实测是这里：没有归档行的文档，
+        //    `SELECT MAX(version) ... ` 仍然返回**一行**，而这一行整行是 NULL，
+        //    MyBatis-Plus 的 selectMaps 把它映射成 List 里的一个 null 元素 ——
+        //    于是 maps.get(0).get("v") 抛
+        //    「Cannot invoke "java.util.Map.get(Object)" because the return value of "java.util.List.get(int)" is null」。
+        //    影响面不是 #668 一条：**所有从未归档过的文档（全库绝大多数）detail 都打不开**，
+        //    只是之前验收都用 654（它有 59 条冷存档）所以没暴露。
+        //    修法两道：① 没有归档行就根本不发这条聚合查询；② 聚合结果按「行可能为 null」解析。
+        if (rows == 0) return new ArchivedSummary(0, 0);
         QueryWrapper<DocVersionArchive> m = new QueryWrapper<>();
         m.select("MAX(version) AS v").eq("doc_id", docId);
         List<Map<String, Object>> maps = archiveMapper.selectMaps(m);
-        int max = 0;
-        if (!maps.isEmpty() && maps.get(0).get("v") != null) {
-            max = ((Number) maps.get(0).get("v")).intValue();
-        }
-        return new ArchivedSummary(rows, max);
+        return new ArchivedSummary(rows, maxVersionOf(maps));
+    }
+
+    /**
+     * 解析 {@code SELECT MAX(version)} 的结果 —— 空列表、元素为 null、值不是数字，一律当 0。
+     *
+     * <p>单独提出来是为了能单测：这种「聚合查询没有行」在 MyBatis 里返回 {@code [null]}，
+     * 光看代码很容易以为 {@code isEmpty()} 能挡住。
+     */
+    static int maxVersionOf(List<Map<String, Object>> maps) {
+        if (maps == null || maps.isEmpty()) return 0;
+        Map<String, Object> row = maps.get(0);
+        if (row == null) return 0;
+        Object v = row.get("v");
+        return (v instanceof Number n) ? n.intValue() : 0;
     }
 
     /** 归档侧概览：{@code rows} = 归档条数，{@code maxVersion} = 归档里最大的版本号 */
