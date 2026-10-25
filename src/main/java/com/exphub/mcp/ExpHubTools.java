@@ -514,14 +514,18 @@ public class ExpHubTools {
             int[] bounds = searchPageBounds(poolTotal, effOffset, effLimit);
             int fromIdx = bounds[0], toIdx = bounds[1];
             java.util.List<Doc> pageDocs = docs.subList(fromIdx, toIdx);
-            boolean hasMore = toIdx < poolTotal;
             boolean briefMode = Boolean.TRUE.equals(brief);
 
+            // 「匹配总数」与「召回池大小」是两回事：limit=5 时池子只有 5 条，
+            // 但库里可能匹配 138 条。翻页提示必须按匹配总数判断，否则 limit 一调小
+            // 就会输出「以上为全部结果」——AI 会误以为库里真的只有 5 条（实测踩到过）。
+            long effTotal = Math.max(matchedTotal, poolTotal);
+            boolean hasMore = toIdx < effTotal;
+
             StringBuilder sb = new StringBuilder();
-            sb.append(filterInfo)
-              .append("匹配 ").append(Math.max(matchedTotal, poolTotal)).append(" 条");
-            if (effOffset > 0) {
-                sb.append("，本次从第 ").append(fromIdx + 1).append(" 条起返回 ").append(pageDocs.size()).append(" 条");
+            sb.append(filterInfo).append("匹配 ").append(effTotal).append(" 条");
+            if (effOffset > 0 || pageDocs.size() < effTotal) {
+                sb.append("，本次返回第 ").append(fromIdx + 1).append("-").append(toIdx).append(" 条");
             }
             sb.append("：\n\n");
 
@@ -550,12 +554,12 @@ public class ExpHubTools {
             // 翻页提示：不提示的话调用方以为「只有这些」，这正是原来隐式 25 条上限的根源
             sb.append("\n---\n");
             if (hasMore) {
-                sb.append("📄 还有 ").append(poolTotal - toIdx).append(" 条未显示，下一页传 offset=")
+                sb.append("📄 还有 ").append(effTotal - toIdx).append(" 条未显示，下一页传 offset=")
                   .append(toIdx).append("（limit 不变即 ").append(effLimit).append("）；")
                   .append("想一次多看就调大 limit（上限 ").append(LIST_MAX_SIZE).append("）。\n");
             } else {
                 sb.append("📄 以上为全部结果（本次返回第 ").append(fromIdx + 1).append("-").append(toIdx)
-                  .append(" 条，共 ").append(poolTotal).append(" 条）。\n");
+                  .append(" 条，共 ").append(effTotal).append(" 条）。\n");
             }
             if (detected != null) {
                 sb.append("---\n💡 查询词含项目「").append(detected.getName()).append("」（")
