@@ -113,9 +113,11 @@ class RankingTierTest {
         // 核心断言：这是真实数据里的排序反转 —— 重复对的分数反而更低
         // 我们不改分数（历史候选不该漂移），但必须保证分层后重复对排在前面
         SimilarityService.Row rowDup = new SimilarityService.Row(63L, "A", 67L, "B",
-                dup.total(), dup.reason(), null, dup.kind(), dup.sharedLines(), dup.lineCoverage());
+                dup.total(), dup.reason(), null, dup.kind(), dup.sharedLines(), dup.lineCoverage(),
+                dup.diagnosis());
         SimilarityService.Row rowChain = new SimilarityService.Row(470L, "A", 477L, "B",
-                chain.total(), chain.reason(), null, chain.kind(), chain.sharedLines(), chain.lineCoverage());
+                chain.total(), chain.reason(), null, chain.kind(), chain.sharedLines(), chain.lineCoverage(),
+                chain.diagnosis());
 
         List<SimilarityService.Row> rows = new java.util.ArrayList<>(List.of(rowChain, rowDup));
         rows.sort(SimilarityService.Row.order());
@@ -326,9 +328,9 @@ class RankingTierTest {
         assertTrue(SimilarityScorer.Kind.PROGRESS.ordinal() > SimilarityScorer.Kind.UNKNOWN.ordinal(),
                 "PROGRESS 必须是序数最大的那层（排序最末）");
         SimilarityService.Row prog = new SimilarityService.Row(1L, "A", 2L, "B", 0.99,
-                "x", null, SimilarityScorer.Kind.PROGRESS, 40, 0.9);
+                "x", null, SimilarityScorer.Kind.PROGRESS, 40, 0.9, "进度");
         SimilarityService.Row dup = new SimilarityService.Row(3L, "C", 4L, "D", 0.51,
-                "y", null, SimilarityScorer.Kind.DUPLICATE, 39, 0.83);
+                "y", null, SimilarityScorer.Kind.DUPLICATE, 39, 0.83, "重合高");
         List<SimilarityService.Row> rows = new java.util.ArrayList<>(List.of(prog, dup));
         rows.sort(SimilarityService.Row.order());
         assertEquals(3L, rows.get(0).docA(),

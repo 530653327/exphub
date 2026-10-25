@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TierStatsIndependentOfLimitTest {
 
     private static SimilarityService.Row row(SimilarityScorer.Kind kind, double score) {
-        return new SimilarityService.Row(1L, "A", 2L, "B", score, "r", null, kind, 0, 0.0);
+        return new SimilarityService.Row(1L, "A", 2L, "B", score, "r", null, kind, 0, 0.0, "");
     }
 
     /** 模拟 scan 里的统计逻辑：必须遍历全部超阈值对，而不是限流后的子集 */

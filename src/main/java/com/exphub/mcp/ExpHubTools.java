@@ -2047,7 +2047,10 @@ public class ExpHubTools {
               .append("· duplicate = 两条都打重复标记（**不合并**）\n")
               .append("· superseded = 较旧那条标为被较新那条取代（**只写指针**）\n")
               .append("· distinct = 判为不同，以后不再重新入队\n")
-              .append("· skip = 本次忽略，下次还会提出来");
+              .append("· skip = 本次忽略，下次还会提出来\n")
+              .append("⚠️ 别凭「重合多」直接判 duplicate：两侧独有行都很少才是真重复；"
+                      + "一侧很少是母集-子集（别判 duplicate）；两侧各约一半是同模板实例（判 distinct）。"
+                      + "正文 0 行重合时也没有内容证据，不要判 superseded —— 那等于用一个实体取代另一个");
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.listReviewCandidates: FAILED", e);
@@ -2100,17 +2103,28 @@ public class ExpHubTools {
      *
      * <p>为什么必须有：实测「同话题演进链」（正文 0 行重合）能拿 0.62，
      * 而「正文 33 行完全一致」的真重复只拿 0.51。光看分数人会把演进链当真重复判。
+     *
+     * <p>⚠️ <b>2026-10-26 01:35 越哥实测：这里原来有一份自己的文案，写着
+     * 「演进链 → 大概率该判 superseded」，而文档那边的判法已经改成「先排除母集-子集」了。</b>
+     * 实际命中是 #77 灵狐 ↔ #83 神龙（0 行重合，两只不同的宠物）——
+     * 照那句建议判下去，等于用一只宠物取代另一只。
+     * <b>一条建议写两份，必然有一份是旧的。</b>现在这里只做转发：
+     * 文案全部来自 {@link SimilarityScorer#advice}，本方法只负责「没有文案时给个兜底」。
      */
-    private String kindLabel(SimilarityScorer.Kind kind, int sharedLines, double coverage) {
+    private String kindLabel(SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
+        if (advice != null && !advice.isBlank()) return advice;
+        // 兜底：老数据（队列里存的历史行）没有 advice 时，至少别给出「大概率判 superseded」这种错建议
         if (kind == null) return "";
         String cov = SimilarityScorer.Score.pct(coverage);
         return switch (kind) {
             case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致，覆盖较短那篇 "
-                    + cov + "）→ 优先判 duplicate / superseded";
+                    + cov + "）→ 先看两侧独有行数：两侧都很少才是真重复，可判 duplicate；"
+                    + "一侧很少是母集-子集、两侧各约一半是同模板实例，这两种都别判 duplicate";
             case SERIES -> sharedLines > 0
                     ? "🔗 **共用骨架**（只重 " + sharedLines + " 行、覆盖仅 " + cov
                       + "，像同一模板的不同实例）→ 别判 duplicate；若确是同一件事的新阶段再判 superseded"
-                    : "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded，别判 duplicate";
+                    : "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 没内容证据时不判 superseded，"
+                      + "先排除同模板实例与母集-子集，确认是同一件事的新阶段才判；拿不准判 distinct";
             case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）→ 建议人工读一眼";
             case PROGRESS -> "📅 **两侧都是进度/日志记录** → 这类天然是同一件事的分阶段记录，"
                     + "**一般不用判**（除非确认是同一条写了两遍）";
@@ -2128,13 +2142,15 @@ public class ExpHubTools {
             sb.append("- #").append(h.docId()).append("「").append(abbreviate(h.title(), 40))
               .append("」相似度 ").append(SimilarityScorer.Score.fmt(h.score()))
               .append("　→ ").append(h.queueState()).append("\n");
-            sb.append("  ").append(kindLabel(h.kind(), h.sharedLines(), h.coverage())).append("\n");
+            sb.append("  ").append(kindLabel(h.kind(), h.sharedLines(), h.coverage(), h.advice())).append("\n");
             sb.append("  ").append(abbreviate(h.reasons(), 200)).append("\n");
         }
         if (!r.hits().isEmpty()) {
             sb.append("判断用 resolve_candidate(candidateId=..., action=duplicate|superseded|distinct)：\n")
-              .append("· 字面重复 → duplicate（只打标记不合并）｜ · 后者是前者的新版 → superseded（只写指针）\n")
-              .append("· 同一主题的两条独立记录 → distinct（此后这一对不再打扰）\n");
+              .append("· 两侧独有行都很少（整篇复制）→ duplicate（只打标记不合并）\n")
+              .append("· 确认后者是前者同一件事的新阶段（**先排除母集-子集与同模板实例**）→ superseded（只写指针）\n")
+              .append("· 是两个不同实体/不同角色，或拿不准 → distinct（此后这一对不再打扰）\n")
+              .append("⚠️ 0 行正文重合时不要判 superseded：那只是标签/标题像，判了等于用一个实体取代另一个\n");
         }
         return sb.toString();
     }
@@ -2143,7 +2159,8 @@ public class ExpHubTools {
     private String kindGroupTitle(SimilarityScorer.Kind kind) {
         if (kind == null) return "其他";
         return switch (kind) {
-            case DUPLICATE -> "① 疑似字面重复 —— 正文有重合，最该先判";
+            case DUPLICATE -> "① 疑似字面重复 —— 正文有重合，最该先判"
+                    + "（⚠️ 这一层混着真重复 / 母集-子集 / 同模板实例三种，看每对的独有行数分辨）";
             case SERIES -> "② 同话题演进链 —— 正文一行不重，别当重复判";
             case UNKNOWN -> "③ 信息不足 —— 需人工读一眼";
             case PROGRESS -> "④ 进度/日志记录 —— 天然是演进链，一般不用判";
@@ -2224,7 +2241,7 @@ public class ExpHubTools {
                       .append("｜#").append(row.docA()).append("「").append(abbreviate(row.titleA(), 34))
                       .append("」 ↔ #").append(row.docB()).append("「").append(abbreviate(row.titleB(), 34)).append("」");
                     if (row.queueState() != null) sb.append("　→ ").append(row.queueState());
-                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines(), row.coverage())).append("\n");
+                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines(), row.coverage(), row.advice())).append("\n");
                     sb.append("   ").append(row.reason()).append("\n");
                 }
             }

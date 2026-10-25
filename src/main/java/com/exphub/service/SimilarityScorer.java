@@ -94,6 +94,23 @@ public final class SimilarityScorer {
      */
     public static final int MIN_SHARED_LINE_LEN = 20;
 
+    /**
+     * 「整篇复制」允许的最大独有行占比（两侧都要低于它）。
+     *
+     * <p>⚠️ <b>这个门目前没有正样本</b>（2026-10-26 01:40 全库 7 对 ①层样本里 0 对真重复）。
+     * 它取 0.30 是「复制品天然允许 10~20% 的尾部差异」这一常识，不是量出来的。
+     * 将来若真重复被错判成 {@link Shape#PARALLEL}，应当重跑全库重新量，不要只改这个数字。
+     */
+    public static final double MAX_OWN_SHARE_FOR_TRUE_DUP = 0.30;
+
+    /**
+     * 判「母集-子集」的子集侧独有行占比上限（> 它就不算被包含）。
+     *
+     * <p>全库 7 对 ①层样本实测：母集-子集那 4 对是 0.17 / 0.18 / 0.20 / 0.30，
+     * 并列那 3 对是 0.43 / 0.475 / 0.49 —— 阈值 0.35 落在这条缝里。
+     */
+    public static final double MAX_OWN_SHARE_FOR_SUBSET = 0.35;
+
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
     public static final double W_CONTENT = 0.33;
@@ -351,28 +368,55 @@ public final class SimilarityScorer {
             return enough ? Kind.DUPLICATE : Kind.SERIES;
         }
 
+        /** A 侧独有的行数（参与了比较的那一套行里，对方没有的） */
+        public int uniqueA() { return Math.max(0, linesA - sharedLines); }
+
+        /** B 侧独有的行数 */
+        public int uniqueB() { return Math.max(0, linesB - sharedLines); }
+
+        /** A 侧独有行占 A 的比例 */
+        public double ownShareA() { return linesA == 0 ? 0 : (double) uniqueA() / linesA; }
+
+        /** B 侧独有行占 B 的比例 */
+        public double ownShareB() { return linesB == 0 ? 0 : (double) uniqueB() / linesB; }
+
+        /**
+         * 这一对「重合得像什么」的三种形态 —— 只看覆盖率分不出来，必须看<b>两侧各自剩多少独有行</b>。
+         *
+         * <p>为什么必须分（2026-10-26 01:35 越哥实测指出）：①层（覆盖 ≥40% 且共享行够长）
+         * 里同时装着三种东西，而它们该做的动作完全不同：
+         * <pre>
+         *   #159↔#160 前端开发专家 / 系统测试工程师  独有 50% / 49%  → 同模板实例，判 duplicate 等于用一个角色取代另一个
+         *   #63↔#67   地图设计 / 地图3提示词        独有 80% / 17%  → 母集-子集，子文档不是复制品
+         *   #514↔#545 个人档案 / 减脂体重记录       独有 97% / 43%  → 仅 4 行相同，短的那篇恰好被包住
+         * </pre>
+         * 全库 7 对 ①层样本里，没有一对是「两侧独有都很少」的真复制。
+         *
+         * <p>⚠️ <b>形态只决定回执给什么建议，不把任何一对踢出①层</b> ——
+         * 覆盖率仍然表示「重合多不多」，是不是真重复得靠人看独有行数定。
+         */
+        public Shape shape() {
+            if (linesA == 0 || linesB == 0) return Shape.UNKNOWN;
+            double oa = ownShareA(), ob = ownShareB();
+            if (Math.max(oa, ob) <= MAX_OWN_SHARE_FOR_TRUE_DUP) return Shape.TRUE_DUP;
+            if (Math.min(oa, ob) <= MAX_OWN_SHARE_FOR_SUBSET) return Shape.SUBSET;
+            return Shape.PARALLEL;
+        }
+
         /**
          * 给人看的一句话定性：比分数本身更能指导动作。
          *
          * <p>回答的是「我该判 duplicate 还是 superseded」——这是队列里每条都要做的决定，
          * 只看分数根本判不出来。
+         *
+         * <p>⚠️ <b>这是回执文案的唯一来源</b>：{@code ExpHubTools} 的分层标签与
+         * {@link #advice} 共用同一段文字。此前两处各写一份，结果文档改了工具没改，
+         * 工具还在建议「大概率该判 superseded」，而实际命中的是同模板的两个宠物
+         * （#77 灵狐 ↔ #83 神龙，0 行重合）—— 判 superseded 等于用一只宠物取代另一只。
+         * <b>一条建议只能有一个出处。</b>
          */
         public String diagnosis() {
-            return switch (kind()) {
-                case DUPLICATE -> "**疑似字面重复**（正文 " + sharedLines + " 行完全一致，平均 "
-                        + sharedAvgLen + " 字，覆盖较短那篇 " + pct(lineCoverage)
-                        + "）→ 优先判 duplicate 或 superseded";
-                case SERIES -> sharedLines > 0
-                        ? "**共用骨架**（只重 " + sharedLines + " 行、平均仅 " + sharedAvgLen
-                          + " 字、覆盖 " + pct(lineCoverage)
-                          + "，是同一模板的不同实例）→ 别判 duplicate"
-                        : "**同话题演进链**（正文共享仅覆盖 " + pct(lineCoverage)
-                          + "，不够算重复）→ 大概率该判 superseded（后者是前者的新阶段），不该判 duplicate";
-                case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
-                case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）→ "
-                        + "这类天然是同一件事的分阶段记录，**一般不用判**；"
-                        + "除非确认是同一条写了两遍，否则忽略";
-            };
+            return advice(kind(), sharedLines, lineCoverage, sharedAvgLen, linesA, linesB);
         }
 
         public static String fmt(double v) {
@@ -382,6 +426,86 @@ public final class SimilarityScorer {
         public static String pct(double v) {
             return String.format(java.util.Locale.ROOT, "%.0f%%", v * 100);
         }
+    }
+
+    /**
+     * ①层（正文重合度高）里混着的三种形态 —— 只看覆盖率分不出来，靠<b>两侧各剩多少独有行</b>分。
+     *
+     * <p><b>为什么必须有（2026-10-26 01:35 越哥实测指出）</b>：①层的回执原来一律写
+     * 「优先判 duplicate」，可这一层装着三种东西，动作完全不同：
+     *
+     * <pre>
+     *   真重复     两侧独有都很少   —— 整篇复制            → duplicate
+     *   母集-子集   一侧独有很少     —— 子文档 ⊂ 母文档     → 别判 duplicate（先确认 superseded / distinct）
+     *   同模板实例 两侧各有约一半独有 —— 不同实体/不同角色   → distinct（判 duplicate 等于用一个取代另一个）
+     * </pre>
+     *
+     * <p>⚠️ 形态<b>只决定回执给什么建议，不改分层、不踢候选</b>。
+     */
+    public enum Shape {
+        /** 两侧独有行都很少：整篇复制 */
+        TRUE_DUP,
+        /** 一侧几乎整篇被另一侧包含：母集-子集 */
+        SUBSET,
+        /** 两侧各有大量独有行：同一模板的两个实例，或同一话题的两份并列记录 */
+        PARALLEL,
+        /** 行口径不可用（长段落型），分不出形态 */
+        UNKNOWN
+    }
+
+    /**
+     * 回执建议文案的<b>唯一出处</b>。
+     *
+     * <p>{@link Score#diagnosis()} 与 {@code ExpHubTools} 的候选列表回执都调这里 ——
+     * 同一句话有两份实现必然漂移（2026-10-26 晚上已经踩到第 N 次：文档改成
+     * 「演进链要先排除母集-子集」，工具还在写「大概率该判 superseded」）。
+     *
+     * @param sharedLines   去模板后两侧完全一致的行数
+     * @param lineCoverage  共享行 / 较短那篇的行数
+     * @param sharedAvgLen  共享行的平均字数
+     * @param linesA/linesB 两侧参与比较的行数（用来算独有行，判断 {@link Shape}）
+     */
+    public static String advice(Kind kind, int sharedLines, double lineCoverage,
+                                int sharedAvgLen, int linesA, int linesB) {
+        if (kind == null) return "";
+        int ua = Math.max(0, linesA - sharedLines);
+        int ub = Math.max(0, linesB - sharedLines);
+        double oa = linesA == 0 ? 0 : (double) ua / linesA;
+        double ob = linesB == 0 ? 0 : (double) ub / linesB;
+        Shape shape;
+        if (linesA == 0 || linesB == 0) shape = Shape.UNKNOWN;
+        else if (Math.max(oa, ob) <= MAX_OWN_SHARE_FOR_TRUE_DUP) shape = Shape.TRUE_DUP;
+        else if (Math.min(oa, ob) <= MAX_OWN_SHARE_FOR_SUBSET) shape = Shape.SUBSET;
+        else shape = Shape.PARALLEL;
+        String cov = Score.pct(lineCoverage);
+        return switch (kind) {
+            case DUPLICATE -> "**正文重合度高**（共享 " + sharedLines + " 行，平均 " + sharedAvgLen
+                    + " 字，覆盖较短那篇 " + cov + "）\n"
+                    + "　⚠️ 重合高 ≠ 就是重复：这一层混着三种形态，用独有行数分辨 —— "
+                    + "A 独有 " + ua + " 行（占 " + Score.pct(oa) + "）、"
+                    + "B 独有 " + ub + " 行（占 " + Score.pct(ob) + "）。\n"
+                    + switch (shape) {
+                        case TRUE_DUP -> "　→ 两侧独有都很少（整篇复制）：**可以判 duplicate**";
+                        case SUBSET -> "　→ 一侧几乎整篇在另一侧里（母集-子集）：**别判 duplicate**；"
+                                + "先看是不是 superseded（母集取代子集），都不是就判 distinct";
+                        case PARALLEL -> "　→ 两侧各有约一半独有行（同一模板的两个实例 / 并列记录）："
+                                + "**别判 duplicate** —— 判了等于用一个实体取代另一个，一般判 distinct；"
+                                + "只有确认后者是前者同一件事的新阶段才 superseded";
+                        case UNKNOWN -> "　→ 行口径不可用，形态分不出，人工读一眼再定";
+                    };
+            case SERIES -> sharedLines > 0
+                    ? "**共用骨架**（只重 " + sharedLines + " 行、平均仅 " + sharedAvgLen + " 字、覆盖 "
+                      + cov + "，两侧还各有 " + ua + " / " + ub + " 行独有）→ 同一模板的不同实例："
+                      + "**别判 duplicate**，一般判 distinct；只有确认一侧确实是另一侧的新阶段才 superseded"
+                    : "**只有标签/标题像**（正文 " + sharedLines + " 行重合 —— 没有任何内容证据）："
+                      + "可能是同话题演进链，也可能是同一模板的两个实例（不同的宠物 / 专家 / 角色）。"
+                      + "⚠️ **没内容证据时不要判 superseded** —— 那等于用一个实体取代另一个。"
+                      + "先排除母集-子集与同模板实例，确认是同一件事的新阶段才 superseded；拿不准判 distinct";
+            case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
+            case PROGRESS -> "**两侧都是进度/日志记录**（template_type 属进度类）→ "
+                    + "这类天然是同一件事的分阶段记录，**一般不用判**；"
+                    + "除非确认是同一条写了两遍，否则忽略";
+        };
     }
 
     /**

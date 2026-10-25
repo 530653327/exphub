@@ -106,18 +106,19 @@ public class SimilarityService {
 
     /** 一条候选（L0 与 L2 共用） */
     public record Suggestion(Long docId, String title, double score, String reasons,
-                             SimilarityScorer.Kind kind, int sharedLines, double coverage) {}
+                             SimilarityScorer.Kind kind, int sharedLines, double coverage,
+                             String advice) {}
 
     /** L0 命中的一条 + 它在队列里的实际状态（回执必须自证值，不能只说「已处理」） */
     public record L0Hit(Long docId, String title, double score, String reasons, String queueState,
-                        SimilarityScorer.Kind kind, int sharedLines, double coverage) {}
+                        SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {}
 
     public record L0Result(boolean ok, String note, int compared, List<L0Hit> hits, int enqueued) {}
 
     /** 扫描出来的一行结果 */
     public record Row(Long docA, String titleA, Long docB, String titleB,
                       double score, String reason, String queueState,
-                      SimilarityScorer.Kind kind, int sharedLines, double coverage) {
+                      SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
 
         /** 分层排序键：先按「像的是什么」，同层再比分数 —— 单靠分数排会把演进链排到真重复前面 */
         static java.util.Comparator<Row> order() {
@@ -186,7 +187,7 @@ public class SimilarityService {
                 SimilarityScorer.Score s = SimilarityScorer.score(self, other);
                 if (s.total() < CREATE_THRESHOLD) continue;
                 hits.add(new Suggestion(other.id(), other.title(), s.total(), s.reason(),
-                        s.kind(), s.sharedLines(), s.lineCoverage()));
+                        s.kind(), s.sharedLines(), s.lineCoverage(), s.diagnosis()));
             }
             // 与 L2 同一套排序：先分层再比分数。写入查重如果只按分数，
             // 「刚写完一条待办」会命中一堆同话题的旧记录，真重复反而被挤出 TOP3
@@ -218,7 +219,7 @@ public class SimilarityService {
                     state = "入队失败：" + e.getClass().getSimpleName();
                 }
                 out.add(new L0Hit(h.docId(), h.title(), h.score(), h.reasons(), state,
-                        h.kind(), h.sharedLines(), h.coverage()));
+                        h.kind(), h.sharedLines(), h.coverage(), h.advice()));
             }
             String note = out.isEmpty()
                     ? "作用域「" + index.label() + "」内没有相似度 ≥ "
@@ -298,7 +299,7 @@ public class SimilarityService {
                     SimilarityScorer.Sketch b = list.get(j);
                     // 同一作用域内 docA<docB 只是入队口径，这里按分数排序前的展示顺序不重要
                     above.add(new Row(a.id(), a.title(), b.id(), b.title(), s.total(), s.reason(), null,
-                            s.kind(), s.sharedLines(), s.lineCoverage()));
+                            s.kind(), s.sharedLines(), s.lineCoverage(), s.diagnosis()));
                 }
             }
         }
@@ -381,7 +382,7 @@ public class SimilarityService {
                 }
             }
             rowsOut.add(new Row(r.docA(), r.titleA(), r.docB(), r.titleB(), r.score(), r.reason(), state,
-                    r.kind(), r.sharedLines(), r.coverage()));
+                    r.kind(), r.sharedLines(), r.coverage(), r.advice()));
         }
 
         notes.add("只比较同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内）：跨项目实测全是假阳性"
