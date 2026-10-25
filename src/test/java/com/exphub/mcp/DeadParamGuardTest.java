@@ -178,4 +178,44 @@ class DeadParamGuardTest {
         // 前后空格要被 trim 掉，否则「烛龙 」和「烛龙」在库里是两个名字
         assertTrue("烛龙".equals(m.invoke(null, "  烛龙  ", null)));
     }
+
+    /**
+     * 算出了操作人却没在回执里输出的工具（「值进去了但不说」）。
+     *
+     * <p><b>2026-10-26 阁主实测发现</b>：`mark_superseded` 回执不带操作人，而
+     * `clear_superseded` 带 —— 同一批调用里一有一无，直接导致他把责任判到了忆阁头上、白查一轮。
+     * 白泽查证后确认忆阁对这两个工具**连分支都没有**（纯透传），根因是 ExpHub 回执模板没拼 `by`。
+     *
+     * <p>同一批还有 `add_review_candidate`、`resolve_candidate` 也是「只进日志不说」。
+     *
+     * <p>⚠️ 注意与死参数区分：
+     * <ul>
+     *   <li>死参数 = <b>值根本没被使用</b>（参数声明了，方法体没读）</li>
+     *   <li>这一条 = <b>值用上了（落库/传下游），但回执不说</b></li>
+     * </ul>
+     * 修法完全不同：一个改取值，一个改回执模板。把后者当前者查会一路查到不存在的 bug。
+     *
+     * <p>为什么值得修（不是洁癖）：一个 API Key 三助手共用，
+     * 回执不显操作人 → 出问题分不清是谁做的，也分不清该找谁。
+     */
+    @Test
+    void toolsThatResolveAnOperatorMustReportIt() throws IOException {
+        List<Tool> tools = parseTools();
+        List<String> offenders = new ArrayList<>();
+        for (Tool t : tools) {
+            String body = t.body();
+            boolean resolves = body.contains("resolveAuthor");
+            if (!resolves) continue;
+            // 回执里要出现操作人相关的输出。允许两种写法（写库但回执不提的也算违规）
+            boolean reports = body.contains("操作人") || body.contains("标记人")
+                    || body.contains("署名");
+            // 纯写库的工具（如 update_experience 写 updated_name 快照）由单元测试覆盖，
+            // 这里只查「算了 resolveAuthor 却在回执里一句不提」的
+            if (!reports) offenders.add(t.name());
+        }
+        assertTrue(offenders.isEmpty(),
+                "这些工具调了 resolveAuthor 算出操作人，但回执里一句不提（出问题分不清是谁做的）："
+                        + offenders
+                        + "\n参照 clearSuperseded 的写法：+ \"**操作人**: \" + operator");
+    }
 }

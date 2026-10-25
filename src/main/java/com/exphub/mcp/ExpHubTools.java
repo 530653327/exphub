@@ -1771,6 +1771,9 @@ public class ExpHubTools {
             if (r.candidate().getReasons() != null && !r.candidate().getReasons().isBlank()) {
                 sb.append("- 理由: ").append(abbreviate(r.candidate().getReasons(), 120)).append("\n");
             }
+            // 2026-10-26：operator 原来只进日志，回执不说 —— 出问题时分不清是谁入的队。
+            // 与 clearSuperseded 的「**操作人**: 」写法保持一致（白泽指出这一批三个都这样）
+            sb.append("- 操作人: ").append(operator).append("\n");
             sb.append("\n用 list_review_candidates 查看队列，用 resolve_candidate 做判断。");
             return sb.toString();
         } catch (Exception e) {
@@ -1884,7 +1887,9 @@ public class ExpHubTools {
                     || ReviewCandidate.SUPERSEDED.equals(r.candidate().getStatus())
                     ? "\n\n记住：没有删除、没有合并正文。要彻底清理仍需人用 mark_for_deletion 标记后由用户在后台确认。"
                     : "";
-            return r.message() + "\n\n**候选 #" + candidateId + " 状态** → " + r.candidate().getStatus() + extra;
+            // 2026-10-26：by 已传给 service.resolve，但回执没说 —— 补上，与 clearSuperseded 对齐
+            return r.message() + "\n\n**候选 #" + candidateId + " 状态** → " + r.candidate().getStatus()
+                    + "\n**操作人**: " + by + extra;
         } catch (Exception e) {
             log.error("ExpHubTools.resolveCandidate: FAILED", e);
             callLogService.incrementFailCalls();
@@ -1967,14 +1972,17 @@ public class ExpHubTools {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
             boolean dry = Boolean.TRUE.equals(dryRun);
+            String operator = resolveAuthor(updatedName, assistant);
             SimilarityService.ScanResult r = similarityService.scan(projectId, threshold, limit, maxPerDoc, dry,
-                    resolveAuthor(updatedName, assistant));
+                    operator);
             if (!r.ok()) {
                 return "❌ " + r.summary();
             }
             StringBuilder sb = new StringBuilder();
             sb.append(dry ? "🔍 扫描完成（dryRun：**没有入队任何东西**）\n\n" : "🗂 扫描完成并已入队\n\n");
             sb.append("**范围**: ").append(r.summary()).append("\n");
+            // 2026-10-26：原来 operator 只传给 service，回执不显示 —— 谁扫的说不清
+            sb.append("**操作人**: ").append(dry ? operator + "（dryRun 不入队）" : operator).append("\n");
             sb.append("**阈值**: ").append(SimilarityScorer.Score.fmt(r.threshold()))
               .append("｜**比较对数**: ").append(r.pairsCompared())
               .append("｜**超阈值**: ").append(r.aboveThreshold());
