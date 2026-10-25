@@ -181,6 +181,26 @@ class CandidateQueueTest {
     }
 
     @Test
+    void refreshMessageDoesNotClaimScoreUpdatedWhenDiscarded() {
+        ReviewCandidate exist = new ReviewCandidate();
+        exist.setId(16L);
+        exist.setDocA(5L);
+        exist.setDocB(9L);
+        exist.setStatus(ReviewCandidate.PENDING);
+        exist.setScore(new BigDecimal("0.77"));
+        exist.setReasons("原有理由");
+        when(docMapper.selectById(anyLong())).thenReturn(doc(5L, null));
+        when(candidateMapper.selectOne(any())).thenReturn(exist);
+
+        var r = service.enqueue(5L, 9L, new BigDecimal("85"), null, "L2_WEEKLY");
+
+        // 85 被拒（超范围），分数没变 —— 回执不能说「已刷新得分」
+        assertFalse(r.message().contains("已刷新得分"), "得分未改动却声称已刷新: " + r.message());
+        assertTrue(r.message().contains("得分未改动"), "应明确说得分没改: " + r.message());
+        assertEquals(new BigDecimal("0.77"), r.candidate().getScore(), "原分数应保留");
+    }
+
+    @Test
     void resolveDuplicateFlagsBothAndDeletesNothing() {
         ReviewCandidate c = new ReviewCandidate();
         c.setId(7L);

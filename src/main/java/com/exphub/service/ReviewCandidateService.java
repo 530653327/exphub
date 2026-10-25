@@ -137,8 +137,22 @@ public class ReviewCandidateService {
                 }
                 // source 刻意不改：它记录「这条候选最初是谁发现的」，刷新一次就变等于丢失来源
                 candidateMapper.updateById(exist);
-                return new EnqueueResult(false, exist, "该候选对已在队列中（#id=" + exist.getId() + "），已刷新得分"
-                        + (reasonKept ? "；原有理由保留未覆盖" : "与理由"));
+                // 回执只说真的发生了的事：得分被规范化掉（validScore=null）时不能写「已刷新得分」，
+                // 否则又是一句「动作发出去了，结果没发生」的假话。得分到底记成了多少，
+                // 由工具层从 exist 里重新读出来展示。
+                StringBuilder msg = new StringBuilder();
+                msg.append("该候选对已在队列中（#id=").append(exist.getId()).append("）");
+                if (validScore != null) {
+                    msg.append("，已刷新得分");
+                } else if (score != null) {
+                    msg.append("，得分未改动（本次传入的值无效，见下方说明）");
+                }
+                if (!reasonKept) {
+                    msg.append("与理由");
+                } else {
+                    msg.append("；原有理由保留未覆盖");
+                }
+                return new EnqueueResult(false, exist, msg.toString());
             }
             return new EnqueueResult(false, exist,
                     "该候选对已处理过（状态 " + exist.getStatus() + "），不重复入队 —— "
