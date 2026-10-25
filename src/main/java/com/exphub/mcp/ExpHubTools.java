@@ -152,24 +152,10 @@ public class ExpHubTools {
         sb.append("**作者**: ").append(doc.getAuthorName()).append("\n");
         sb.append("**版本**: v").append(doc.getVersion()).append("\n");
         sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
-        // D1 取代链：放在标记之前 —— 「已被取代」比「待复核」更硬，
-        // 先告诉调用方结论以哪条为准，再谈其他标记
-        sb.append(renderSupersedeBlock(doc, id));
-
-        // set_flags：标记放在正文之前，避免 AI 读完长文才发现结论存疑
-        if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
-            sb.append("**⚑ 标记**: ").append(DocService.flagLabelText(doc.getFlags()))
-              .append(" (").append(doc.getFlags()).append(")\n");
-            if (doc.getFlagNote() != null && !doc.getFlagNote().isBlank()) {
-                sb.append("**标记说明**: ").append(doc.getFlagNote()).append("\n");
-            }
-            if (doc.getFlagMarkedBy() != null) {
-                sb.append("**标记人**: ").append(doc.getFlagMarkedBy())
-                  .append(doc.getFlagMarkedAt() != null ? " | " + doc.getFlagMarkedAt() : "").append("\n");
-            }
-            sb.append("> ⚠️ 本条被标记为「").append(DocService.flagLabelText(doc.getFlags()))
-              .append("」，引用前请先核实；如标记已过时，可调用 cancel 或 set_flags 清空。\n");
-        }
+        // 存疑横幅：取代关系在前（比待复核更硬），标记在后；两块都在正文之前，
+        // 避免 AI 读完长文才发现结论存疑。文案与 export_document 共用同一个方法，
+        // 因为剥离器认的是这里的字面前缀 —— 两边各写一份，总有一天会对不上。
+        sb.append(doubtBanner(doc, id));
 
         // 显示关联经验
         if (doc.getRelatedIds() != null && !doc.getRelatedIds().isEmpty()) {
@@ -252,6 +238,9 @@ public class ExpHubTools {
             StringBuilder sb = new StringBuilder();
             sb.append("📄 文档导出成功！经验 ID:").append(id).append("「").append(doc.getTitle()).append("」\n\n");
             sb.append("内容已完整导出（共 ").append(doc.getContent() != null ? doc.getContent().length() : 0).append(" 字）。\n\n");
+            // 存疑横幅（D1）：export 是长文读取的主路径，横幅必须也出现在这里。
+            // 只加在 detail 上等于漏了最该提醒的场景 —— 长文档恰恰是最容易被整篇写回的那类。
+            sb.append(doubtBanner(doc, id));
             sb.append("---\n\n");
 
             String content = doc.getContent();
@@ -1522,6 +1511,42 @@ public class ExpHubTools {
      * <p>双向都展示：被谁取代（硬结论，放最前）、本条取代了谁（留存历史用）。
      * 反向查询只在详情做，列表不做 —— 列表每行查一次就是 N+1。
      */
+    /**
+     * 存疑横幅：取代关系 + 标记。detail 与 export 共用。
+     *
+     * <p>为什么必须共用一份文案：RenderArtifactStripper 是**按字面前缀**剥的
+     * （`**⛔ 已被取代**:` / `> 结论以新条为准` / `**⚑ 标记**:` / `> ⚠️ 本条被标记为`）。
+     * 如果 detail 和 export 各写一套措辞，剥离规则必然只能覆盖其中一边，
+     * 另一边就会在「读出来 → 改一点 → 整篇写回」时被固化进正文 —— 而且那行提示
+     * 不会随后续清标记而消失，等于给文档刻了个假碑。
+     */
+    private String doubtBanner(Doc doc, Long id) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(renderSupersedeBlock(doc, id));
+        sb.append(renderFlagBlock(doc));
+        return sb.toString();
+    }
+
+    /** 标记块（set_flags 回显）：只输出 ⚑ 相关几行，与 detail / export 共用 */
+    private String renderFlagBlock(Doc doc) {
+        if (doc.getFlags() == null || doc.getFlags().isBlank()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("**⚑ 标记**: ").append(DocService.flagLabelText(doc.getFlags()))
+          .append(" (").append(doc.getFlags()).append(")\n");
+        if (doc.getFlagNote() != null && !doc.getFlagNote().isBlank()) {
+            sb.append("**标记说明**: ").append(doc.getFlagNote()).append("\n");
+        }
+        if (doc.getFlagMarkedBy() != null) {
+            sb.append("**标记人**: ").append(doc.getFlagMarkedBy())
+              .append(doc.getFlagMarkedAt() != null ? " | " + doc.getFlagMarkedAt() : "").append("\n");
+        }
+        sb.append("> ⚠️ 本条被标记为「").append(DocService.flagLabelText(doc.getFlags()))
+          .append("」，引用前请先核实；如标记已过时，可调用 cancel 或 set_flags 清空。\n");
+        return sb.toString();
+    }
+
     private String renderSupersedeBlock(Doc doc, Long id) {
         StringBuilder sb = new StringBuilder();
         if (doc.getSupersededBy() != null) {
@@ -1634,7 +1659,7 @@ public class ExpHubTools {
     public String addReviewCandidate(
             @ToolParam(description = "候选对的第一条经验 ID") Long docA,
             @ToolParam(description = "候选对的第二条经验 ID") Long docB,
-            @ToolParam(description = "可选。相似度得分 0~1，只用于排序，不是判决依据。没有把握就不传", required = false) java.math.BigDecimal score,
+            @ToolParam(description = "可选。相似度得分，取值 (**0, 1]**，只用于排序，不是判决依据。没算出来就别传（传 0 会被当「未提供」存 NULL，因为相似度 0 的语义是「完全不像」；传大于 1 的值会被拒，若是百分制请除以 100）", required = false) java.math.BigDecimal score,
             @ToolParam(description = "可选但强烈建议。为什么判为相似，例如「标签交集:3（nginx,https,证书）；标题重叠 0.62；正文共享 2-gram 41%」。写清理由，人才判得快", required = false) String reasons,
             @ToolParam(description = "可选。来源标记：L0_CREATE / L1_DAILY / L2_WEEKLY / MANUAL。默认 MANUAL", required = false) String source) {
         try {
@@ -1647,8 +1672,30 @@ public class ExpHubTools {
             if (r.candidate() == null) {
                 return "❌ " + r.message();
             }
-            return (r.created() ? "✅ " : "ℹ️ ") + r.message()
-                    + "\n\n用 list_review_candidates 查看队列，用 resolve_candidate 做判断。";
+
+            // 回执自证值：不能只说「已刷新得分」，必须说清记成了多少。
+            // 上一版就是因为只说动作不说结果，调用方以为传 0.92 就记了 0.92，
+            // 实际库里是 0.0000，第二天从列表里才看出来。
+            StringBuilder sb = new StringBuilder();
+            sb.append(r.created() ? "✅ " : "ℹ️ ").append(r.message()).append("\n\n");
+            sb.append("**入库值核对**\n");
+            sb.append("- 候选 ID: ").append(r.candidate().getId()).append("\n");
+            sb.append("- 相似度: ").append(ReviewCandidateService.formatScore(r.candidate().getScore()));
+            if (r.candidate().getScore() == null) {
+                sb.append("（未记录）");
+            }
+            sb.append("\n");
+            String discard = ReviewCandidateService.scoreDiscardReason(score);
+            if (discard != null) {
+                sb.append("- ⚠️ 得分未入库：").append(discard).append("\n");
+            }
+            sb.append("- 来源: ").append(r.candidate().getSource()).append("\n");
+            sb.append("- 状态: ").append(r.candidate().getStatus()).append("\n");
+            if (r.candidate().getReasons() != null && !r.candidate().getReasons().isBlank()) {
+                sb.append("- 理由: ").append(abbreviate(r.candidate().getReasons(), 120)).append("\n");
+            }
+            sb.append("\n用 list_review_candidates 查看队列，用 resolve_candidate 做判断。");
+            return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.addReviewCandidate: FAILED", e);
             callLogService.incrementFailCalls();
@@ -1682,7 +1729,10 @@ public class ExpHubTools {
                 Doc a = docMap.get(c.getDocA());
                 Doc b = docMap.get(c.getDocB());
                 sb.append(i++).append(". 「候选 #").append(c.getId()).append("」");
-                if (c.getScore() != null) sb.append(" 相似度 ").append(c.getScore());
+                // 得分缺失时明确写「未记录」，不要静默不显示 ——
+                // 否则「没记分」和「记了 0 分」在列表里看起来一样
+                sb.append(" 相似度 ").append(ReviewCandidateService.formatScore(c.getScore()))
+                  .append(c.getScore() == null ? "（未记录）" : "");
                 sb.append("｜来源 ").append(c.getSource()).append("\n");
                 sb.append("   A: #").append(c.getDocA()).append("「")
                   .append(a != null ? abbreviate(a.getTitle(), 50) : "已不存在").append("」")

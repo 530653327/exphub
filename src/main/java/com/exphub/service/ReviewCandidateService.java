@@ -38,6 +38,56 @@ public class ReviewCandidateService {
     private final DocMapper docMapper;
     private final DocService docService;
 
+    /**
+     * 得分归一化（包级静态便于单测）。
+     *
+     * <p>线上实测发现的坑：调用方传 `score=0` 时库里落 `0.0000`，
+     * 而 `list_review_candidates` 按得分倒序 —— 0 分等于排在最后，看起来像「算了个 0」。
+     * 但相似度 0 的语义是「完全不像」，它几乎一定是「没算出来就随手填了 0」。
+     *
+     * <p>所以 0 与负数一律当「未提供」存 NULL：**不假装它是真实得分**。
+     * 超过 1 的也拒 —— 约定范围是 0~1，传 5 说明调用方口径不同，
+     * 与其入库污染排序，不如拒掉并在回执里说清楚。
+     *
+     * @return 可入库的得分；null 表示应存 NULL（未提供 / 无效）
+     */
+    public static java.math.BigDecimal normalizeScore(java.math.BigDecimal score) {
+        if (score == null) return null;
+        if (score.compareTo(java.math.BigDecimal.ZERO) <= 0) return null;
+        if (score.compareTo(java.math.BigDecimal.ONE) > 0) return null;
+        return score;
+    }
+
+    /**
+     * 归一化时丢弃的说明（null = 没丢弃）。
+     *
+     * <p>存在的理由只有一个：**回执必须自证值**。上一版回执写「已刷新得分」，
+     * 但没说记成了多少 —— 于是调用方以为传了 0.92 就记了 0.92，实际库里是 0.0000，
+     * 直到第二天从列表里才看出来。回执只证明动作发出去了，不证明结果对。
+     */
+    public static String scoreDiscardReason(java.math.BigDecimal score) {
+        if (score == null) return null;
+        if (score.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            return "传了 " + plain(score) + "，0 及以下不视为有效相似度（相似度 0 = 完全不像），"
+                    + "已按「未提供」存 NULL，不参与排序";
+        }
+        if (score.compareTo(java.math.BigDecimal.ONE) > 0) {
+            return "传了 " + plain(score) + "，超出约定范围 0~1，已按「未提供」存 NULL"
+                    + "（请确认你的评分口径，可能是百分制没除以 100）";
+        }
+        return null;
+    }
+
+    /** 得分展示：固定两位小数，避免 0.9 与 0.9000 在回执里长得不一样 */
+    public static String formatScore(java.math.BigDecimal score) {
+        if (score == null) return "未记录";
+        return score.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String plain(java.math.BigDecimal v) {
+        return v.stripTrailingZeros().toPlainString();
+    }
+
     /** 入队结果：created=false 表示这一对已经在队列里（或已被判过），没有新建 */
     public record EnqueueResult(boolean created, ReviewCandidate candidate, String message) {}
 
@@ -52,6 +102,8 @@ public class ReviewCandidateService {
      * </ul>
      */
     public EnqueueResult enqueue(Long docA, Long docB, BigDecimal score, String reasons, String source) {
+        // 归一化一次，后面所有写入路径都用它 —— 避免「新建时存 NULL、刷新时存 0」这种不一致
+        BigDecimal validScore = normalizeScore(score);
         if (docA == null || docB == null) {
             return new EnqueueResult(false, null, "docA 与 docB 都必填");
         }
@@ -72,8 +124,8 @@ public class ReviewCandidateService {
             if (ReviewCandidate.PENDING.equals(exist.getStatus())) {
                 // 只在有值时刷新：线上验证时发现，后一次传来的弱理由会把前一次的强理由覆盖掉
                 // （第一次写「标签交集:3；正文高度重合」，第二次随手写「又算到了」，人看到的就只剩后者）
-                if (score != null) {
-                    exist.setScore(score);
+                if (validScore != null) {
+                    exist.setScore(validScore);
                 }
                 // 理由「先到先得」：只在为空时补写，不覆盖已有内容。
                 // 为什么不是「有值就刷新」：线上验证时亲眼看到，L2 重算时随手写的一句
@@ -96,7 +148,7 @@ public class ReviewCandidateService {
         ReviewCandidate c = new ReviewCandidate();
         c.setDocA(a);
         c.setDocB(b);
-        c.setScore(score);
+        c.setScore(validScore);
         c.setReasons(reasons == null ? null : truncate(reasons, 500));
         c.setSource(source == null ? "MANUAL" : source);
         c.setStatus(ReviewCandidate.PENDING);
