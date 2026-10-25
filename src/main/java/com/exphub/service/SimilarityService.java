@@ -105,16 +105,27 @@ public class SimilarityService {
     }
 
     /** 一条候选（L0 与 L2 共用） */
-    public record Suggestion(Long docId, String title, double score, String reasons) {}
+    public record Suggestion(Long docId, String title, double score, String reasons,
+                             SimilarityScorer.Kind kind, int sharedLines) {}
 
     /** L0 命中的一条 + 它在队列里的实际状态（回执必须自证值，不能只说「已处理」） */
-    public record L0Hit(Long docId, String title, double score, String reasons, String queueState) {}
+    public record L0Hit(Long docId, String title, double score, String reasons, String queueState,
+                        SimilarityScorer.Kind kind, int sharedLines) {}
 
     public record L0Result(boolean ok, String note, int compared, List<L0Hit> hits, int enqueued) {}
 
     /** 扫描出来的一行结果 */
     public record Row(Long docA, String titleA, Long docB, String titleB,
-                      double score, String reason, String queueState) {}
+                      double score, String reason, String queueState,
+                      SimilarityScorer.Kind kind, int sharedLines) {
+
+        /** 分层排序键：先按「像的是什么」，同层再比分数 —— 单靠分数排会把演进链排到真重复前面 */
+        static java.util.Comparator<Row> order() {
+            return java.util.Comparator
+                    .comparingInt((Row r) -> r.kind() == null ? 9 : r.kind().ordinal())
+                    .thenComparing(java.util.Comparator.comparingDouble(Row::score).reversed());
+        }
+    }
 
     public record ScanResult(boolean ok,
                              String summary,
@@ -155,9 +166,14 @@ public class SimilarityService {
                 if (other.id().equals(doc.getId())) continue;
                 SimilarityScorer.Score s = SimilarityScorer.score(self, other);
                 if (s.total() < CREATE_THRESHOLD) continue;
-                hits.add(new Suggestion(other.id(), other.title(), s.total(), s.reason()));
+                hits.add(new Suggestion(other.id(), other.title(), s.total(), s.reason(),
+                        s.kind(), s.sharedLines()));
             }
-            hits.sort(Comparator.comparingDouble(Suggestion::score).reversed());
+            // 与 L2 同一套排序：先分层再比分数。写入查重如果只按分数，
+            // 「刚写完一条待办」会命中一堆同话题的旧记录，真重复反而被挤出 TOP3
+            hits.sort(Comparator
+                    .comparingInt((Suggestion s) -> s.kind() == null ? 9 : s.kind().ordinal())
+                    .thenComparing(Comparator.comparingDouble(Suggestion::score).reversed()));
             if (hits.size() > CREATE_TOP_N) hits = new ArrayList<>(hits.subList(0, CREATE_TOP_N));
 
             List<L0Hit> out = new ArrayList<>();
@@ -182,7 +198,8 @@ public class SimilarityService {
                     log.warn("SimilarityService.checkOnCreate: 入队失败 {} - {}", doc.getId(), h.docId(), e);
                     state = "入队失败：" + e.getClass().getSimpleName();
                 }
-                out.add(new L0Hit(h.docId(), h.title(), h.score(), h.reasons(), state));
+                out.add(new L0Hit(h.docId(), h.title(), h.score(), h.reasons(), state,
+                        h.kind(), h.sharedLines()));
             }
             String note = out.isEmpty()
                     ? "作用域「" + index.label() + "」内没有相似度 ≥ "
@@ -261,11 +278,14 @@ public class SimilarityService {
                     SimilarityScorer.Sketch a = list.get(i);
                     SimilarityScorer.Sketch b = list.get(j);
                     // 同一作用域内 docA<docB 只是入队口径，这里按分数排序前的展示顺序不重要
-                    above.add(new Row(a.id(), a.title(), b.id(), b.title(), s.total(), s.reason(), null));
+                    above.add(new Row(a.id(), a.title(), b.id(), b.title(), s.total(), s.reason(), null,
+                            s.kind(), s.sharedLines()));
                 }
             }
         }
-        above.sort(Comparator.comparingDouble(Row::score).reversed());
+        // 先分层再比分数：正文有重合（疑似真重复）的排前面，只有标题标签像的排后面。
+        // 实测教训：单按分数排，0 行重合的演进链 0.62 会压住 33 行重合的真重复 0.51。
+        above.sort(Row.order());
 
         // ⚠️ 索引是缓存（3 分钟），期间被删掉的文档仍会出现在 pairs 里。
         // 线上实测踩到：8 条结果里 4 条是已删文档，占满名额把真候选挤到后面 ——
@@ -332,7 +352,8 @@ public class SimilarityService {
                     state = "入队失败：" + e.getClass().getSimpleName();
                 }
             }
-            rowsOut.add(new Row(r.docA(), r.titleA(), r.docB(), r.titleB(), r.score(), r.reason(), state));
+            rowsOut.add(new Row(r.docA(), r.titleA(), r.docB(), r.titleB(), r.score(), r.reason(), state,
+                    r.kind(), r.sharedLines()));
         }
 
         notes.add("只比较同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内）：跨项目实测全是假阳性"

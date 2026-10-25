@@ -54,6 +54,14 @@ public final class SimilarityScorer {
     public static final int MIN_LINES_FOR_LINE_MODE = 3;
     /** 正文短于这个长度不参与比较（没有足够信息可判） */
     public static final int MIN_CONTENT_LEN = 50;
+    /**
+     * 判定为「疑似字面重复」所需的最小共享行数。
+     *
+     * <p>取 2 而不是更高：实测全库「剔模板后仍有重合」的对里，最少的也有 5 行，
+     * 取 2 留足余量给将来的短文档；同时「1 行相同」几乎一定是残留套话（如单独的
+     * 一句「更新于 2026-04-21」），不足以当证据。
+     */
+    public static final int MIN_SHARED_LINES = 2;
 
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
@@ -266,17 +274,72 @@ public final class SimilarityScorer {
             return sb.toString();
         }
 
+        /** 判定层级：这一对「像的是什么」 */
+        public Kind kind() {
+            if (!lineMode) return Kind.UNKNOWN;
+            return sharedLines >= MIN_SHARED_LINES ? Kind.DUPLICATE : Kind.SERIES;
+        }
+
+        /**
+         * 给人看的一句话定性：比分数本身更能指导动作。
+         *
+         * <p>回答的是「我该判 duplicate 还是 superseded」——这是队列里每条都要做的决定，
+         * 只看分数根本判不出来。
+         */
+        public String diagnosis() {
+            return switch (kind()) {
+                case DUPLICATE -> "**疑似字面重复**（正文有 " + sharedLines
+                        + " 行完全一致）→ 优先判 duplicate 或 superseded";
+                case SERIES -> "**同话题演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded"
+                        + "（后者是前者的新阶段），不该判 duplicate";
+                case UNKNOWN -> "**信息不足**（行太少，走 2-gram 兜底）→ 建议人工读一眼再定";
+            };
+        }
+
         public static String fmt(double v) {
             return String.format(java.util.Locale.ROOT, "%.2f", v);
         }
     }
 
     /**
+     * 候选对的定性分类。
+     *
+     * <p><b>为什么必须有这个（2026-10-25 23:38 越哥实测发现）</b>：
+     * 原来只用一个总分排序，结果「正文 0 行重合」的演进链拿 0.62 排第一，
+     * 而「正文 33 行完全一致」的真重复只拿 0.51 排第 16 —— **排序是反的**。
+     *
+     * <p>根因：`标签 1.00 + 标题 0.75` 就能凑出 0.59，正文完全不重也能过阈值。
+     * 三个信号的含义根本不是一回事：
+     * <ul>
+     *   <li>标签 = <b>项目归属</b>（同一批记录的 tags 常常完全相同，信息量最低）</li>
+     *   <li>标题 = <b>话题</b>（「待办：新增 X」和「实现 X」必然像，但内容是两回事）</li>
+     *   <li>正文 = <b>内容</b>（只有它才能证明「这俩是同一份东西」）</li>
+     * </ul>
+     *
+     * <p>所以不把三种东西硬揉进一个数字，而是<b>先分层、层内再比分数</b>。
+     * 分数保持原样（不让已有候选的分数发生漂移），只影响排序与提示文案。
+     */
+    public enum Kind {
+        /** 正文有 ≥2 行完全一致：最像字面重复，最该先看 */
+        DUPLICATE,
+        /** 正文一行不重，只有标签/标题像：同话题的不同阶段记录 */
+        SERIES,
+        /** 长段落型文档，没有行边界可比，信息不足 */
+        UNKNOWN
+    }
+
+    /**
      * 一对文档的相似度。
      *
-     * <p>权重取 0.34 / 0.33 / 0.33：三个信号各自独立、没有一个被验证过「应该更重」，
+     * <p>权重取 0.34 / 0.33 / 0.33：三个信号各自独立、没有任何一个被验证过「应该更重」，
      * 等权是最不容易过拟合的选择。同项目 +0.02、同分类 +0.01 只做微弱倾向，
      * 不足以把一对无关文档顶过阈值。
+     *
+     * <p>⚠️ **2026-10-25 23:38 更新认知**：等权本身没错，错在**只用一个数字排序**。
+     * 实测「标签 1.00 + 标题 0.75」即使正文完全不重也能拿 0.59 —— 于是演进链排在真重复前面。
+     * 现在的处理不是改权重（那会让所有历史分数漂移、也让「为什么像」变得难解释），
+     * 而是保留分数、增加 {@link Kind} 分层，由调用方**先分层再比分数**。
+     * 分数仍然忠实反映「三路信号的加权相似度」，只是不再单独承担排序职责。
      */
     public static Score score(Sketch a, Sketch b) {
         double tag = Math.max(jaccard(a.tags(), b.tags()), 0.9 * jaccard(a.aliases(), b.aliases()));

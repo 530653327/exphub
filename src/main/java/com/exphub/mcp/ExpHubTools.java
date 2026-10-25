@@ -1878,6 +1878,21 @@ public class ExpHubTools {
     // 包 4 补两条自动来源：L0 写入时查重（create / import 之后顺手比一次）、
     // L2 全库两两打分（一条命令把整个库扫一遍）。
 
+    /**
+     * 分层标签：告诉人「这一对像的是什么」——比分数更能指导动作。
+     *
+     * <p>为什么必须有：实测「同话题演进链」（正文 0 行重合）能拿 0.62，
+     * 而「正文 33 行完全一致」的真重复只拿 0.51。光看分数人会把演进链当真重复判。
+     */
+    private String kindLabel(SimilarityScorer.Kind kind, int sharedLines) {
+        if (kind == null) return "";
+        return switch (kind) {
+            case DUPLICATE -> "🏷 疑似**字面重复**（正文 " + sharedLines + " 行完全一致）→ 优先判 duplicate / superseded";
+            case SERIES -> "🔗 同话题**演进链**（正文一行不重，只是标签/标题像）→ 大概率该判 superseded，别判 duplicate";
+            case UNKNOWN -> "❔ 信息不足（行太少，走 2-gram 兜底）→ 建议人工读一眼";
+        };
+    }
+
     /** L0 查重结果转成人能秒读的几行；查重失败也只说失败，不影响主回执 */
     private String similarityDigest(SimilarityService.L0Result r) {
         StringBuilder sb = new StringBuilder();
@@ -1889,6 +1904,7 @@ public class ExpHubTools {
             sb.append("- #").append(h.docId()).append("「").append(abbreviate(h.title(), 40))
               .append("」相似度 ").append(SimilarityScorer.Score.fmt(h.score()))
               .append("　→ ").append(h.queueState()).append("\n");
+            sb.append("  ").append(kindLabel(h.kind(), h.sharedLines())).append("\n");
             sb.append("  ").append(abbreviate(h.reasons(), 200)).append("\n");
         }
         if (!r.hits().isEmpty()) {
@@ -1899,7 +1915,17 @@ public class ExpHubTools {
         return sb.toString();
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。建议先 dryRun=true 看清单再决定是否入队。")
+    /** 分层分组标题 */
+    private String kindGroupTitle(SimilarityScorer.Kind kind) {
+        if (kind == null) return "其他";
+        return switch (kind) {
+            case DUPLICATE -> "① 疑似字面重复 —— 正文有重合，最该先判";
+            case SERIES -> "② 同话题演进链 —— 正文一行不重，别当重复判";
+            case UNKNOWN -> "③ 信息不足 —— 需人工读一眼";
+        };
+    }
+
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。结果按性质分层（疑似字面重复 / 同话题演进链 / 信息不足），**层内才按分数排** —— 只看分数会把最该判的那对埋掉。建议先 dryRun=true 看清单再决定是否入队。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）。允许区间 [0.30, 0.95]，**超出区间会被直接拒绝并说明收到了多少**（不再静默改成 0.30 —— 静默修改会让「参数没生效」这种链路问题查不出来）", required = false) Double threshold,
@@ -1934,17 +1960,36 @@ public class ExpHubTools {
             if (r.rows().isEmpty()) {
                 sb.append("\n📭 没有超过阈值的候选对。阈值可以调到 0.45 再看一次，或用 add_review_candidate 手工入队。\n");
             } else {
-                sb.append("\n");
+                // 分层统计：让人一眼看出「有几条真该判 duplicate，有几条只是同话题」
+                long dup = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.DUPLICATE).count();
+                long ser = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.SERIES).count();
+                long unk = r.rows().size() - dup - ser;
+                sb.append("\n**按性质分层**（正文有重合的排前面，不按分数混排）：")
+                  .append("疑似字面重复 ").append(dup).append(" 对")
+                  .append("｜同话题演进链 ").append(ser).append(" 对");
+                if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
+                sb.append("\n\n");
                 int i = 1;
+                SimilarityScorer.Kind last = null;
                 for (SimilarityService.Row row : r.rows()) {
+                    // 层与层之间插一条分隔，让「分数低的反而更重要」这件事无法被忽略
+                    if (row.kind() != last) {
+                        if (last != null) sb.append("---\n");
+                        sb.append("**【").append(kindGroupTitle(row.kind())).append("】**\n");
+                        last = row.kind();
+                    }
                     sb.append(i++).append(". ").append(SimilarityScorer.Score.fmt(row.score()))
                       .append("｜#").append(row.docA()).append("「").append(abbreviate(row.titleA(), 34))
                       .append("」 ↔ #").append(row.docB()).append("「").append(abbreviate(row.titleB(), 34)).append("」");
                     if (row.queueState() != null) sb.append("　→ ").append(row.queueState());
-                    sb.append("\n   ").append(row.reason()).append("\n");
+                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines())).append("\n");
+                    sb.append("   ").append(row.reason()).append("\n");
                 }
             }
             sb.append("\n---\n");
+            sb.append("· **分数只反映「三路信号加权相似度」，不承担排序职责**：先按「正文有没有重合」分层，")
+              .append("层内再比分数。实测教训——正文 0 行重合的演进链能拿 0.62，正文 33 行一致的真重复只有 0.51，")
+              .append("只按分数排会把最该判的那对压到十几名之后\n");
             for (String n : r.notes()) sb.append("· ").append(n).append("\n");
             if (dry) {
                 sb.append("\n确认清单没问题后，用 dryRun=false 再跑一次（相同参数）才会真正入队。\n");
