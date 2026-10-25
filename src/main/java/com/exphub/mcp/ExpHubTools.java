@@ -325,7 +325,7 @@ public class ExpHubTools {
     /**
      * 获取经验的历史版本内容
      */
-    @Tool(name = "get_experience_history", description = "获取经验的某个历史版本内容。不传version时返回所有历史版本列表（含版本号、更新者、更新时间），传version时返回该版本的完整内容。当 get_experience_detail 返回的当前版本引用了历史版本时，可通过此工具读取被引用的历史版本内容。")
+    @Tool(name = "get_experience_history", description = "获取经验的某个历史版本内容。不传version时返回所有历史版本列表（**含位置列：主表 / 📦已归档**，所以能看到被归档搬走的那几版）；传version时返回该版本的完整内容。**已归档的版本也能读** —— 主表查不到会自动回查冷存档 doc_versions_archive，归档只是搬位置、不是删除。若主表和存档都没有，会明确说「不存在」并列出两个表里实际有哪些版本，而不是笼统回「未找到」（避免被误读成数据丢失）。")
     public String getExperienceHistory(
             @ToolParam(description = "经验ID。") Long id,
             @ToolParam(description = "可选。要读取的特定版本号，如 7 表示读取 v7 的历史内容。不传则返回所有历史版本列表。") Integer version) {
@@ -349,17 +349,10 @@ public class ExpHubTools {
                     }
                 }
                 if (target == null) {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("未找到经验 ID:").append(id).append(" 的 v").append(version).append(" 历史版本。\n\n");
-                    sb.append("当前最新版本: v").append(doc.getVersion()).append("\n");
-                    if (!versions.isEmpty()) {
-                        sb.append("可用历史版本: ");
-                        for (DocVersion v : versions) {
-                            sb.append("v").append(v.getVersion()).append(" ");
-                        }
-                        sb.append("\n");
-                    }
-                    return sb.toString();
+                    // ⚠️ 2026-10-26 01:0x：主表没有不代表不存在 —— 可能是被归档搬走了。
+                    // 之前这里直接 return「未找到」，等于把「已归档」谎报成「不存在」，
+                    // 读的人会以为数据丢了（比「没有入口」更糟）。
+                    return archivedVersionResponse(id, version, doc, versions);
                 }
 
                 StringBuilder sb = new StringBuilder();
@@ -417,27 +410,51 @@ public class ExpHubTools {
                 return sb.toString();
             }
 
-            // 不传 version → 列出所有历史版本
-            if (versions.isEmpty()) {
+            // 不传 version → 列出所有历史版本（**主表 + 冷存档合并**）
+            //
+            // ⚠️ 2026-10-26 01:0x：原来只列主表，归档走的那几版在列表里完全看不见 ——
+            // 用户会以为「这文档只有 10 版历史」，而实际有 55 版。列表缺项比查询失败更隐蔽。
+            List<DocVersionArchive> archivedAll = versionArchiveService.listArchived(id);
+            if (versions.isEmpty() && archivedAll.isEmpty()) {
                 return "经验 ID:" + id + "「" + doc.getTitle() + "」没有历史版本。当前仅有 v" + doc.getVersion() + "。";
             }
 
             StringBuilder sb = new StringBuilder();
             sb.append("# ").append(doc.getTitle()).append(" — 历史版本列表\n\n");
             sb.append("**当前版本**: v").append(doc.getVersion());
-            sb.append(" | **状态**: ").append(getStatusLabel(doc.getStatus())).append("\n\n");
-            sb.append("| 版本号 | 变更类型 | 更新者 | 更新时间 |\n");
-            sb.append("|--------|----------|--------|----------|\n");
+            sb.append(" | **状态**: ").append(getStatusLabel(doc.getStatus())).append("\n");
+            sb.append("**主表 ").append(versions.size()).append(" 条");
+            if (!archivedAll.isEmpty()) {
+                sb.append(" + 冷存档 ").append(archivedAll.size()).append(" 条");
+            }
+            sb.append("**\n\n");
+            sb.append("| 版本号 | 位置 | 变更类型 | 更新者 | 更新时间 |\n");
+            sb.append("|--------|------|----------|--------|----------|\n");
             for (DocVersion v : versions) {
                 // A3：META 版只记事件、没有正文副本；老数据无 change_type 时按正文处理
                 String changeLabel = "META".equals(v.getChangeType()) ? "仅元数据" : "正文";
                 sb.append("| v").append(v.getVersion())
+                  .append(" | 主表")
                   .append(" | ").append(changeLabel)
                   .append(" | ").append(v.getUpdatedName() != null ? v.getUpdatedName() : "未知")
                   .append(" | ").append(v.getCreatedAt() != null ? v.getCreatedAt() : "未知")
                   .append(" |\n");
             }
+            for (DocVersionArchive a : archivedAll) {
+                String changeLabel = "META".equals(a.getChangeType()) ? "仅元数据" : "正文";
+                sb.append("| v").append(a.getVersion())
+                  .append(" | 📦 已归档")
+                  .append(" | ").append(changeLabel)
+                  .append(" | ").append(a.getUpdatedName() != null ? a.getUpdatedName() : "未知")
+                  .append(" | ").append(a.getCreatedAt() != null ? a.getCreatedAt() : "未知")
+                  .append(" |\n");
+            }
             sb.append("\n> 「仅元数据」的版本只改了标签/摘要/标题/归属，**没有保存正文副本**（正文当时没变）。\n");
+            if (!archivedAll.isEmpty()) {
+                sb.append("> 「📦 已归档」的版本搬进了冷存档，**正文完整保留**，")
+                  .append("用 get_experience_history(id=").append(id)
+                  .append(", version=版本号) 仍能读到原文 —— 归档不是删除。\n");
+            }
             sb.append("\n需要查看某个历史版本的内容，请调用 get_experience_history(id=").append(id)
               .append(", version=版本号)。\n");
             sb.append("如需查看当前最新版本内容，请调用 get_experience_detail(id=").append(id).append(")。");
@@ -448,6 +465,96 @@ public class ExpHubTools {
             callLogService.incrementFailCalls();
             return "获取历史版本失败: " + e.getMessage();
         }
+    }
+
+    /**
+     * 主表查不到某版本时的处理：先回查归档表，并把「已归档 / 真的不存在」说清楚。
+     *
+     * <p><b>为什么必须有这个方法</b>（2026-10-26 01:0x 阁主实测发现的硬伤）：
+     * 归档后 {@code get_experience_history(654, version=1)} 返回
+     * 「未找到经验 ID:654 的 v1 历史版本」。而当时的文档写着
+     * 「归档不是删除，每条都能原样取回」，还用这个理由说服人放心搬 ——
+     * <b>MCP 层面一个字都取不回来</b>。
+     *
+     * <p>更糟的是它回「该版本不存在」而不是「已归档」：
+     * 读的人会以为数据丢了。<b>「查不到」和「不存在」是两件事</b>，必须分开说。
+     *
+     * <p>三种情况严格区分：
+     * <ol>
+     *   <li>归档表里有 → 返回归档正文，并标明「已归档」+ 归档时间/归档人</li>
+     *   <li>归档表没有、但该文档有归档记录 → 说「这个版本号在主表和存档里都没有」，
+     *       并列出真正存在的版本范围（含归档侧）</li>
+     *   <li>该文档从来没归档过 → 就是单纯的版本号不存在</li>
+     * </ol>
+     */
+    private String archivedVersionResponse(Long id, Integer version, Doc doc, List<DocVersion> versions) {
+        List<DocVersionArchive> archived = versionArchiveService.findArchived(id, version);
+
+        if (!archived.isEmpty()) {
+            // 命中归档：原样返回正文，但必须标明这是归档副本
+            StringBuilder sb = new StringBuilder();
+            DocVersionArchive a = archived.get(0);
+            sb.append("# ").append(doc.getTitle()).append("（v").append(version).append(" **已归档版本**）\n\n");
+            sb.append("> 📦 该版本在 **").append(a.getArchivedAt())
+              .append("** 由 **").append(a.getArchivedBy() == null ? "未知" : a.getArchivedBy())
+              .append("** 从主表搬入冷存档（原因：").append(a.getArchiveReason()).append("）。\n");
+            sb.append("> **正文完整保留，与归档前完全一致**。归档只是搬位置，不是删除。\n\n");
+            sb.append("**更新者**: ").append(a.getUpdatedName() != null ? a.getUpdatedName() : "未知").append("\n");
+            sb.append("**更新时间**: ").append(a.getCreatedAt() != null ? a.getCreatedAt() : "未知").append("\n");
+            sb.append("**当前最新版本**: v").append(doc.getVersion()).append("\n");
+            if (archived.size() > 1) {
+                sb.append("\n> ⚠️ **该版本号在归档表里有 ").append(archived.size())
+                  .append(" 条记录**（主表本身存在重复版本行，归档时原样保留、未去重）。")
+                  .append("这里返回第 1 条；全部 ").append(archived.size())
+                  .append(" 条可用 list_archived_versions(id=").append(id).append(") 查看。\n");
+            }
+            sb.append("\n---\n\n");
+
+            if (a.getContent() == null) {
+                sb.append("> 该版本**没有保存正文副本**：那次改动只动了元数据（标签/摘要/标题/归属），正文未变。\n");
+                sb.append("> 要读当时的正文，请找同文档的 CONTENT 类型版本，或用 get_experience_detail(id=")
+                  .append(id).append(") 看当前正文。\n");
+            } else {
+                String content = a.getContent();
+                boolean truncated = content.length() > detailMaxChars;
+                if (truncated) content = content.substring(0, detailMaxChars);
+                sb.append(content);
+                if (truncated) {
+                    sb.append("\n\n> ⚠️ 内容过长已截断（仅显示开头部分，原始 ")
+                      .append(a.getContent().length()).append(" 字）。");
+                }
+            }
+            sb.append("\n\n---\n> 📌 此为**归档版本** v").append(version)
+              .append("，当前最新版本为 v").append(doc.getVersion())
+              .append("。如需最新内容请用 get_experience_detail(id=").append(id).append(")。");
+            return sb.toString();
+        }
+
+        // 归档里也没有 —— 现在要区分「该文档有归档但没这个版本号」和「根本没归档过」
+        List<DocVersionArchive> allArchived = versionArchiveService.listArchived(id);
+        StringBuilder sb = new StringBuilder();
+        sb.append("❌ **v").append(version).append(" 不存在**（主表与冷存档都查过了）\n\n");
+        sb.append("当前最新版本: v").append(doc.getVersion()).append("\n");
+
+        List<Integer> mainVersions = new ArrayList<>();
+        for (DocVersion v : versions) mainVersions.add(v.getVersion());
+        if (!mainVersions.isEmpty()) {
+            sb.append("**主表里的版本**: ");
+            for (Integer v : mainVersions) sb.append("v").append(v).append(" ");
+            sb.append("\n");
+        }
+        if (!allArchived.isEmpty()) {
+            sb.append("**冷存档里的版本**: ");
+            for (DocVersionArchive a : allArchived) sb.append("v").append(a.getVersion()).append(" ");
+            sb.append("（").append(allArchived.size()).append(" 条，")
+              .append("这叫「已归档」不是「丢失」——用 get_experience_history(id=")
+              .append(id).append(", version=上面的版本号) 仍能读到原文）\n");
+        } else {
+            sb.append("**冷存档**: 该文档从未归档过任何版本\n");
+        }
+        sb.append("\n> 如果你要的版本号确实不在上面两个列表里，那它从来没被保存过（例如该文档是从 v");
+        sb.append(doc.getVersion()).append(" 直接创建的）。");
+        return sb.toString();
     }
 
     /**

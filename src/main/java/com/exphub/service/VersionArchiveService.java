@@ -225,4 +225,32 @@ public class VersionArchiveService {
         return archiveMapper.selectList(new QueryWrapper<DocVersionArchive>()
                 .eq("doc_id", docId).orderByAsc("version"));
     }
+
+    /**
+     * 按版本号取单条归档记录。
+     *
+     * <p><b>2026-10-26 01:0x 补</b>：阁主实测发现归档后
+     * {@code get_experience_history(654, version=1)} 返回「未找到经验 ID:654 的 v1 历史版本」——
+     * 因为那个工具只查主表，完全没接归档表。
+     *
+     * <p>这是本次归档功能的**硬伤**：文档里写着「归档不是删除，每条都能原样取回」，
+     * 还用这个理由说服用户放心搬，但 MCP 层面**一个字都取不回来**。
+     * 而且返回的是「该版本不存在」——读的人会以为数据丢了，比「没有入口」更糟。
+     *
+     * <p>注意同一 doc_id + version 可能有**多条**（主表本身存在重复行，见 #608），
+     * 所以返回 List 而不是单条：取回时要如实呈现「这个版本号有 N 条记录」，不能只给一条。
+     */
+    public List<DocVersionArchive> findArchived(Long docId, Integer version) {
+        if (docId == null || version == null) return List.of();
+        return archiveMapper.selectList(new QueryWrapper<DocVersionArchive>()
+                .eq("doc_id", docId).eq("version", version).orderByAsc("id"));
+    }
+
+    /** 该文档有没有任何归档记录（用于区分「从未归档」与「版本号本身不存在」） */
+    public boolean hasAnyArchived(Long docId) {
+        if (docId == null) return false;
+        QueryWrapper<DocVersionArchive> qw = new QueryWrapper<>();
+        qw.eq("doc_id", docId);
+        return archiveMapper.selectCount(qw) > 0;
+    }
 }
