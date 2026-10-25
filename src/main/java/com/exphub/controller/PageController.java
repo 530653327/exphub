@@ -92,6 +92,7 @@ public class PageController extends BaseController {
                        @RequestParam(required = false) String keyword,
                        @RequestParam(required = false) String templateType,
                        @RequestParam(required = false) String status,
+                       @RequestParam(required = false) String flag,
                        @RequestParam(defaultValue = "1") int page,
                        Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
@@ -103,6 +104,7 @@ public class PageController extends BaseController {
         model.addAttribute("keyword", keyword != null ? keyword : "");
         model.addAttribute("templateType", templateType != null ? templateType : "");
         model.addAttribute("status", status != null ? status : "");
+        model.addAttribute("flag", flag != null ? flag : "");
 
         Page<Doc> result;
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -134,6 +136,10 @@ public class PageController extends BaseController {
             if (status != null && !status.trim().isEmpty()) {
                 wrapper.eq("status", status.trim());
             }
+            // set_flags：按标记筛选（/docs?flag=needs_review）。flags 是逗号分隔的多值列，故用 like
+            if (flag != null && !flag.trim().isEmpty()) {
+                wrapper.like("flags", flag.trim());
+            }
             result = docMapper.selectPage(new Page<>(page, 20), wrapper);
         }
         model.addAttribute("docs", result.getRecords());
@@ -145,6 +151,11 @@ public class PageController extends BaseController {
         model.addAttribute("pendingDeleteCount",
                 docMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
                         .eq("status", DocService.PENDING_DELETE)));
+
+        // set_flags：待复核数量用于顶部入口角标（整理记忆时第一眼看这里）
+        model.addAttribute("needsReviewCount",
+                docMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Doc>()
+                        .like("flags", "needs_review")));
 
         return "docs/list";
     }

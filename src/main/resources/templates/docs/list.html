@@ -94,6 +94,13 @@
                     <span class="badge badge-danger ml-1" th:if="${pendingDeleteCount != null and pendingDeleteCount > 0}"
                           th:text="${pendingDeleteCount}">0</span>
                 </a>
+                <a th:href="@{/docs(flag='needs_review')}" class="btn btn-outline-warning ml-2"
+                   th:classappend="${flag == 'needs_review'} ? 'active'"
+                   title="AI 打上「待复核」标记的经验，引用前请先核实">
+                    <i class="fas fa-flag mr-1"></i> 待复核
+                    <span class="badge badge-warning ml-1" th:if="${needsReviewCount != null and needsReviewCount > 0}"
+                          th:text="${needsReviewCount}">0</span>
+                </a>
                 <a th:href="@{/docs/edit}" class="btn btn-primary ml-2">
                     <i class="fas fa-plus mr-1"></i> 新建经验
                 </a>
@@ -164,6 +171,20 @@
                                     标记（尚未删除）
                                 </span>
                             </div>
+                            <!-- set_flags：机器标记摊开显示，用户能直接判断该条是否可信 -->
+                            <div th:if="${doc.flags != null and doc.flags != ''}" class="mt-2 p-2"
+                                 style="background:#fffbf0;border-left:3px solid #f0a500;border-radius:4px;font-size:0.85rem;">
+                                <i class="fas fa-flag text-warning mr-1"></i>
+                                <strong>标记：</strong><span th:text="${doc.flags}">-</span>
+                                <span class="text-muted ml-2" th:if="${doc.flagNote != null and doc.flagNote != ''}">
+                                    — <span th:text="${doc.flagNote}">-</span>
+                                </span>
+                                <span class="text-muted ml-2" th:if="${doc.flagMarkedBy != null}">
+                                    （由 <span th:text="${doc.flagMarkedBy}">-</span>
+                                    <span th:if="${doc.flagMarkedAt != null}" th:text="'于 ' + ${#temporals.format(doc.flagMarkedAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                    标记）
+                                </span>
+                            </div>
                         </div>
                         <div class="text-right ml-3">
                             <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
@@ -196,14 +217,14 @@
                 <nav>
                     <ul class="pagination justify-content-center mb-0">
                         <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, page=${currentPage - 1})}">&laquo; 上一页</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${currentPage - 1})}">&laquo; 上一页</a>
                         </li>
                         <li class="page-item" th:each="i : ${#numbers.sequence(1, totalPages)}"
                             th:classappend="${i == currentPage} ? 'active'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, page=${i})}" th:text="${i}">1</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${i})}" th:text="${i}">1</a>
                         </li>
                         <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, page=${currentPage + 1})}">下一页 &raquo;</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${currentPage + 1})}">下一页 &raquo;</a>
                         </li>
                     </ul>
                 </nav>

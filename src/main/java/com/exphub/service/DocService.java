@@ -29,6 +29,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -917,13 +918,123 @@ public class DocService {
         return docMapper.selectById(id);
     }
 
+    /** 删除经验，并级联清理版本快照（同一事务，避免出现「主表没了、全文还在」） */
     @Transactional
     public void delete(Long id) {        Doc doc = docMapper.selectById(id);
         String title = doc != null ? doc.getTitle() : "未知";
         docMapper.deleteById(id);
-        
+
+        // 版本表必须跟着删。历史快照存的是正文全文，只删主表的话：
+        // 1) 界面任何地方都看不到这些快照（get_experience_history 按 doc_id 查，doc 已不存在）；
+        // 2) 它们仍在库里占空间，且是**完整正文**——旧版里写过的密码/Token 会一直留着，
+        //    形成「以为删干净了，其实全文还在」的错觉。
+        // M10 上线后「后台点删除」是正规路径（AI 标记 → 用户确认 → 用户执行），一定会走到这里，
+        // 所以这条级联清理必须在删除入口就能保证，不能靠事后手工 SQL。
+        versionMapper.delete(new QueryWrapper<DocVersion>().eq("doc_id", id));
+
         // 记录删除日志
         callLogService.logDelete(id, title);
+    }
+
+    // ==================== set_flags：机器可读标记（2026-10-25，#631 A1） ====================
+    //
+    // 为什么必须有这个专用工具：给一条经验打「待复核 / 疑似重复」标记，唯一的替代做法是
+    // update_experience(tags=...)。而 update 在判断任何字段之前就先 saveVersionSnapshot(old)，
+    // 无条件存一份正文全文副本 —— 打一个标记就等于多一份 4KB 快照。
+    // D1 的分层整理（L1 每日增量 / L2 每周相似度）核心动作就是打标记，
+    // 不修这条，整理方案还没开工就在制造版本垃圾。
+    //
+    // 因此本方法：不递增 version、不写 doc_versions、不动 updated_at。
+
+    /** 标记白名单，顺序即回显顺序 */
+    public static final List<String> FLAG_WHITELIST = List.of(
+            "needs_review", "duplicate", "superseded", "stale", "low_quality");
+
+    /** 人话 → 规范值。允许用中文写标记，避免因为拼不对白名单而被静默丢弃 */
+    private static final Map<String, String> FLAG_ALIASES = Map.ofEntries(
+            Map.entry("待复核", "needs_review"), Map.entry("复核", "needs_review"),
+            Map.entry("待确认", "needs_review"), Map.entry("review", "needs_review"),
+            Map.entry("重复", "duplicate"), Map.entry("疑似重复", "duplicate"),
+            Map.entry("冗余", "duplicate"), Map.entry("dup", "duplicate"),
+            Map.entry("已取代", "superseded"), Map.entry("取代", "superseded"),
+            Map.entry("过期", "stale"), Map.entry("失效", "stale"),
+            Map.entry("待更新", "stale"), Map.entry("旧", "stale"),
+            Map.entry("低质", "low_quality"), Map.entry("质量差", "low_quality"),
+            Map.entry("存疑", "low_quality"));
+
+    /** 标记的中文展示名，用于回显（给人看的地方） */
+    public static String flagLabel(String flag) {
+        if (flag == null) return "";
+        return switch (flag) {
+            case "needs_review" -> "待复核";
+            case "duplicate" -> "疑似重复";
+            case "superseded" -> "已被取代";
+            case "stale" -> "可能失效";
+            case "low_quality" -> "质量存疑";
+            default -> flag;
+        };
+    }
+
+    /** 规范值（白名单内）→ 中文标签串，用于列表回显 */
+    public static String flagLabelText(String flags) {
+        List<String> parsed = parseFlags(flags);
+        if (parsed.isEmpty()) return "";
+        List<String> labels = new ArrayList<>();
+        for (String f : parsed) labels.add(flagLabel(f));
+        return String.join("、", labels);
+    }
+
+    /**
+     * 解析 flags 参数为标准值列表（保序、去重、忽略非法值）。
+     * 包级静态便于单测：白名单过滤错了会导致「标记了但系统不认」，必须可测。
+     */
+    public static List<String> parseFlags(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null || raw.trim().isEmpty()) return out;
+        for (String token : raw.split("[,，;；\\s]+")) {
+            String t = token.trim().toLowerCase();
+            if (t.isEmpty()) continue;
+            String canonical = FLAG_WHITELIST.contains(t) ? t : FLAG_ALIASES.get(t);
+            if (canonical != null && !out.contains(canonical)) out.add(canonical);
+        }
+        return out;
+    }
+
+    /** 被丢弃的 token（不属于白名单也不在别名表里），用于在工具返回里明确告知调用方 */
+    public static List<String> rejectedFlagTokens(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null || raw.trim().isEmpty()) return out;
+        for (String token : raw.split("[,，;；\\s]+")) {
+            String t = token.trim().toLowerCase();
+            if (t.isEmpty()) continue;
+            if (!FLAG_WHITELIST.contains(t) && !FLAG_ALIASES.containsKey(t)) out.add(token.trim());
+        }
+        return out;
+    }
+
+    /**
+     * 打标记 / 改标记 / 清标记。flags 为空 = 清空标记。
+     *
+     * @param markedBy 打标记的助手名（同一 API Key 可能被多个助手共用，由调用方自报）
+     */
+    @Transactional
+    public Doc setFlags(Long id, List<String> flags, String note, String markedBy) {
+        Doc old = docMapper.selectById(id);
+        if (old == null) {
+            return null;
+        }
+        // 刻意不调 saveVersionSnapshot：这就是本方法存在的全部理由
+        UpdateWrapper<Doc> uw = new UpdateWrapper<>();
+        uw.eq("id", id);
+        boolean cleared = flags == null || flags.isEmpty();
+        uw.set("flags", cleared ? null : String.join(",", flags));
+        uw.set("flag_note", note == null || note.trim().isEmpty() ? null : note.trim());
+        uw.set("flag_marked_by", cleared ? null : markedBy);
+        uw.set("flag_marked_at", cleared ? null : LocalDateTime.now());
+        // 也不动 updated_at：打标记属元信息，若刷新会把老文档顶到
+        // list_recent_memories（按更新时间倒序）的最前面，干扰「最近记忆」的语义
+        docMapper.update(null, uw);
+        return docMapper.selectById(id);
     }
 
     public void updateCallResult(Long docId, boolean success) {

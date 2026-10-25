@@ -41,6 +41,13 @@ public class Doc {
     private String deleteReason;     // 标记待删的原因（AI 填写）
     private String deleteMarkedBy;   // 标记待删的助手名
     private LocalDateTime deleteMarkedAt; // 标记时间
+    // ===== set_flags 机器可读标记（2026-10-25）=====
+    // 为什么不复用 tags：tags 参与 ngram 全文索引与搜索权重，塞机器标记会污染检索；
+    // 且 tags 是人的分类，flags 是机器的状态。flags 变更不递增 version、不写版本快照。
+    private String flags;            // needs_review/duplicate/superseded/stale/low_quality，逗号分隔
+    private String flagNote;         // 标记说明
+    private String flagMarkedBy;     // 打标记的助手名
+    private LocalDateTime flagMarkedAt; // 打标记的时间
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

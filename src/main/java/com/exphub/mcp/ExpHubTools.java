@@ -129,6 +129,20 @@ public class ExpHubTools {
         sb.append("**作者**: ").append(doc.getAuthorName()).append("\n");
         sb.append("**版本**: v").append(doc.getVersion()).append("\n");
         sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+        // set_flags：标记放在正文之前，避免 AI 读完长文才发现结论存疑
+        if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
+            sb.append("**⚑ 标记**: ").append(DocService.flagLabelText(doc.getFlags()))
+              .append(" (").append(doc.getFlags()).append(")\n");
+            if (doc.getFlagNote() != null && !doc.getFlagNote().isBlank()) {
+                sb.append("**标记说明**: ").append(doc.getFlagNote()).append("\n");
+            }
+            if (doc.getFlagMarkedBy() != null) {
+                sb.append("**标记人**: ").append(doc.getFlagMarkedBy())
+                  .append(doc.getFlagMarkedAt() != null ? " | " + doc.getFlagMarkedAt() : "").append("\n");
+            }
+            sb.append("> ⚠️ 本条被标记为「").append(DocService.flagLabelText(doc.getFlags()))
+              .append("」，引用前请先核实；如标记已过时，可调用 cancel 或 set_flags 清空。\n");
+        }
 
         // 显示关联经验
         if (doc.getRelatedIds() != null && !doc.getRelatedIds().isEmpty()) {
@@ -614,9 +628,14 @@ public class ExpHubTools {
 
     /** M18-b：精简模式的一条结果（单行，省 token）。包级可见便于单测。 */
     static String briefLine(int index, Doc doc) {
+        // 标记前置，扫一眼就知道哪条结论存疑（flags 为空时不改变原有输出格式）
+        String flagMark = "";
+        if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
+            flagMark = " ⚑" + DocService.flagLabelText(doc.getFlags());
+        }
         return index + ". 【ID:" + doc.getId() + "】" + doc.getTitle()
                 + " —— " + getTemplateTypeLabel(doc.getTemplateType())
-                + " " + getStatusLabel(doc.getStatus())
+                + " " + getStatusLabel(doc.getStatus()) + flagMark
                 + " · " + previewSummary(doc.getSummary()) + "\n";
     }
 
@@ -643,6 +662,15 @@ public class ExpHubTools {
               .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
             sb.append("   摘要: ").append(previewSummary(doc.getSummary())).append("\n");
             sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+            // set_flags：标记回显。给 AI 一个明确的「别把这条当确定结论」信号
+            if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
+                sb.append("   ⚑ 标记: ").append(DocService.flagLabelText(doc.getFlags()))
+                  .append(" (").append(doc.getFlags()).append(")");
+                if (doc.getFlagNote() != null && !doc.getFlagNote().isBlank()) {
+                    sb.append("｜说明: ").append(abbreviate(doc.getFlagNote(), 80));
+                }
+                sb.append("\n");
+            }
             sb.append("   作者: ").append(doc.getAuthorName()).append(" | 更新: ").append(doc.getUpdatedAt()).append("\n");
             // 📚 历史版本提示：用 doc.getVersion() 直接判断，不查库。
             // 原实现对每条结果都调 getVersions()，20 条结果 = 20 次额外查询（N+1），
@@ -1317,6 +1345,71 @@ public class ExpHubTools {
             log.error("ExpHubTools.patchExperience: FAILED", e);
             callLogService.incrementFailCalls();
             return "局部替换失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "set_flags", description = "给经验打**机器可读标记**（待复核 / 疑似重复 / 已被取代 / 可能失效 / 质量存疑）。整理记忆、去重、标注可疑结论时用这个，**不要用 update_experience 改 tags 来打标记**。关键差别：本工具不递增版本号、不写版本快照、不动更新时间，所以反复打标记不会让版本表膨胀。flags 传空字符串 = 清空所有标记（清空时说明与署名也一并清掉）。检索和详情会回显标记，其他 AI 看到标记就知道这条结论存疑。")
+    public String setFlags(
+            @ToolParam(description = "经验ID") Long id,
+            @ToolParam(description = "标记，逗号分隔。规范值：needs_review(待复核) / duplicate(疑似重复) / superseded(已被取代) / stale(可能失效) / low_quality(质量存疑)。也认中文：待复核、重复、取代、过期/失效、存疑/低质。传空字符串表示清空全部标记。不在白名单里的词会被忽略并在返回里列出") String flags,
+            @ToolParam(description = "可选。标记说明：为什么打这个标记、复核了什么、和哪条重复（如「与 ID:377 结论重复，以 377 为准」）。这是给人和后续 AI 看的关键信息，建议写", required = false) String note,
+            @ToolParam(description = "可选。署名（谁打的标记）。不传=用当前 API Key 绑定的助手名。同一 Key 被多个助手共用时建议传", required = false) String authorName) {
+
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+
+            List<String> parsed = DocService.parseFlags(flags);
+            List<String> rejected = DocService.rejectedFlagTokens(flags);
+            // 署名优先用调用方自报的（同一 Key 只能绑一个 assistant_name，多助手共用时会打架）
+            String by = (authorName != null && !authorName.trim().isEmpty())
+                    ? authorName.trim()
+                    : ((assistant != null && assistant.getAssistantName() != null)
+                        ? assistant.getAssistantName() : "unknown");
+
+            Doc updated = docService.setFlags(id, parsed, note, by);
+
+            StringBuilder sb = new StringBuilder();
+            if (parsed.isEmpty()) {
+                sb.append("✅ 已清空标记\n\n");
+            } else {
+                sb.append("✅ 已设置标记\n\n");
+            }
+            sb.append("**ID**: ").append(id).append("\n");
+            sb.append("**标题**: ").append(updated.getTitle()).append("\n");
+            if (!parsed.isEmpty()) {
+                List<String> human = new ArrayList<>();
+                for (String f : parsed) human.add(DocService.flagLabel(f) + "(" + f + ")");
+                sb.append("**标记**: ").append(String.join("、", human)).append("\n");
+                if (note != null && !note.trim().isEmpty()) {
+                    sb.append("**说明**: ").append(note.trim()).append("\n");
+                }
+                sb.append("**署名**: ").append(by).append("\n");
+            }
+            sb.append("**版本**: v").append(updated.getVersion()).append("（未变）\n");
+            sb.append("**版本快照**: 未产生（本工具只改标记，不写版本表）\n");
+
+            if (!rejected.isEmpty()) {
+                sb.append("\n⚠️ 以下词不在白名单、已忽略：").append(String.join("、", rejected))
+                  .append("\n可用值：needs_review / duplicate / superseded / stale / low_quality\n");
+            }
+
+            // 部分生效要说清楚，别让调用方以为全都打上了
+            if (!rejected.isEmpty() && !parsed.isEmpty()) {
+                sb.append("\n（其余标记已生效。如需这些词，请改用上面的规范值重传）\n");
+            }
+            sb.append("\n说明：标记不改变正文、不产生历史版本，检索与详情会回显；不需要时再传空串即可清空。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.setFlags: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "设置标记失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 
