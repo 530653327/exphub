@@ -101,13 +101,21 @@ public class ExpHubTools {
             var todos = docService.listByTemplateType("todo_list", pid, status);
 
             String scopeLabel = pid == null ? "全局" : ("项目 " + pid);
-            String statusLabel = (status == null || status.trim().isEmpty()) ? "ACTIVE（未完成）"
-                    : ("ALL".equalsIgnoreCase(status.trim()) ? "全部状态" : status.trim().toUpperCase());
+            // 2026-10-26：标签必须反映**实际生效的过滤条件**，不能凭「应该是什么」写文案。
+            // 原来 status 为空时标签写「ACTIVE（未完成）」，而查询根本没加 status 条件 —— 
+            // 数据和标签同时错，而且标签错得更隐蔽（人会相信标签）。
+            boolean statusGiven = status != null && !status.trim().isEmpty();
+            String effectiveStatus = !statusGiven ? "ACTIVE" : status.trim().toUpperCase();
+            String statusLabel = "ALL".equals(effectiveStatus)
+                    ? "全部状态（ACTIVE + 已完成/过期/失效）"
+                    : effectiveStatus + (statusGiven ? "" : "（未传 status，默认只列未完成）");
 
             if (todos.isEmpty()) {
                 return "📋 " + scopeLabel + " 范围、状态 " + statusLabel + " 下没有待办事项。\n\n"
                         + "可以用 create_experience（templateType=todo_list）创建，"
-                        + "或换 projectId / status 再看（status=ALL 可看已完成的）。";
+                        + "或换 projectId / status 再看（status=ALL 可看已完成的）。\n"
+                        + "（实际查询条件：status=" 
+                        + ("ALL".equals(effectiveStatus) ? "不过滤" : effectiveStatus) + "）";
             }
 
             StringBuilder sb = new StringBuilder();
@@ -146,9 +154,13 @@ public class ExpHubTools {
     @Value("${exphub.mcp.detail-max-chars:20000}")
     private int detailMaxChars = 20000;
 
-    @Tool(name = "get_experience_detail", description = "获取经验的详细内容。超长内容会在合理长度处截断；需要完整内容请使用 export_document。")
+    @Tool(name = "get_experience_detail", description = "获取经验的**当前正文**。超长内容会**分段**返回："
+            + "回执末尾会给出「本段范围」和「下一段 offset」，照抄那个 offset（配 offset 参数）就能一路读到尾，"
+            + "不会只给你前面一截。要看历史版本请用 get_experience_history。")
     public String getExperienceDetail(
-            @ToolParam(description = "经验ID。") Long id) {
+            @ToolParam(description = "经验ID。") Long id,
+            @ToolParam(description = "可选。正文起始字符偏移，默认 0。只在续读超长文档时用："
+                    + "照抄上一次回执里的「下一段 offset」即可。", required = false) Integer offset) {
 
         Doc doc = docService.getById(id);
 
@@ -186,21 +198,12 @@ public class ExpHubTools {
             sb.append("---\n\n");
         }
 
-        // 截断超长内容，防止 AI 助手输出超限
-        String content = doc.getContent();
-        boolean truncated = false;
-        if (content != null && content.length() > detailMaxChars) {
-            content = content.substring(0, detailMaxChars);
-            truncated = true;
-        }
-        if (content != null) {
-            sb.append(content);
-        }
-        if (truncated) {
-            sb.append("\n\n> ⚠️ 内容过长已截断（仅显示开头部分）。如需完整内容请使用 export_document(id=")
-                    .append(id)
-                    .append(") 导出完整文档，或分段说明具体关注的部分。");
-        }
+        // 超长内容分段输出。
+        //
+        // ⚠️ 2026-10-26 01:1x：原来截断后建议「改用 export_document 导出完整文档」——
+        // 那是把长文本整块吐出来，**不分段、也没法定位到某一段**。
+        // 现在统一走 appendContentSlice：给出确切的后续 offset，能一路读到尾。
+        appendContentSlice(sb, doc.getContent(), offset, id, "get_experience_detail", doc.getVersion(), doc);
 
         // 关联经验详情
         if (doc.getRelatedIds() != null && !doc.getRelatedIds().isEmpty()) {
@@ -328,7 +331,11 @@ public class ExpHubTools {
     @Tool(name = "get_experience_history", description = "获取经验的某个历史版本内容。不传version时返回所有历史版本列表（**含位置列：主表 / 📦已归档**，所以能看到被归档搬走的那几版）；传version时返回该版本的完整内容。**已归档的版本也能读** —— 主表查不到会自动回查冷存档 doc_versions_archive，归档只是搬位置、不是删除。若主表和存档都没有，会明确说「不存在」并列出两个表里实际有哪些版本，而不是笼统回「未找到」（避免被误读成数据丢失）。")
     public String getExperienceHistory(
             @ToolParam(description = "经验ID。") Long id,
-            @ToolParam(description = "可选。要读取的特定版本号，如 7 表示读取 v7 的历史内容。不传则返回所有历史版本列表。") Integer version) {
+            @ToolParam(description = "可选。要读取的特定版本号，如 7 表示读取 v7 的历史内容。不传则返回所有历史版本列表。"
+                    + "⚠️ 传当前版本号（如 v58 是当前版）会明确告知「这就是当前正文」，不会误报「不存在」。") Integer version,
+            @ToolParam(description = "可选。**正文起始字符偏移**，默认 0。用于分段读取超长历史版本："
+                    + "先按返回的「下一段 offset」续读，直到它显示「已是最后一段」。"
+                    + "主表版本和归档版本都支持。", required = false) Integer offset) {
 
         try {
             // 检查经验是否存在
@@ -340,6 +347,27 @@ public class ExpHubTools {
             List<DocVersion> versions = docService.getVersions(id);
 
             if (version != null) {
+                // ⚠️ 2026-10-26 01:1x：**先判「这是不是当前版本」**。
+                // 当前正文存在 docs 表，doc_versions 里没有它 —— 原来会被归到「不存在」里，
+                // 回「❌ v58 不存在（主表与冷存档都查过了）」，还补一句「那它从来没被保存过」。
+                // 而 v58 就是当前正文。这和「已归档被说成不存在」是同一个病根：
+                // **只分了「已归档 / 不存在」两类，漏了「就是当前版本」这第三类。**
+                if (version.equals(doc.getVersion())) {
+                    StringBuilder cur = new StringBuilder();
+                    cur.append("# ").append(doc.getTitle())
+                       .append("（v").append(version).append(" **当前版本**）\n\n");
+                    cur.append("> ✅ **这就是当前正文**，不需要查历史版本。\n");
+                    cur.append("> 当前版本号 = v").append(doc.getVersion())
+                       .append("；它存在 `docs` 表，不在历史版本表 `doc_versions` 里，")
+                       .append("所以历史列表里看不到它 —— 这不是数据缺失。\n\n");
+                    cur.append("**状态**: ").append(getStatusLabel(doc.getStatus())).append("\n");
+                    cur.append("**更新时间**: ").append(doc.getUpdatedAt() != null ? doc.getUpdatedAt() : "-").append("\n");
+                    cur.append("**正文字数**: ").append(doc.getContent() == null ? 0 : doc.getContent().length())
+                       .append("\n\n---\n\n");
+                    appendContentSlice(cur, doc.getContent(), offset, id, "get_experience_detail", version, doc);
+                    return cur.toString();
+                }
+
                 // 查找指定版本
                 DocVersion target = null;
                 for (DocVersion v : versions) {
@@ -352,7 +380,7 @@ public class ExpHubTools {
                     // ⚠️ 2026-10-26 01:0x：主表没有不代表不存在 —— 可能是被归档搬走了。
                     // 之前这里直接 return「未找到」，等于把「已归档」谎报成「不存在」，
                     // 读的人会以为数据丢了（比「没有入口」更糟）。
-                    return archivedVersionResponse(id, version, doc, versions);
+                    return archivedVersionResponse(id, version, doc, versions, offset);
                 }
 
                 StringBuilder sb = new StringBuilder();
@@ -390,20 +418,8 @@ public class ExpHubTools {
                     return nb.toString();
                 }
 
-                String content = target.getContent();
-                boolean truncated = false;
-                if (content != null && content.length() > detailMaxChars) {
-                    content = content.substring(0, detailMaxChars);
-                    truncated = true;
-                }
-                if (content != null) {
-                    sb.append(content);
-                }
-                if (truncated) {
-                sb.append("\n\n> ⚠️ 内容过长已截断（仅显示开头部分）。如需完整内容请使用 export_document(id=")
-                        .append(id)
-                        .append(") 导出完整文档，或分段说明具体关注的部分。");
-            }
+                appendContentSlice(sb, target.getContent(), offset, id, "get_experience_detail", version, doc);
+                // 注意：下面这段「此为历史版本」的尾巴仍需输出，故这里不 return
             sb.append("\n\n---\n> 📌 此为历史版本 v").append(version).append(" 的内容，当前最新版本为 v").append(doc.getVersion())
                   .append("。如需查看最新内容请使用 get_experience_detail(id=").append(id).append(")。");
 
@@ -468,6 +484,55 @@ public class ExpHubTools {
     }
 
     /**
+     * 按 offset 输出正文的一段，并给出「下一段怎么读」。
+     *
+     * <p><b>为什么需要分段而不是一次性全给</b>（2026-10-26 01:1x 阁主实测）：
+     * 归档里 <b>31 个版本超过 8000 字</b>（v14 起），主表 v45+ 也全部超。
+     * 而原来的截断提示是「改用 export_document 按 ID 单独读取」——
+     * <b>但 export_document 只接受 id、不能指定 version，导出的永远是当前正文，这条建议是死路。</b>
+     *
+     * <p>所以正确做法是：**这个工具自己支持分段**，回执里给出确切的下一段参数，
+     * 让人能一路读到底，不再指向一个做不到的工具。
+     *
+     * <p>⚠️ 分段是按<b>字符</b>切的（不是按行），因为要保证「同一 offset 永远对应同一位置」；
+     * 按行切在跨段边界处容易漏行或重复行。
+     */
+    private void appendContentSlice(StringBuilder sb, String full, Integer offset,
+                                    Long id, String detailTool, Integer version, Doc doc) {
+        if (full == null || full.isEmpty()) {
+            sb.append("> 该版本没有正文内容（可能是仅元数据变更的版本）。\n");
+            return;
+        }
+        int total = full.length();
+        int from = (offset == null || offset < 0) ? 0 : Math.min(offset, total);
+        int to = Math.min(from + detailMaxChars, total);
+        boolean isLast = to >= total;
+
+        sb.append(full, from, to);
+
+        sb.append("\n\n---\n");
+        sb.append("📖 **本段范围**: 第 ").append(from).append(" – ").append(to)
+          .append(" 字符 / 共 ").append(total).append(" 字符");
+        if (from == 0 && isLast) {
+            sb.append("（**全文已一次读完**）\n");
+        } else if (isLast) {
+            sb.append("（**这是最后一段**）\n");
+        } else {
+            sb.append("（**还有后续**）\n");
+            sb.append("\n> 继续读下一段：`get_experience_history(id=").append(id);
+            if (version != null) sb.append(", version=").append(version);
+            sb.append(", offset=").append(to).append(")`\n");
+            sb.append("> 反复照抄回执里的 offset 续读，直到显示「这是最后一段」。\n");
+            sb.append("> ⚠️ 不要用 `export_document` 代替 —— 它只接受 id、不能指定版本，")
+              .append("导出的是当前正文而不是这个历史版本。\n");
+        }
+        if (version != null && version.equals(doc != null ? doc.getVersion() : null)) {
+            sb.append("\n> 也可用 `").append(detailTool).append("(id=").append(id)
+              .append(")` 读当前正文（同样支持大文档，但那个工具不分段）。\n");
+        }
+    }
+
+    /**
      * 主表查不到某版本时的处理：先回查归档表，并把「已归档 / 真的不存在」说清楚。
      *
      * <p><b>为什么必须有这个方法</b>（2026-10-26 01:0x 阁主实测发现的硬伤）：
@@ -487,7 +552,8 @@ public class ExpHubTools {
      *   <li>该文档从来没归档过 → 就是单纯的版本号不存在</li>
      * </ol>
      */
-    private String archivedVersionResponse(Long id, Integer version, Doc doc, List<DocVersion> versions) {
+    private String archivedVersionResponse(Long id, Integer version, Doc doc, List<DocVersion> versions,
+                                           Integer offset) {
         List<DocVersionArchive> archived = versionArchiveService.findArchived(id, version);
 
         if (!archived.isEmpty()) {
@@ -515,14 +581,8 @@ public class ExpHubTools {
                 sb.append("> 要读当时的正文，请找同文档的 CONTENT 类型版本，或用 get_experience_detail(id=")
                   .append(id).append(") 看当前正文。\n");
             } else {
-                String content = a.getContent();
-                boolean truncated = content.length() > detailMaxChars;
-                if (truncated) content = content.substring(0, detailMaxChars);
-                sb.append(content);
-                if (truncated) {
-                    sb.append("\n\n> ⚠️ 内容过长已截断（仅显示开头部分，原始 ")
-                      .append(a.getContent().length()).append(" 字）。");
-                }
+                // 2026-10-26：改为分段可控的读取，不再「截断后指向 export_document（那条路走不通）」
+                appendContentSlice(sb, a.getContent(), offset, id, "get_experience_detail", version, doc);
             }
             sb.append("\n\n---\n> 📌 此为**归档版本** v").append(version)
               .append("，当前最新版本为 v").append(doc.getVersion())

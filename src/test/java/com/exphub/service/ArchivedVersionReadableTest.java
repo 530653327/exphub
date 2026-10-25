@@ -149,8 +149,11 @@ class ArchivedVersionReadableTest {
 
         assertTrue(method.contains("a.getContent()"),
                 "取回归档版本必须用 getContent()（完整正文），不能只用 summary/preview");
-        assertTrue(method.contains("detailMaxChars"),
-                "超长正文要沿用统一的截断口径，并明确告知已截断+原始字数");
+        assertTrue(method.contains("appendContentSlice"),
+                "超长正文要走统一的分段输出（不是截断了事）：回执要给出本段范围与下一段 offset");
+        assertTrue(method.contains("offset"),
+                "归档版本也必须支持 offset 续读 —— 归档里 31 个版本超过 8000 字，"
+                        + "不分段就只能看前面一截");
     }
 
     /**

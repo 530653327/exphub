@@ -1431,8 +1431,18 @@ public class DocService {
      * 项目内容不外泄到全局、已完成的待办不刷屏。默认值必须保持，否则调用方拿到的是
      * 一屏已完成任务，反而看不清还有什么没做。
      *
+     * <p>⚠️ <b>2026-10-26 01:1x 修</b>：原代码 `status == null` 时<b>根本不加 status 条件</b>，
+     * 也就是「不传 = 不过滤 = 全部状态」，与这里注释写的「null = ACTIVE」完全相反。
+     *
+     * <p>后果（阁主实测）：`check_my_todos()` 不传 status 返回 7 条，
+     * 其中 #631/#644/#165/#232 早已 COMPLETED —— <b>7 条里 4 条是已完成</b>。
+     * 而且回执头部还标着「ACTIVE（未完成）」，<b>数据和标签同时错</b>。
+     *
+     * <p>这条比归档那类问题更影响日常：会话开场读待办，每次都把已完成项喂给下一个助手，
+     * 而红线 7「本清单不标 COMPLETED」正是为了防止误判完成 —— 过滤坏了，标了也白标。
+     *
      * @param projectId null 或 0 = 全局（默认行为）；&gt;0 = 指定项目
-     * @param status    null = ACTIVE；传 ALL 表示不限状态
+     * @param status    null 或空 = <b>ACTIVE</b>（与注释一致）；传 ALL 表示不限状态
      */
     public List<Doc> listByTemplateType(String templateType, Long projectId, String status) {
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
@@ -1447,8 +1457,10 @@ public class DocService {
             wrapper.eq("project_id", projectId);
         }
         wrapper.eq("template_type", templateType);
-        if (status != null && !status.trim().isEmpty() && !"ALL".equalsIgnoreCase(status.trim())) {
-            wrapper.eq("status", status.trim().toUpperCase());
+        // 默认收敛到 ACTIVE：不传 ≠ 不过滤。只有显式 ALL 才放开
+        String st = (status == null || status.trim().isEmpty()) ? "ACTIVE" : status.trim().toUpperCase();
+        if (!"ALL".equals(st)) {
+            wrapper.eq("status", st);
         }
         wrapper.orderByDesc("updated_at");
         return docMapper.selectList(wrapper);
