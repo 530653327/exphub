@@ -10,6 +10,8 @@ import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import com.exphub.service.ReviewCandidateService;
 import com.exphub.entity.ReviewCandidate;
+import com.exphub.service.SimilarityScorer;
+import com.exphub.service.SimilarityService;
 import com.exphub.service.DocTemplateService;
 import com.exphub.service.ProjectService;
 import org.slf4j.Logger;
@@ -51,6 +53,9 @@ public class ExpHubTools {
 
     @Autowired
     private ReviewCandidateService reviewCandidateService;
+
+    @Autowired
+    private SimilarityService similarityService;
 
     /**
      * 获取当前调用者权限信息
@@ -290,13 +295,21 @@ public class ExpHubTools {
             updateDoc.setContent(cleaned);
             if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
 
-            docService.update(id, updateDoc, java.util.Set.of(), updatedName);
+            Doc updated = docService.update(id, updateDoc, java.util.Set.of(), updatedName);
 
             int stripped = content.length() - cleaned.length();
-            return "✅ 文档导入成功！\n\n**ID**: " + id + "\n**标题**: " + existing.getTitle() + "\n**新版本**: v" + (existing.getVersion() + 1)
-                 + "\n**内容长度**: " + cleaned.length() + " 字"
-                 + (stripped > 0 ? "（已剥离 " + stripped + " 字渲染痕迹：历史导读/关联经验/文档结尾等）" : "")
-                 + "\n\n文档已更新，当前版本保留了完整内容。";
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ 文档导入成功！\n\n**ID**: ").append(id)
+              .append("\n**标题**: ").append(existing.getTitle())
+              .append("\n**新版本**: v").append(updated != null ? updated.getVersion() : existing.getVersion() + 1)
+              .append("\n**内容长度**: ").append(cleaned.length()).append(" 字")
+              .append(stripped > 0 ? "（已剥离 " + stripped + " 字渲染痕迹：历史导读/关联经验/文档结尾等）" : "")
+              .append("\n\n文档已更新，当前版本保留了完整内容。");
+            // D1 包 4 · L0 写入查重：整篇替换后内容可能已经和别的条目重合，顺手查一次
+            if (updated != null) {
+                sb.append(similarityDigest(similarityService.checkOnCreate(updated)));
+            }
+            return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.importDocument: FAILED", e);
             callLogService.incrementFailCalls();
@@ -1109,6 +1122,8 @@ public class ExpHubTools {
             } else {
                 result.append("\n经验已保存，其他AI助手可以通过搜索找到这条经验。");
             }
+            // D1 包 4 · L0 写入查重：旁路执行，失败只降级成一句提示，绝不影响创建结果
+            result.append(similarityDigest(similarityService.checkOnCreate(created)));
             return result.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.createExperience: FAILED", e);
@@ -1839,6 +1854,93 @@ public class ExpHubTools {
             log.error("ExpHubTools.resolveCandidate: FAILED", e);
             callLogService.incrementFailCalls();
             return "处理候选失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    // ==================== D1 施工包 4：相似度候选生成 ====================
+    //
+    // 包 3 解决了「候选对存哪、谁判过」，但候选从哪来一直靠人工发现。
+    // 包 4 补两条自动来源：L0 写入时查重（create / import 之后顺手比一次）、
+    // L2 全库两两打分（一条命令把整个库扫一遍）。
+
+    /** L0 查重结果转成人能秒读的几行；查重失败也只说失败，不影响主回执 */
+    private String similarityDigest(SimilarityService.L0Result r) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n🔎 **写入查重**：").append(r.note()).append("\n");
+        if (!r.ok()) {
+            return sb.toString();
+        }
+        for (SimilarityService.L0Hit h : r.hits()) {
+            sb.append("- #").append(h.docId()).append("「").append(abbreviate(h.title(), 40))
+              .append("」相似度 ").append(SimilarityScorer.Score.fmt(h.score()))
+              .append("　→ ").append(h.queueState()).append("\n");
+            sb.append("  ").append(abbreviate(h.reasons(), 200)).append("\n");
+        }
+        if (!r.hits().isEmpty()) {
+            sb.append("判断用 resolve_candidate(candidateId=..., action=duplicate|superseded|distinct)：\n")
+              .append("· 字面重复 → duplicate（只打标记不合并）｜ · 后者是前者的新版 → superseded（只写指针）\n")
+              .append("· 同一主题的两条独立记录 → distinct（此后这一对不再打扰）\n");
+        }
+        return sb.toString();
+    }
+
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。建议先 dryRun=true 看清单再决定是否入队。")
+    public String scanSimilarDocs(
+            @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
+            @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）", required = false) Double threshold,
+            @ToolParam(description = "可选。最多返回/入队几条，默认 20，上限 50", required = false) Integer limit,
+            @ToolParam(description = "可选。一篇文档最多出现在几条候选里，默认 2 —— 防止同一个模板族（如一批同格式提示词）把队列占满", required = false) Integer maxPerDoc,
+            @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
+            @ToolParam(description = "可选。**谁改的**——操作人署名（建议统一用这个）。不传=用当前 API Key 绑定的助手名", required = false) String updatedName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            boolean dry = Boolean.TRUE.equals(dryRun);
+            SimilarityService.ScanResult r = similarityService.scan(projectId, threshold, limit, maxPerDoc, dry,
+                    resolveAuthor(updatedName, assistant));
+            if (!r.ok()) {
+                return "❌ " + r.summary();
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append(dry ? "🔍 扫描完成（dryRun：**没有入队任何东西**）\n\n" : "🗂 扫描完成并已入队\n\n");
+            sb.append("**范围**: ").append(r.summary()).append("\n");
+            sb.append("**阈值**: ").append(SimilarityScorer.Score.fmt(r.threshold()))
+              .append("｜**比较对数**: ").append(r.pairsCompared())
+              .append("｜**超阈值**: ").append(r.aboveThreshold());
+            if (r.droppedByCap() > 0) sb.append("｜**限流丢掉**: ").append(r.droppedByCap());
+            sb.append("\n");
+            if (!dry) {
+                sb.append("**入队结果**: 新建 ").append(r.enqueued())
+                  .append(" 对｜已在队列(待判断) ").append(r.alreadyPending())
+                  .append(" 对｜已判过(不重复入队) ").append(r.alreadyResolved()).append(" 对\n");
+            }
+            if (r.rows().isEmpty()) {
+                sb.append("\n📭 没有超过阈值的候选对。阈值可以调到 0.45 再看一次，或用 add_review_candidate 手工入队。\n");
+            } else {
+                sb.append("\n");
+                int i = 1;
+                for (SimilarityService.Row row : r.rows()) {
+                    sb.append(i++).append(". ").append(SimilarityScorer.Score.fmt(row.score()))
+                      .append("｜#").append(row.docA()).append("「").append(abbreviate(row.titleA(), 34))
+                      .append("」 ↔ #").append(row.docB()).append("「").append(abbreviate(row.titleB(), 34)).append("」");
+                    if (row.queueState() != null) sb.append("　→ ").append(row.queueState());
+                    sb.append("\n   ").append(row.reason()).append("\n");
+                }
+            }
+            sb.append("\n---\n");
+            for (String n : r.notes()) sb.append("· ").append(n).append("\n");
+            if (dry) {
+                sb.append("\n确认清单没问题后，用 dryRun=false 再跑一次（相同参数）才会真正入队。\n");
+            } else {
+                sb.append("\n处理：list_review_candidates 看队列 → resolve_candidate 判 duplicate / superseded / distinct / skip。\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.scanSimilarDocs: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "扫描失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 

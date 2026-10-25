@@ -142,9 +142,9 @@ java -jar target/exphub-1.0.0.jar
 
 ---
 
-## 📦 MCP Tools (35 total)
+## 📦 MCP Tools (36 total)
 
-### Global Experience Library (22)
+### Global Experience Library (23)
 
 | Tool | Purpose |
 |---|---|
@@ -170,6 +170,7 @@ java -jar target/exphub-1.0.0.jar
 | `add_review_candidate` | Queue a suspected duplicate pair for human review (changes no data). Score range is **(0, 1]**; `0` is treated as "not provided" (NULL), `>1` is rejected |
 | `list_review_candidates` | List the review queue (PENDING by default, ordered by score) |
 | `resolve_candidate` | Resolve a candidate: `duplicate` (flag both, no merge) / `superseded` / `distinct` / `skip` |
+| `scan_similar_docs` | **Score every pair in a scope and enqueue candidates automatically** (the main tool for memory cleanup). Only compares within the same scope (global↔global, project↔project) because cross-project matches were all false positives; `dryRun=true` previews without enqueueing; at most N pairs per doc (default 2) so one template family cannot flood the queue |
 
 ### Project Spaces (13)
 
