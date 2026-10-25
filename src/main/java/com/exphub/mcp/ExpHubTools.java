@@ -2189,13 +2189,32 @@ public class ExpHubTools {
      */
     private String kindGroupTitle(SimilarityScorer.Kind kind) {
         if (kind == null) return "其他";
+        // ⚠️ 2026-10-26 03:01 越哥实测：组头原来写「…别当重复判」，里面却有一条给 ✅ 合并动作 ——
+        //    动作枚举上线后，**组头不能再预设动作**（分层说的是「像什么」，动作说的是「做什么」，
+        //    同一层可能同时出现 distinct 和 merge）。组头只描述分层，动作由每条的「动作：」行给出。
         return switch (kind) {
-            case DUPLICATE -> "疑似字面重复 —— 正文有重合，最该先判"
-                    + "（⚠️ 这一层混着真重复 / 母集-子集 / 同模板实例三种，看每对的独有行数分辨）";
-            case SERIES -> "同话题演进链 / 共用骨架 —— 正文一行不重、或只共用骨架，别当重复判";
-            case UNKNOWN -> "信息不足 —— 需人工读一眼";
-            case PROGRESS -> "进度/日志记录 —— 天然是演进链，一般不用判";
+            case DUPLICATE -> "疑似字面重复 —— 正文有重合"
+                    + "（这一层混着真重复 / 母集-子集 / 同模板实例三种，**别预设动作**，看每对形态与动作）";
+            case SERIES -> "同话题演进链 / 共用骨架 / 补充页 —— 正文重合不够判重复（**别预设动作**）";
+            case UNKNOWN -> "信息不足 —— 行太少，走 2-gram 兜底";
+            case PROGRESS -> "进度/日志记录 —— 天然是分阶段记录（默认只抽样几条）";
         };
+    }
+
+    /**
+     * 从已渲染的 advice 里读回动作标签（用于组头统计）。
+     *
+     * <p>为什么读回而不是重算：动作由 {@code SimilarityScorer.decide()} 决定并渲染进正文，
+     * 组头若另算一遍，两处迟早漂移 —— 今晚已经因为「同一事实两个出口」踩过多次。
+     */
+    private static String actionTag(String advice) {
+        if (advice == null) return "";
+        if (advice.contains("动作：判 duplicate")) return "duplicate";
+        if (advice.contains("动作：判 superseded")) return "superseded";
+        if (advice.contains("动作：先把这")) return "merge";
+        if (advice.contains("动作：判 distinct")) return "distinct";
+        if (advice.contains("动作：不用判")) return "none";
+        return "";
     }
 
     /** 动态层号：按本次实际出现的顺序给 ① ② ③…，不再跟枚举序号绑定 */
@@ -2259,10 +2278,25 @@ public class ExpHubTools {
 
                 // 本次只展示前 N 条：说清「分层统计」和「展示清单」是两个口径，
                 // 否则改 limit 会让人以为分层结论变了
+                // ⚠️ 2026-10-26 03:01 越哥实测：这里原来写「本次展示前 22 条（limit=22）」——
+                //    **把展示数当成了 limit**。他传 50，回执说 22，无法判断是参数被改写还是显示错了。
+                //    红线「回执必须自证值」：摆真实数值，不要改成另一个数值。
+                sb.append("\n　**本次展示 ").append(r.rows().size()).append(" 条 / 你传的 limit=")
+                  .append(r.limit()).append("**");
+                boolean filled = r.filledPerDoc() > 0;
+                if (r.rows().size() < r.limit() || filled) {
+                    sb.append("（差额 ").append(Math.max(0, r.limit() - r.rows().size()))
+                      .append(" 条 = 各层规则主动省略：③层进度类默认只抽样 ")
+                      .append(SimilarityService.DEFAULT_PROGRESS_SAMPLE)
+                      .append(" 条 / per-doc 限流，明细见每层括号）");
+                }
+                if (filled) {
+                    sb.append("；另有 ").append(r.filledPerDoc())
+                      .append(" 条原本被 per-doc 挤掉，因名额有余**已补回清单**");
+                }
                 if (r.droppedByCap() > 0) {
-                    sb.append("\n　本次展示前 ").append(r.rows().size()).append(" 条（limit=")
-                      .append(r.rows().size()).append("），另有 ").append(r.droppedByCap())
-                      .append(" 条超阈值但被限流截掉 —— **分层数字不受 limit 影响**，")
+                    sb.append("；另有 ").append(r.droppedByCap())
+                      .append(" 条超阈值但被 limit 截掉 —— **分层数字不受 limit 影响**，")
                       .append("调大 limit 只是让更多条进清单，不会改变上面的统计");
                 }
                 sb.append("\n\n");
@@ -2276,6 +2310,23 @@ public class ExpHubTools {
                         groupNo++;
                         sb.append("**【").append(circle(groupNo)).append(" ")
                           .append(kindGroupTitle(row.kind())).append("】**");
+                        // 本层动作分布：直接从已渲染的 advice 里读回标签，
+                        // 这样组头与条目不可能对不上（另算一遍迟早漂移）
+                        java.util.Map<String, Integer> actTally = new java.util.LinkedHashMap<>();
+                        for (SimilarityService.Row r2 : r.rows()) {
+                            if (r2.kind() != row.kind()) continue;
+                            String tag = actionTag(r2.advice());
+                            if (!tag.isEmpty()) actTally.merge(tag, 1, Integer::sum);
+                        }
+                        if (!actTally.isEmpty()) {
+                            sb.append("（本层动作：");
+                            int ai = 0;
+                            for (var ae : actTally.entrySet()) {
+                                if (ai++ > 0) sb.append("、");
+                                sb.append(ae.getKey()).append(" ×").append(ae.getValue());
+                            }
+                            sb.append("）");
+                        }
                         // 每层自证：全库 X 对 / 本次展示 Y 条 / 挤掉哪些（2026-10-26 02:1x 越哥要求）
                         SimilarityScorer.Kind kk = row.kind() == null
                                 ? SimilarityScorer.Kind.UNKNOWN : row.kind();

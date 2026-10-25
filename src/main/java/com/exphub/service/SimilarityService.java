@@ -156,6 +156,8 @@ public class SimilarityService {
                              int aboveThreshold,
                              int droppedByCap,
                              int maxPerDoc,
+                             int limit,
+                             int filledPerDoc,
                              int enqueued,
                              int alreadyPending,
                              int alreadyResolved,
@@ -264,7 +266,7 @@ public class SimilarityService {
         double th = (threshold == null) ? DEFAULT_THRESHOLD : threshold;
         if (!isThresholdValid(th)) {
             return new ScanResult(false, thresholdRejectMessage(threshold, th), DEFAULT_THRESHOLD, dryRun,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
         }
         int maxRows = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
         int perDoc = (maxPerDoc == null || maxPerDoc < 1) ? 2 : Math.min(maxPerDoc, 10);
@@ -276,7 +278,7 @@ public class SimilarityService {
                 Project p = projectService.getProject(projectId);
                 if (p == null) {
                     return new ScanResult(false, "未找到项目 " + projectId + "，或你没有访问权限", th, dryRun,
-                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
                 }
                 scopes.add(indexOf(projectId));
             } else if (projectId != null && projectId == 0) {
@@ -290,7 +292,7 @@ public class SimilarityService {
         } catch (Exception e) {
             log.error("SimilarityService.scan: 建索引失败", e);
             return new ScanResult(false, "建立索引失败：" + e.getClass().getSimpleName() + " - " + e.getMessage(),
-                    th, dryRun, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
+                    th, dryRun, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
         }
 
         int docs = 0, skippedShort = 0, skippedSuperseded = 0;
@@ -405,10 +407,11 @@ public class SimilarityService {
                 : (projectId == 0 ? "仅全局库" : scopes.get(0).label());
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"
                 + SimilarityScorer.Score.fmt(th) + " 共 " + above.size() + " 对"
-                + (dropped > 0 ? "，限流后取前 " + selected.size() + " 对" : "");
+                + (selected.size() < above.size()
+                   ? "，本次展示 " + selected.size() + " 对（limit=" + maxRows + "；差额见分层明细）" : "");
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
-                above.size(), dropped, perDoc, enqueued, pending, resolved, rowsOut, tierStats,
-                sel.detail(), notes);
+                above.size(), dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
+                rowsOut, tierStats, sel.detail(), notes);
     }
 
     /**
@@ -443,7 +446,8 @@ public class SimilarityService {
 
     /** 限流结果：选中的行 + 每层的自证数据（纯函数，便于单测；不碰 DB） */
     public record Selection(java.util.List<Row> rows,
-                            java.util.Map<SimilarityScorer.Kind, TierDetail> detail) {}
+                            java.util.Map<SimilarityScorer.Kind, TierDetail> detail,
+                            int filledPerDoc) {}
 
     /**
      * 把「全部超阈值对」限流成「这次展示哪些」。
@@ -469,6 +473,7 @@ public class SimilarityService {
         java.util.Map<SimilarityScorer.Kind, int[]> c = new java.util.LinkedHashMap<>();
         java.util.Map<SimilarityScorer.Kind, java.util.List<String>> samples = new java.util.LinkedHashMap<>();
         java.util.List<Row> selected = new java.util.ArrayList<>();
+        java.util.List<Row> perDocDropped = new java.util.ArrayList<>();
         java.util.Map<Long, Integer> perDocCount = new java.util.LinkedHashMap<>();
 
         for (Row r : sortedAbove) {
@@ -498,9 +503,7 @@ public class SimilarityService {
                 int ca = perDocCount.getOrDefault(r.docA(), 0);
                 int cb = perDocCount.getOrDefault(r.docB(), 0);
                 if (ca >= perDoc || cb >= perDoc) {
-                    cnt[2]++;
-                    samples.computeIfAbsent(k, x -> new java.util.ArrayList<>())
-                            .add("#" + r.docA() + "↔#" + r.docB());
+                    perDocDropped.add(r);   // 先攒着：名额有余要补回来，见下面的补位
                     continue;
                 }
                 perDocCount.put(r.docA(), ca + 1);
@@ -510,13 +513,45 @@ public class SimilarityService {
             cnt[1]++;
         }
 
+        // ⚠️ 2026-10-26 03:01 越哥实测：③层抽样截到 5 条后，**空出来的名额没人用** ——
+        //    传 limit=50 实际只展示 22 条，而②层还有 4 对是被 per-doc 挤掉的。
+        //    per-doc 的本意是「防一批同格式提示词刷屏」，**不是硬不变量**：
+        //    名额闲着的时候，宁可多给几条候选，也不留空位。
+        //    补位按原顺序（层先分数后）补，补完再整体重排一次，保证分层顺序不乱。
+        int filled = 0;
+        for (Row r : perDocDropped) {
+            if (selected.size() >= maxRows) break;
+            selected.add(r);
+            filled++;
+        }
+        if (filled > 0) {
+            selected.sort(Row.order());
+        }
+
+        // 最终计数（必须基于补位后的 selected，否则「展示 N 条」与实际清单对不上）
+        java.util.Map<SimilarityScorer.Kind, Integer> shownNow = new java.util.LinkedHashMap<>();
+        for (Row r : selected) {
+            SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
+            shownNow.merge(k, 1, Integer::sum);
+        }
+        java.util.Map<SimilarityScorer.Kind, Integer> stillDropped = new java.util.LinkedHashMap<>();
+        int consumed = 0;
+        for (Row r : perDocDropped) {
+            if (consumed < filled) { consumed++; continue; }
+            SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
+            stillDropped.merge(k, 1, Integer::sum);
+            samples.computeIfAbsent(k, x -> new java.util.ArrayList<>())
+                    .add("#" + r.docA() + "↔#" + r.docB());
+        }
+
         java.util.Map<SimilarityScorer.Kind, TierDetail> detail = new java.util.LinkedHashMap<>();
         for (var e : c.entrySet()) {
             int[] v = e.getValue();
-            detail.put(e.getKey(), new TierDetail(v[0], v[1], v[2], v[3], v[4],
+            detail.put(e.getKey(), new TierDetail(v[0], shownNow.getOrDefault(e.getKey(), 0),
+                    stillDropped.getOrDefault(e.getKey(), 0), v[3], v[4],
                     samples.getOrDefault(e.getKey(), java.util.List.of())));
         }
-        return new Selection(java.util.List.copyOf(selected), detail);
+        return new Selection(java.util.List.copyOf(selected), detail, filled);
     }
 
     /** 阈值是否落在允许区间（NaN 一律无效） */

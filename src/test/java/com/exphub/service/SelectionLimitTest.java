@@ -86,13 +86,38 @@ class SelectionLimitTest {
         all.add(row(SimilarityScorer.Kind.SERIES, 65, 68, 0.48));
         all.sort(SimilarityService.Row.order());
 
+        // limit 宽松 → 严格限流先挤掉 1 条，但**名额有余就补回来**（2026-10-26 03:01 越哥要求）
         SimilarityService.Selection sel = SimilarityService.select(all, 50, 2);
         SimilarityService.TierDetail dup = sel.detail().get(SimilarityScorer.Kind.DUPLICATE);
         SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
         assertEquals(1, dup.shown(), "①层照旧全部展示");
-        assertEquals(2, ser.shown(), "②层恢复 per-doc：单篇最多 2 条，#68 只允许出现两次");
-        assertEquals(1, ser.droppedPerDoc(), "第 3 条（#65↔#68）应被挤掉并点名");
-        assertEquals(1, ser.droppedSamples().size(), "挤掉的要点名：" + ser.droppedSamples());
+        assertEquals(3, ser.shown(), "名额有余，#65↔#68 被补回：三条都展示");
+        assertEquals(0, ser.droppedPerDoc(), "补回后不该再算「被挤掉」");
+        assertEquals(1, sel.filledPerDoc(), "要如实报「1 条原本被 per-doc 挤掉、已补回」");
+    }
+
+    /**
+     * 名额真用完时，per-doc 挤掉的仍然要如实报（补位只在有余量时发生）。
+     *
+     * <p>否则「补位」会把 per-doc 变成摆设：一旦有空位就全放进来，
+     * 那就等于没限流 —— 限流的本意是防同族刷屏，只在「宁可空着」时才不生效。
+     */
+    @Test
+    void perDocDropStillReportedWhenListIsFull() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        all.add(row(SimilarityScorer.Kind.SERIES, 74, 85, 0.62));
+        all.add(row(SimilarityScorer.Kind.SERIES, 74, 79, 0.61));
+        all.add(row(SimilarityScorer.Kind.SERIES, 74, 81, 0.60));   // per-doc 挤掉
+        all.add(row(SimilarityScorer.Kind.SERIES, 77, 83, 0.59));
+        all.add(row(SimilarityScorer.Kind.SERIES, 78, 84, 0.58));
+        all.sort(SimilarityService.Row.order());
+
+        SimilarityService.Selection sel = SimilarityService.select(all, 4, 2);   // 只有 4 个名额
+        SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
+        assertEquals(4, ser.shown(), "4 个名额全用满");
+        assertEquals(1, ser.droppedPerDoc(), "名额已满，#74↔#81 只能如实报被挤掉");
+        assertEquals(0, sel.filledPerDoc(), "没余量就不补位");
+        assertTrue(ser.droppedSamples().contains("#74↔#81"), "要点名：" + ser.droppedSamples());
     }
 
     /**
@@ -129,16 +154,12 @@ class SelectionLimitTest {
 
         SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
         assertEquals(4, ser.above());
-        assertEquals(3, ser.shown(), "#74 挂 3 对，per-doc=2 → 前 2 条过，#74↔#81 被挤掉；#77↔#83 正常展示");
-        assertEquals(1, ser.droppedPerDoc(), "只掉了 #74↔#81 这一对");
-        assertTrue(ser.hasDrop());
+        assertEquals(4, ser.shown(), "limit 宽松：per-doc 先挤掉 #74↔#81，随后因名额有余补回 → 4 条全展示");
+        assertEquals(1, sel.filledPerDoc(), "补回的条数要自证");
+        assertTrue(ser.hasDrop() || sel.filledPerDoc() > 0, "补位也是一种「差点没展示」，要能看出来");
 
-        // 挤掉的必须点名，不能只说「丢了几条」
-        SimilarityService.TierDetail detail = sel.detail().get(SimilarityScorer.Kind.SERIES);
-        assertTrue(detail.droppedSamples().size() >= 1,
-                "被挤掉的对必须列出 ID，否则读的人不知道少了什么：" + detail);
-        assertTrue(detail.droppedSamples().get(0).startsWith("#74") || detail.droppedSamples().get(0).startsWith("#77"),
-                "样本格式应为 #A↔#B：" + detail.droppedSamples());
+        // 注：真正「被挤掉并点名」的场景由 perDocDropStillReportedWhenListIsFull 覆盖 ——
+        // 名额充裕时这些对会被补回，droppedSamples 自然为空，不能在这条里断。
     }
 
     @Test
