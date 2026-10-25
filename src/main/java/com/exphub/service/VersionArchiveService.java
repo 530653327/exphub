@@ -246,6 +246,33 @@ public class VersionArchiveService {
                 .eq("doc_id", docId).eq("version", version).orderByAsc("id"));
     }
 
+    /**
+     * 归档侧的「条数 + 最大版本号」—— 只给导读拼一句话用。
+     *
+     * <p>为什么不复用 {@link #listArchived}（2026-10-26 01:5x）：
+     * 它把 59 条**正文全文**一起查出来，而 {@code get_experience_detail} 每次读文档都要拼导读 ——
+     * 为了显示一个数字把几万字的快照拉进内存，属于明显的浪费。
+     * 只要两个数就写只要两个数的查询。
+     */
+    public ArchivedSummary archivedSummary(Long docId) {
+        if (docId == null) return new ArchivedSummary(0, 0);
+        QueryWrapper<DocVersionArchive> c = new QueryWrapper<>();
+        c.eq("doc_id", docId);
+        long rows = archiveMapper.selectCount(c);
+
+        QueryWrapper<DocVersionArchive> m = new QueryWrapper<>();
+        m.select("MAX(version) AS v").eq("doc_id", docId);
+        List<Map<String, Object>> maps = archiveMapper.selectMaps(m);
+        int max = 0;
+        if (!maps.isEmpty() && maps.get(0).get("v") != null) {
+            max = ((Number) maps.get(0).get("v")).intValue();
+        }
+        return new ArchivedSummary(rows, max);
+    }
+
+    /** 归档侧概览：{@code rows} = 归档条数，{@code maxVersion} = 归档里最大的版本号 */
+    public record ArchivedSummary(long rows, int maxVersion) {}
+
     /** 该文档有没有任何归档记录（用于区分「从未归档」与「版本号本身不存在」） */
     public boolean hasAnyArchived(Long docId) {
         if (docId == null) return false;

@@ -187,15 +187,36 @@ public class ExpHubTools {
         sb.append("\n---\n\n");
 
         // 📚 历史导读：有历史版本时自动引导 AI 查看历史版本了解来龙去脉
+        //
+        // ⚠️ 2026-10-26 01:5x 阁主实测指出：这里原来只查主表 doc_versions（归档后只剩 14 条），
+        // 于是导读写成「共保存 14 个历史版本（v1 ~ v73）」—— **括号内外自相矛盾**，
+        // 还把已搬去冷存档的 59 版说没了，读者先看导读会以为这文档只有 14 版。
+        // 病根：列表（get_experience_history / list_archived_versions）早就合并归档了，
+        // **导读没合并** —— 同一个事实的两个出口，改一个必须回头查另一个。
         List<DocVersion> versions = docService.getVersions(id);
-        if (!versions.isEmpty()) {
-            sb.append("> 📚 **历史导读**：本文档经历多次迭代，当前为 v").append(doc.getVersion())
-              .append("，共保存 ").append(versions.size()).append(" 个历史版本（v1 ~ v")
-              .append(doc.getVersion() - 1).append("）。\n");
+        VersionArchiveService.ArchivedSummary arc = versionArchiveService.archivedSummary(id);
+        int total = versions.size() + (int) arc.rows();
+        if (total > 0) {
+            int maxV = arc.maxVersion();
+            for (DocVersion v : versions) {
+                if (v.getVersion() != null) maxV = Math.max(maxV, v.getVersion());
+            }
+            sb.append("> 📚 **历史导读**：本文档当前为 v").append(doc.getVersion());
+            if (arc.rows() > 0) {
+                sb.append("，**历史版本共 ").append(total).append(" 条（v1 ~ v").append(maxV)
+                  .append("）**：主表 ").append(versions.size()).append(" 条、冷存档 ")
+                  .append(arc.rows()).append(" 条");
+            } else {
+                sb.append("，共保存 ").append(total).append(" 个历史版本（v1 ~ v").append(maxV).append("）");
+            }
+            sb.append("。\n");
             sb.append("> 如需了解本文档的**来龙去脉、演进过程或历史解决方案**，请调用\n");
-            sb.append("> `get_experience_history(id=").append(id).append(")` 查看历史版本列表；\n");
-            sb.append("> `get_experience_history(id=").append(id).append(", version=版本号)` 查看指定版本完整内容（如 version=1 可看最初版本）。\n\n");
-            sb.append("---\n\n");
+            sb.append("> `get_experience_history(id=").append(id).append(")` 查看历史版本列表（**含冷存档**，会标注在哪个库）；\n");
+            sb.append("> `get_experience_history(id=").append(id).append(", version=版本号)` 查看指定版本完整内容（如 version=1 可看最初版本，**已归档的也能读**）。\n");
+            if (arc.rows() > 0) {
+                sb.append("> 只看冷存档清单：`list_archived_versions(id=").append(id).append(")`。\n");
+            }
+            sb.append("\n---\n\n");
         }
 
         // 超长内容分段输出。
