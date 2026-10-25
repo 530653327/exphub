@@ -54,6 +54,16 @@ public class Doc {
     // 与 flags 的关系：flags=superseded 表示「疑似被取代但不知道是谁」，
     // superseded_by 一旦有值就是确定关系，展示时以它为准。
     private Long supersededBy;       // 取代本条的文档 ID，NULL=未被取代
+    // ===== 取代关系留痕（2026-10-26）=====
+    // 为什么补这两列：阁主实测发现 clear_superseded 回执有「操作人」，
+    // mark_superseded 一个字都没有。根源不是忆阁（那两个工具都是直接透传），
+    // 而是 DocService.markSuperseded 把 by 只写了日志、既没落库也没进回执。
+    // 三兄弟留痕形态必须一致：
+    //   set_flags        → flag_marked_by / flag_marked_at
+    //   mark_for_deletion → delete_marked_by / delete_marked_at
+    //   mark_superseded  → superseded_marked_by / superseded_marked_at  ← 本次补
+    private String supersededMarkedBy;   // 标记取代关系的操作人
+    private LocalDateTime supersededMarkedAt; // 标记取代关系的时间
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

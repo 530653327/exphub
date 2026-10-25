@@ -1101,12 +1101,20 @@ public class DocService {
     /**
      * 标记「id 被 byId 取代」。
      *
-     * <p>只写 superseded_by 一列：<b>不动 version、不写版本快照、不动 updated_at</b>。
+     * <p>只写 superseded_by + 操作人留痕两列：<b>不动 version、不写版本快照、不动 updated_at</b>。
      * 关系变更属元信息，跟 set_flags 是同一类操作 —— 整理动作不该产生版本垃圾。
+     *
+     * <p>⚠️ <b>2026-10-26 修</b>：原来只 set superseded_by，参数 {@code by} 只进了日志。
+     * 后果是「这条谁标成被取代的」查不出来（日志会轮转），而且与另外两个留痕工具不对称：
+     * <pre>
+     *   set_flags        → flag_marked_by   + 回执显示
+     *   mark_for_deletion → delete_marked_by + 回执显示
+     *   mark_superseded  → （无）            ← 本次补齐
+     * </pre>
      *
      * @param id   被取代的旧条
      * @param byId 取代它的新条
-     * @param by   操作人（助手代号），写日志用
+     * @param by   操作人（助手代号）—— 落库 + 回执 + 日志三处都要有
      */
     @Transactional
     public SupersedeResult markSuperseded(Long id, Long byId, String by) {
@@ -1135,7 +1143,11 @@ public class DocService {
         }
 
         UpdateWrapper<Doc> uw = new UpdateWrapper<>();
-        uw.eq("id", id).set("superseded_by", byId);
+        uw.eq("id", id)
+          .set("superseded_by", byId)
+          // 留痕：谁标的时间何时。不写这两列 = 事后无法追责也无法确认是否误标
+          .set("superseded_marked_by", by)
+          .set("superseded_marked_at", LocalDateTime.now());
         docMapper.update(null, uw);
         callLogService.logUpdate(old);
         log.info("markSuperseded: doc={} supersededBy={} by={}", id, byId, by);
@@ -1144,13 +1156,24 @@ public class DocService {
 
     /** 撤销取代关系。只清指针，不动正文与状态。 */
     @Transactional
+    /**
+     * 撤销取代关系。
+     *
+     * <p>⚠️ 2026-10-26：撤销时**必须把留痕也清掉**。
+     * 否则会出现「superseded_by = NULL 但 superseded_marked_by = 某人」的僵尸记录 ——
+     * 下次有人看到那两列会以为关系还在，或者以为「某人标过但记录丢了」。
+     * 元信息要么完整存在、要么完全不存在，不留半截。
+     */
     public Doc clearSuperseded(Long id) {
         Doc doc = docMapper.selectById(id);
         if (doc == null) {
             return null;
         }
         UpdateWrapper<Doc> uw = new UpdateWrapper<>();
-        uw.eq("id", id).set("superseded_by", null);
+        uw.eq("id", id)
+          .set("superseded_by", null)
+          .set("superseded_marked_by", null)
+          .set("superseded_marked_at", null);
         docMapper.update(null, uw);
         log.info("clearSuperseded: doc={}", id);
         return docMapper.selectById(id);

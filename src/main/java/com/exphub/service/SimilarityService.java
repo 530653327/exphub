@@ -127,6 +127,23 @@ public class SimilarityService {
         }
     }
 
+    /**
+     * 扫描结果。
+     *
+     * <p>⚠️ <b>2026-10-26 修</b>：{@code tierStats} 统计的是**限流前全部超阈值对**，
+     * 与 {@code rows}（限流后展示的那批）不是同一个集合。
+     *
+     * <p>为什么必须分开（阁主实测发现）：原来分层统计直接对 {@code rows} 数个数，
+     * 于是同一阈值下 limit 一改结论就变 ——
+     * <pre>
+     *   limit=12 → 字面重复 4 ｜ 演进链 8            （进度层 36 对整层消失）
+     *   limit=50 → 字面重复 4 ｜ 演进链 10 ｜ 进度 36
+     * </pre>
+     * 下一个人用默认 limit 一跑，会以为进度降级失效了。
+     * <b>统计必须反映全库事实，限流只该影响「这次显示几条」。</b>
+     *
+     * @param tierStats 全量超阈值对的分层计数（key = Kind），与 rows 无关
+     */
     public record ScanResult(boolean ok,
                              String summary,
                              double threshold,
@@ -141,6 +158,7 @@ public class SimilarityService {
                              int alreadyPending,
                              int alreadyResolved,
                              List<Row> rows,
+                             java.util.Map<SimilarityScorer.Kind, Integer> tierStats,
                              List<String> notes) {}
 
     // ==================== L0：写入查重 ====================
@@ -234,7 +252,7 @@ public class SimilarityService {
         double th = (threshold == null) ? DEFAULT_THRESHOLD : threshold;
         if (!isThresholdValid(th)) {
             return new ScanResult(false, thresholdRejectMessage(threshold, th), DEFAULT_THRESHOLD, dryRun,
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), List.of());
         }
         int maxRows = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
         int perDoc = (maxPerDoc == null || maxPerDoc < 1) ? 2 : Math.min(maxPerDoc, 10);
@@ -246,7 +264,7 @@ public class SimilarityService {
                 Project p = projectService.getProject(projectId);
                 if (p == null) {
                     return new ScanResult(false, "未找到项目 " + projectId + "，或你没有访问权限", th, dryRun,
-                            0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), List.of());
                 }
                 scopes.add(indexOf(projectId));
             } else if (projectId != null && projectId == 0) {
@@ -260,7 +278,7 @@ public class SimilarityService {
         } catch (Exception e) {
             log.error("SimilarityService.scan: 建索引失败", e);
             return new ScanResult(false, "建立索引失败：" + e.getClass().getSimpleName() + " - " + e.getMessage(),
-                    th, dryRun, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+                    th, dryRun, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), List.of());
         }
 
         int docs = 0, skippedShort = 0, skippedSuperseded = 0;
@@ -287,6 +305,15 @@ public class SimilarityService {
         // 先分层再比分数：正文有重合（疑似真重复）的排前面，只有标题标签像的排后面。
         // 实测教训：单按分数排，0 行重合的演进链 0.62 会压住 33 行重合的真重复 0.51。
         above.sort(Row.order());
+
+        // 全量分层统计：**必须基于限流前的 above**，不能基于最终 rows。
+        // 阁主实测发现：原来按 rows 数个数，limit=12 时进度层 36 对整层消失，
+        // 同一阈值下改个 limit 结论就变，下个人会以为降级失效。
+        Map<SimilarityScorer.Kind, Integer> tierStats = new java.util.LinkedHashMap<>();
+        for (Row r : above) {
+            SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
+            tierStats.merge(k, 1, Integer::sum);
+        }
 
         // ⚠️ 索引是缓存（3 分钟），期间被删掉的文档仍会出现在 pairs 里。
         // 线上实测踩到：8 条结果里 4 条是已删文档，占满名额把真候选挤到后面 ——
@@ -372,7 +399,7 @@ public class SimilarityService {
                 + SimilarityScorer.Score.fmt(th) + " 共 " + above.size() + " 对"
                 + (dropped > 0 ? "，限流后取前 " + selected.size() + " 对" : "");
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
-                above.size(), dropped, enqueued, pending, resolved, rowsOut, notes);
+                above.size(), dropped, enqueued, pending, resolved, rowsOut, tierStats, notes);
     }
 
     /** 阈值是否落在允许区间（NaN 一律无效） */

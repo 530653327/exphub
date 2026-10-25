@@ -1673,7 +1673,10 @@ public class ExpHubTools {
             sb.append("**取代者**: #").append(byId).append("「")
               .append(rep != null ? abbreviate(rep.getTitle(), 50) : "?").append("」\n");
             sb.append("**版本**: v").append(updated.getVersion()).append("（未变）｜")
-              .append("**版本快照**: 未产生（本工具只写关系，不写版本表）\n\n");
+              .append("**版本快照**: 未产生（本工具只写关系，不写版本表）\n");
+            // ⚠️ 2026-10-26：clear_superseded 一直显示操作人、mark_superseded 不显示 ——
+            // 阁主实测指出这个不对称。现在两边都输出，且 by 已落库到 superseded_marked_by
+            sb.append("**操作人**: ").append(by).append("\n\n");
             sb.append("检索与详情现在会在 #").append(id).append(" 上显示「⛔ 已被 #")
               .append(byId).append(" 取代」。原文完整保留，随时可 clear_superseded 撤销。");
             return sb.toString();
@@ -1950,7 +1953,7 @@ public class ExpHubTools {
         };
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。结果按性质分层（疑似字面重复 / 同话题演进链 / 信息不足），**层内才按分数排** —— 只看分数会把最该判的那对埋掉。建议先 dryRun=true 看清单再决定是否入队。")
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。结果按性质分层（疑似字面重复 / 同话题演进链 / 进度日志记录 / 信息不足），**层内才按分数排** —— 只看分数会把最该判的那对埋掉。⚠️ 分层统计基于**全部超阈值对**，不受 limit 影响（limit 只决定这次展示几条）；所以别用「改 limit 后进度层不见了」判断降级是否生效。建议先 dryRun=true 看清单再决定是否入队。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）。允许区间 [0.30, 0.95]，**超出区间会被直接拒绝并说明收到了多少**（不再静默改成 0.30 —— 静默修改会让「参数没生效」这种链路问题查不出来）", required = false) Double threshold,
@@ -1985,17 +1988,28 @@ public class ExpHubTools {
             if (r.rows().isEmpty()) {
                 sb.append("\n📭 没有超过阈值的候选对。阈值可以调到 0.45 再看一次，或用 add_review_candidate 手工入队。\n");
             } else {
-                // 分层统计：让人一眼看出「有几条真该判 duplicate，有几条只是同话题」
-                long dup = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.DUPLICATE).count();
-                long ser = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.SERIES).count();
-                long unk = r.rows().stream().filter(x -> x.kind() == SimilarityScorer.Kind.UNKNOWN
-                        || x.kind() == null).count();
-                long prog = r.rows().size() - dup - ser - unk;
-                sb.append("\n**按性质分层**（正文有重合的排前面，不按分数混排）：")
+                // 分层统计必须用**全量**（r.tierStats，限流前的全部超阈值对），不能用 r.rows()。
+                // 阁主实测发现：按 rows 数个数时，limit=12 下进度层 36 对整层消失，
+                // 同一阈值改个 limit 结论就变 → 下个人会以为降级失效。
+                int dup = r.tierStats().getOrDefault(SimilarityScorer.Kind.DUPLICATE, 0);
+                int ser = r.tierStats().getOrDefault(SimilarityScorer.Kind.SERIES, 0);
+                int unk = r.tierStats().getOrDefault(SimilarityScorer.Kind.UNKNOWN, 0);
+                int prog = r.tierStats().getOrDefault(SimilarityScorer.Kind.PROGRESS, 0);
+
+                sb.append("\n**按性质分层**（统计的是**全部超阈值对**，与下面展示几条无关）：")
                   .append("疑似字面重复 ").append(dup).append(" 对")
                   .append("｜同话题演进链 ").append(ser).append(" 对");
-                if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
                 if (prog > 0) sb.append("｜进度/日志记录 ").append(prog).append(" 对（一般不用判）");
+                if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
+
+                // 本次只展示前 N 条：说清「分层统计」和「展示清单」是两个口径，
+                // 否则改 limit 会让人以为分层结论变了
+                if (r.droppedByCap() > 0) {
+                    sb.append("\n　本次展示前 ").append(r.rows().size()).append(" 条（limit=")
+                      .append(r.rows().size()).append("），另有 ").append(r.droppedByCap())
+                      .append(" 条超阈值但被限流截掉 —— **分层数字不受 limit 影响**，")
+                      .append("调大 limit 只是让更多条进清单，不会改变上面的统计");
+                }
                 sb.append("\n\n");
                 int i = 1;
                 SimilarityScorer.Kind last = null;
