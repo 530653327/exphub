@@ -1680,11 +1680,8 @@ public class ExpHubTools {
             sb.append(r.created() ? "✅ " : "ℹ️ ").append(r.message()).append("\n\n");
             sb.append("**入库值核对**\n");
             sb.append("- 候选 ID: ").append(r.candidate().getId()).append("\n");
-            sb.append("- 相似度: ").append(ReviewCandidateService.formatScore(r.candidate().getScore()));
-            if (r.candidate().getScore() == null) {
-                sb.append("（未记录）");
-            }
-            sb.append("\n");
+            // formatScore 已经把 null 渲染成「未记录」，这里不要再拼一次括号
+            sb.append("- 相似度: ").append(ReviewCandidateService.formatScore(r.candidate().getScore())).append("\n");
             String discard = ReviewCandidateService.scoreDiscardReason(score);
             if (discard != null) {
                 sb.append("- ⚠️ 得分未入库：").append(discard).append("\n");
