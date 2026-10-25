@@ -519,12 +519,22 @@ public class ExpHubTools {
             sb.append("（**这是最后一段**）\n");
         } else {
             sb.append("（**还有后续**）\n");
-            sb.append("\n> 继续读下一段：`get_experience_history(id=").append(id);
-            if (version != null) sb.append(", version=").append(version);
+            // ⚠️ 指引必须指向**当前这个工具**，不能写死 get_experience_history。
+            // 2026-10-26 阁主实测：从 get_experience_detail 读到的续读指引写的是
+            // `get_experience_history(id=654, version=66, offset=20000)` ——
+            // 虽然能走通（version 等于当前版本时 history 会返回当前正文），
+            // 但**指引与入口不一致**，读的人会以为 detail 自己不能分段，
+            // 进而怀疑 detail 的 offset 是摆设（而它确实是好的）。
+            // 「让调用方绕道」不是错，但**回执不能给出与入口不匹配的指令**。
+            sb.append("\n> 继续读下一段：`").append(detailTool).append("(id=").append(id);
+            // 只有读历史版本时才带 version —— detail 不认识这个参数，多传会让人误解
+            if (version != null && doc != null && !version.equals(doc.getVersion())) {
+                sb.append(", version=").append(version);
+            }
             sb.append(", offset=").append(to).append(")`\n");
             sb.append("> 反复照抄回执里的 offset 续读，直到显示「这是最后一段」。\n");
-            sb.append("> ⚠️ 不要用 `export_document` 代替 —— 它只接受 id、不能指定版本，")
-              .append("导出的是当前正文而不是这个历史版本。\n");
+            sb.append("> ⚠️ 不要用 `export_document` 代替 —— 它只接受 id、不能指定版本、也不分段：")
+              .append("读历史版本会导出当前正文，长文档只能整块吐。\n");
         }
         if (version != null && version.equals(doc != null ? doc.getVersion() : null)) {
             sb.append("\n> 也可用 `").append(detailTool).append("(id=").append(id)
@@ -832,6 +842,16 @@ public class ExpHubTools {
     /** 列表类工具的默认/最大条数（E6）：默认 10 条省 token，需要全量走 offset 翻页 */
     private static final int LIST_DEFAULT_SIZE = 10;
     private static final int LIST_MAX_SIZE = 50;
+
+    /**
+     * 归档版本清单每页条数（2026-10-26）。
+     *
+     * <p>取 40：一篇 55 版的文档约 4200 字符，40 条约 3000 字符 ——
+     * 留在转发层通用截断上限（3500）以内，**自己就不会被剪**。
+     * 剪掉的风险不只是少几行：转发层兜底文案会建议「改用 export_document」，
+     * 而那个工具**根本列不出归档清单**，等于给了一条死路。
+     */
+    private static final int ARCHIVE_LIST_PAGE = 40;
 
     /**
      * 列表里的摘要：压到 60 字并折叠换行。
@@ -3133,7 +3153,9 @@ public class ExpHubTools {
                   + "也给「这篇以前某一版写的是什么」提供回查入口。")
     public String listArchivedVersions(
             @ToolParam(description = "必填。文档 ID") Long id,
-            @ToolParam(description = "可选。是否输出正文片段（默认 false 只列版本号与时间，避免刷屏）", required = false) Boolean withPreview) {
+            @ToolParam(description = "可选。是否输出正文片段（默认 false 只列版本号与时间，避免刷屏）", required = false) Boolean withPreview,
+            @ToolParam(description = "可选。从第几条开始列（默认 0）。版本很多时用回执里的「下一段 offset」续读，"
+                    + "不要用 export_document 代替 —— 它只导当前正文，不列归档清单。", required = false) Integer offset) {
         try {
             List<DocVersionArchive> list = versionArchiveService.listArchived(id);
             StringBuilder sb = new StringBuilder();
@@ -3142,11 +3164,25 @@ public class ExpHubTools {
                 sb.append("该文档没有归档版本（要么从没归档过，要么版本数没超过保留窗口）。\n");
                 return sb.toString();
             }
-            sb.append("**共 ").append(list.size()).append(" 版**（按版本号升序）\n\n");
+            // 分页：默认每段 40 条。
+            //
+            // ⚠️ 2026-10-26 阁主实测：55 版输出 4194 字符，被**忆阁**的通用截断器按 3500 切掉，
+            // 而它的兜底文案是「需要完整内容请改用 export_document 按 ID 单独读取」——
+            // **对归档清单是死路**：export_document 只导当前正文，一条归档记录都不列。
+            // 这跟修 v44 单版本读取时那处错误一模一样，**上次只修了单版本，列表这条漏了**。
+            // 所以这里自己分段：既不会撞上转发层的上限，也不会把指引指向做不到的工具。
+            int total = list.size();
+            int from = (offset == null || offset < 0) ? 0 : Math.min(offset, total);
+            int to = Math.min(from + ARCHIVE_LIST_PAGE, total);
+            boolean hasMore = to < total;
+
+            sb.append("**共 ").append(total).append(" 版**（按版本号升序");
+            if (from > 0 || hasMore) sb.append("，本段第 ").append(from + 1).append("–").append(to).append(" 条");
+            sb.append("）\n\n");
             sb.append("| 版本 | 原创建时间 | 归档时间 | 归档人 | 变更类型 | 正文字数 |\n");
             sb.append("|---|---|---|---|---|---|\n");
             boolean preview = Boolean.TRUE.equals(withPreview);
-            for (DocVersionArchive a : list) {
+            for (DocVersionArchive a : list.subList(from, to)) {
                 sb.append("| v").append(a.getVersion()).append(" | ")
                   .append(a.getCreatedAt() == null ? "-" : a.getCreatedAt().toString().replace('T', ' ')).append(" | ")
                   .append(a.getArchivedAt() == null ? "-" : a.getArchivedAt().toString().replace('T', ' ')).append(" | ")
@@ -3156,7 +3192,7 @@ public class ExpHubTools {
             }
             if (preview) {
                 sb.append("\n---\n**正文片段**（前 200 字）\n");
-                for (DocVersionArchive a : list) {
+                for (DocVersionArchive a : list.subList(from, to)) {
                     sb.append("\n**v").append(a.getVersion()).append("**");
                     if (a.getContent() == null) {
                         sb.append("（仅元数据变更，原文未存）\n");
@@ -3165,6 +3201,13 @@ public class ExpHubTools {
                     }
                 }
             }
+            if (hasMore) {
+                sb.append("\n> 📖 还有 ").append(total - to).append(" 版没列。继续读：`list_archived_versions(id=")
+                  .append(id).append(", offset=").append(to).append(")`\n");
+                sb.append("> ⚠️ 不要用 `export_document` 代替 —— 它只导当前正文，**不列归档清单**。\n");
+            }
+            sb.append("\n> 要看某一版的**完整正文**：`get_experience_history(id=").append(id)
+              .append(", version=版本号)`（支持 offset 分段，归档版本可原样读回）。\n");
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.listArchivedVersions: FAILED", e);
