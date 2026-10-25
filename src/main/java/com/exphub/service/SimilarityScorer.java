@@ -124,6 +124,90 @@ public final class SimilarityScorer {
      */
     public static final int MIN_LINES_RATIO_FOR_SUBSET = 4;
 
+    private static final java.util.regex.Pattern DATE_FULL =
+            java.util.regex.Pattern.compile("(\\d{4})[-/年](\\d{1,2})[-/月](\\d{1,2})日?");
+    private static final java.util.regex.Pattern DATE_MD =
+            java.util.regex.Pattern.compile("(?<!\\d)(\\d{1,2})[-/月](\\d{1,2})日?(?!\\d)");
+    private static final java.util.regex.Pattern NUM_TOKEN =
+            java.util.regex.Pattern.compile("([\\p{IsHan}A-Za-z]{0,2})(\\d{1,3})");
+
+    /** 标题里的日期标记，统一成 MM-DD；同一天的不同写法（10月23日 / 10-23 / 2026-10-23）视为同一个 */
+    static java.util.Set<String> dateMarks(String title) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (title == null || title.isBlank()) return out;
+        java.util.regex.Matcher f = DATE_FULL.matcher(title);
+        StringBuilder rest = new StringBuilder();
+        int last = 0;
+        while (f.find()) {
+            out.add(pad(f.group(2)) + "-" + pad(f.group(3)));
+            rest.append(title, last, f.start()).append(' ');
+            last = f.end();
+        }
+        rest.append(title.substring(last));
+        java.util.regex.Matcher m = DATE_MD.matcher(rest);
+        while (m.find()) {
+            String md = pad(m.group(1)) + "-" + pad(m.group(2));
+            // 只有像月份、日期的才收（避免把 2-3 这种随手写的数字当日期）
+            int mm = Integer.parseInt(m.group(1)), dd = Integer.parseInt(m.group(2));
+            if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) out.add(md);
+        }
+        return out;
+    }
+
+    /** 标题里的编号标记（地图1 / 地图2 / v3 / 第2版）—— 已剔掉日期部分，避免 10-23 被拆成 10 和 23 */
+    static java.util.Set<String> numberMarks(String title) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (title == null || title.isBlank()) return out;
+        String stripped = DATE_FULL.matcher(title).replaceAll(" ");
+        stripped = DATE_MD.matcher(stripped).replaceAll(" ");
+        java.util.regex.Matcher m = NUM_TOKEN.matcher(stripped);
+        while (m.find()) {
+            String prefix = m.group(1).trim();
+            // 纯数字（前面没有任何字）不当编号：那是页码、数量之类，分不清谁属于谁
+            if (prefix.isEmpty()) continue;
+            out.add(prefix + Integer.parseInt(m.group(2)));
+        }
+        return out;
+    }
+
+    private static String pad(String v) {
+        return v.length() >= 2 ? v : "0" + v;
+    }
+
+    /**
+     * 这一对是不是<b>并列的两份独立记录</b>（不是母集-子集）—— 只靠标题里的结构信号判。
+     *
+     * <p><b>为什么必须补这个排除项（2026-10-26 02:32 越哥实测，`[ ]` 第七版理由）</b>：
+     * 上一版刚加的「行数差 ≥4:1 → 很可能是母集-子集」把
+     * #548「10-23午餐实录」7 行 ↔ #558「10-24 全天饮食实录」54 行（约 8:1）
+     * 判成了母集，后面直接跟「把这 7 行并回母档、再清子页」——
+     * <b>那是两天的独立记录，照做就是把 10-23 的午餐并进 10-24 的记录里，日期都串了。</b>
+     *
+     * <p><b>行数比只说明「长短悬殊」，说明不了「谁属于谁」</b>。
+     * 结构能查出来的只有日期与编号；主体是否相同（两只宠物 / 两个专家）
+     * 只能靠人看标题 —— 所以回执里必须把这三项**一起**列成排除清单，而不是只报行数比。
+     *
+     * @return 检测到的差异（写进回执的人话），没检测到返回 null（= 仍需人工排除，不是「确认是母集」）
+     */
+    public static String siblingReason(String titleA, String titleB) {
+        if (titleA == null || titleB == null) return null;
+        java.util.Set<String> da = dateMarks(titleA), db = dateMarks(titleB);
+        if (!da.isEmpty() && !db.isEmpty() && java.util.Collections.disjoint(da, db)) {
+            return "标题里的日期不同（" + String.join(" / ", da) + " vs " + String.join(" / ", db) + "）";
+        }
+        java.util.Set<String> na = numberMarks(titleA), nb = numberMarks(titleB);
+        if (!na.isEmpty() && !nb.isEmpty() && java.util.Collections.disjoint(na, nb)) {
+            return "标题里的编号不同（" + String.join(" / ", na) + " vs " + String.join(" / ", nb) + "）";
+        }
+        return null;
+    }
+
+    /** 三项排除清单 —— 只报行数比的回执是不够的，必须把「哪些不同就算并列」摊开写 */
+    public static final String SIBLING_EXCLUSIONS =
+            "先按顺序排除三项：① **日期不同**（10-23 vs 10-24）② **编号不同**（地图1 vs 地图2、v2 vs v3）"
+            + "③ **主体不同**（两只宠物 / 两个专家 / 两天记录）—— "
+            + "**任何一项不同 = 并列记录，判 distinct，谁也别并、谁也别清**";
+
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
     public static final double W_CONTENT = 0.33;
@@ -333,7 +417,7 @@ public final class SimilarityScorer {
     public record Score(double total, double tag, double title, double content,
                         int sharedLines, int linesA, int linesB, boolean lineMode,
                         double lineCoverage, int sharedAllLines, int sharedAvgLen,
-                        boolean progressPair) {
+                        boolean progressPair, String titleA, String titleB) {
 
         /** 可读理由：人判断一对候选值不值得看，靠的就是这几行 */
         public String reason() {
@@ -429,7 +513,7 @@ public final class SimilarityScorer {
          * <b>一条建议只能有一个出处。</b>
          */
         public String diagnosis() {
-            return advice(kind(), sharedLines, lineCoverage, sharedAvgLen, linesA, linesB);
+            return advice(kind(), sharedLines, lineCoverage, sharedAvgLen, linesA, linesB, titleA, titleB);
         }
 
         public static String fmt(double v) {
@@ -516,6 +600,17 @@ public final class SimilarityScorer {
      */
     public static String advice(Kind kind, int sharedLines, double lineCoverage,
                                 int sharedAvgLen, int linesA, int linesB) {
+        return advice(kind, sharedLines, lineCoverage, sharedAvgLen, linesA, linesB, null, null);
+    }
+
+    /**
+     * @param titleA/titleB 两侧标题 —— 只有它能提供「日期 / 编号 / 主体」这类<b>结构身份信号</b>，
+     *                      而行数比恰恰判断不了「谁属于谁」（2026-10-26 02:32 越哥实测）。
+     *                      传 null 表示拿不到标题：此时<b>不许</b>下「母集-子集」的结论，只能给排除清单。
+     */
+    public static String advice(Kind kind, int sharedLines, double lineCoverage,
+                                int sharedAvgLen, int linesA, int linesB,
+                                String titleA, String titleB) {
         if (kind == null) return "";
         int ua = Math.max(0, linesA - sharedLines);
         int ub = Math.max(0, linesB - sharedLines);
@@ -535,14 +630,24 @@ public final class SimilarityScorer {
                     + "B 独有 " + ub + " 行（占 " + Score.pct(ob) + "）。\n"
                     + switch (shape) {
                         case TRUE_DUP -> "　→ 两侧独有都很少（整篇复制）：**可以判 duplicate**";
-                        case SUBSET -> "　→ 一侧几乎整篇在另一侧里（母集-子集）："
-                                + (oa <= ob ? "A" : "B") + " 侧独有仅 "
-                                + (oa <= ob ? ua : ub) + " 行（占 " + Score.pct(Math.min(oa, ob))
-                                + "），像另一侧的子页。\n　　"
-                                + Score.subsetAction(oa <= ob ? ua : ub);
+                        case SUBSET -> {
+                            String sib = siblingReason(titleA, titleB);
+                            if (sib != null) {
+                                yield "　→ 一侧几乎整篇在另一侧里，**但 " + sib + "** —— "
+                                        + "这是两份独立记录，**不是母集-子集**，别拿「被包含」当「该被取代」。\n"
+                                        + "　　**别判 duplicate，也别判 superseded**，判 **distinct**："
+                                        + "谁也别并、谁也别清（照母集-子集办就是把一份并进另一份）。";
+                            }
+                            yield "　→ 一侧几乎整篇在另一侧里（母集-子集）："
+                                    + (oa <= ob ? "A" : "B") + " 侧独有仅 "
+                                    + (oa <= ob ? ua : ub) + " 行（占 " + Score.pct(Math.min(oa, ob))
+                                    + "），像另一侧的子页。\n　　"
+                                    + Score.subsetAction(oa <= ob ? ua : ub);
+                        }
                         case PARALLEL -> "　→ 两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）："
                                 + "**别判 duplicate** —— 判了等于用其中一份取代另一份，一般判 distinct；"
-                                + "只有确认后者是前者同一件事的新阶段才 superseded";
+                                + "只有确认后者是前者同一件事的新阶段、且两侧不是不同日期/编号/主体，才 superseded"
+                                + "（确认不了就 distinct —— 别为了「收敛」硬判）";
                         case UNKNOWN -> "　→ 行口径不可用，形态分不出，人工读一眼再定";
                     };
             case SERIES -> {
@@ -559,11 +664,23 @@ public final class SimilarityScorer {
                             + "只有确认一侧确实是另一侧的新阶段才 superseded";
                 }
                 if (ratioSubset) {
-                    yield "**" + ratio + " —— 行数差得悬殊，很可能是母集-子集**，"
+                    // ⚠️ 行数比只说明「长短悬殊」，说明不了「谁属于谁」（2026-10-26 02:32 越哥实测：
+                    // #548「10-23午餐实录」7 行 ↔ #558「10-24 全天饮食实录」54 行 被判成母集，
+                    // 而那是两天的独立记录 —— 照做就是把 10-23 的午餐并进 10-24）。
+                    String sib = siblingReason(titleA, titleB);
+                    if (sib != null) {
+                        yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
+                                + "这是两份独立记录，**不是母集-子集**（行数比只说明长短，说明不了谁属于谁）。\n　　"
+                                + "**判 distinct**：谁也别并、谁也别清 —— 照母集-子集办"
+                                + "就是把一份的内容并进另一份里，等于把日期/编号弄混。";
+                    }
+                    yield "**" + ratio + " —— 长短悬殊，但行数比只说明长短，说明不了谁属于谁**，"
                             + "而正文 " + sharedLines + " 行重合（没有任何逐行内容证据，"
-                            + "但短的那篇可能整篇被长的那篇包住）。\n　　"
+                            + "短的那篇可能整篇被长的那篇包住，也可能只是碰巧短）。\n　　"
+                            + SimilarityScorer.SIBLING_EXCLUSIONS + "。\n　　"
+                            + "三项都相同、且打开长的那篇确认短那篇内容已全在里面，才按母集-子集办："
                             + Score.subsetAction(small)
-                            + "。（判之前先打开长的那篇，看短那篇的内容是否已经全在里面）";
+                            + "\n　　（三项没排除干净 = 拿不准，**判 distinct 不会丢任何东西**）";
                 }
                 yield "**只有标签/标题像**（" + ratio + "，正文 " + sharedLines + " 行重合 —— "
                         + "没有任何内容证据）：可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
@@ -684,7 +801,7 @@ public final class SimilarityScorer {
         // 两侧都是进度/日志类 → 这一对天然是同一件事的分阶段记录（见 Kind.PROGRESS）
         boolean progressPair = isProgressType(a.templateType()) && isProgressType(b.templateType());
         return new Score(total, tag, title, content, shared, ca.size(), cb.size(), lineMode,
-                coverage, sharedAll, avgLen, progressPair);
+                coverage, sharedAll, avgLen, progressPair, a.title(), b.title());
     }
 
     /** template_type 是否属于「进度 / 日志」类 */

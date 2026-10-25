@@ -173,6 +173,56 @@ class AdviceShapeTest {
         assertFalse(d.contains("大概率"), d);
     }
 
+    /**
+     * 🔴 硬反例 #548 ↔ #558：行数比 8:1 但它们是<b>两天的独立记录</b>（2026-10-26 02:32 越哥实测）。
+     *
+     * <p>上一版把「行数差 ≥4:1」直接当母集-子集，还跟了「把这 7 行并回母档、再清子页」——
+     * 照做就是把 10-23 的午餐并进 10-24 的记录里，<b>日期都串了</b>。
+     * 行数比只说明「长短悬殊」，说明不了「谁属于谁」。
+     */
+    @Test
+    void differentDatesAreSiblingsNotSubset() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 7, 54,
+                "10-23午餐实录", "10-24 全天饮食实录");
+        assertTrue(d.contains("日期不同"), "标题日期不同要点名：" + d);
+        assertTrue(d.contains("不是母集-子集"), "必须直接否掉这个结论：" + d);
+        assertTrue(d.contains("判 distinct"), "落点必须是 distinct：" + d);
+        assertFalse(d.contains("并回母档"),
+                "两份独立记录绝不能给「并回母档」这种动作 —— 那是把一天的记录并进另一天：" + d);
+        assertFalse(d.contains("也别判 superseded"), "既然不是母集，就别套母集的建议：" + d);
+    }
+
+    /** 编号不同（地图1 vs 地图2）同样按并列处理，不套母集动作 */
+    @Test
+    void differentNumbersAreSiblingsNotSubset() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 10, 120,
+                "中央平原地图1提示词（平原入口）", "中央平原地图2提示词（花田小径）");
+        assertTrue(d.contains("编号不同"), d);
+        assertTrue(d.contains("判 distinct"), d);
+        assertFalse(d.contains("并回母档"), "不同编号的两个子页不是母集关系：" + d);
+    }
+
+    /** 检测不出差异时，不能直接下母集结论 —— 必须给出三项排除清单 */
+    @Test
+    void whenTitlesShowNoDifferenceMustListExclusionsNotConclude() {
+        // #514 个人档案 120 行 ↔ #542 个人档案补充 5 行：标题里没有日期/编号差异
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5,
+                "史越 个人档案", "史越个人档案补充：家庭、饮食偏好与饮茶习惯");
+        assertTrue(d.contains("排除三项"), "没检测到差异 = 把排除清单摊开让人判：" + d);
+        assertTrue(d.contains("日期") && d.contains("编号") && d.contains("主体"),
+                "三项都要列出来（日期/编号/主体）：" + d);
+        assertTrue(d.contains("母集-子集"), d);
+        assertTrue(d.contains("并回母档"), "确认后才给母集动作：" + d);
+        assertTrue(d.contains("distinct"), d);
+    }
+
+    /** 拿不到标题时（6 参重载）不许下母集结论，只给排除清单 */
+    @Test
+    void withoutTitlesMustNotConcludeSubset() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5);
+        assertTrue(d.contains("排除三项"), "没有标题就判不了归属，必须退回排除清单：" + d);
+    }
+
     /** 行数差不悬殊时不许乱扣「母集-子集」的帽子 */
     @Test
     void balancedLineCountsAreNotCalledSubset() {
