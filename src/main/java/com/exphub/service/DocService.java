@@ -684,41 +684,30 @@ public class DocService {
 
     @Transactional
     public Doc update(Long id, Doc newDoc) {
+        return update(id, newDoc, java.util.Set.of());
+    }
+
+    /**
+     * 更新文档（支持显式清空字段）。
+     *
+     * <p>A2：{@code newDoc} 里为 null 的字段一律「不改」，这是向后兼容的老约定
+     * （调用方传空串也走不到这里，ExpHubTools 层已过滤）。
+     *
+     * <p>为什么要单独有 clearFields：MCP 侧「字段没传」和「显式传 null」经反序列化后
+     * 在 Java 里都是 null，二者无法区分。所以「清空」不能靠 null 表达 —— 否则任何一个
+     * 客户端漏传字段就会把对应内容清空。改成调用方显式声明要清哪些字段。
+     *
+     * @param clearFields 需要置空的字段名（tags / aliases / summary / relatedIds / category）。
+     *                    title 与 content 不在白名单内：清空标题或正文没有合理语义。
+     */
+    @Transactional
+    public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields) {
         Doc old = docMapper.selectById(id);
         if (old == null) {
             return null;
         }
-        // save version snapshot
-        DocVersion v = new DocVersion();
-        v.setDocId(id);
-        v.setVersion(old.getVersion());
-        v.setContent(old.getContent());
-        v.setAliases(old.getAliases());
-        v.setSummary(old.getSummary());
-        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
-        if (assistant != null) {
-            v.setUpdatedBy(assistant.getAssistantId());
-            v.setUpdatedName(assistant.getAssistantName());
-        } else {
-            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attrs != null) {
-                HttpSession session = attrs.getRequest().getSession(false);
-                User user = session != null ? (User) session.getAttribute("user") : null;
-                if (user != null) {
-                    v.setUpdatedBy("user_" + user.getId());
-                    v.setUpdatedName(user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
-                } else {
-                    v.setUpdatedBy("system");
-                    v.setUpdatedName("系统");
-                }
-            } else {
-                v.setUpdatedBy("system");
-                v.setUpdatedName("系统");
-            }
-        }
-        versionMapper.insert(v);
+        saveVersionSnapshot(old);
 
-        // update doc
         newDoc.setId(id);
         newDoc.setVersion(old.getVersion() + 1);
         newDoc.setAuthorId(old.getAuthorId());
@@ -729,12 +718,181 @@ public class DocService {
         newDoc.setRating(old.getRating());
         newDoc.setRatingCount(old.getRatingCount());
         docMapper.updateById(newDoc);
+
+        // 清空必须单独用 UpdateWrapper：updateById 对 null 字段是「跳过」而不是「置 null」，
+        // 直接塞 null 会静默失败（和 E7 里 project_id 归零踩的是同一个坑）
+        if (clearFields != null && !clearFields.isEmpty()) {
+            com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Doc> uw =
+                    new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
+            uw.eq("id", id);
+            boolean any = false;
+            for (String f : clearFields) {
+                if (f == null) continue;
+                switch (f.trim()) {
+                    case "tags" -> { uw.set("tags", ""); any = true; }
+                    case "aliases" -> { uw.set("aliases", ""); any = true; }
+                    case "summary" -> { uw.set("summary", ""); any = true; }
+                    case "relatedIds", "related_ids" -> { uw.set("related_ids", ""); any = true; }
+                    case "category" -> { uw.set("category", "未分类"); any = true; }
+                    default -> log.warn("update: clearFields 忽略不可清空字段 '{}'（id={}）", f, id);
+                }
+            }
+            if (any) {
+                docMapper.update(null, uw);
+            }
+        }
+
         Doc updated = docMapper.selectById(id);
-        
-        // 记录更新日志
         callLogService.logUpdate(updated);
-        
         return updated;
+    }
+
+    /**
+     * 写一条版本快照（旧版本全文）。
+     * 从 update 里抽出来，供 update / append / patch 三条写路径复用，避免三份拷贝走样。
+     */
+    private void saveVersionSnapshot(Doc old) {
+        saveVersionSnapshot(old, null);
+    }
+
+    /**
+     * 写版本快照，可覆盖署名。
+     *
+     * @param authorOverride 非空时用它作为 updated_name。
+     *        为什么要这个：一个 API Key 只能绑一个 assistant_name，而同一个 Key 往往被多个
+     *        助手共用（开发/对话/不同项目）。署名必须由调用方自报，否则谁的活都记在同一个人头上。
+     */
+    private void saveVersionSnapshot(Doc old, String authorOverride) {
+        DocVersion v = new DocVersion();
+        v.setDocId(old.getId());
+        v.setVersion(old.getVersion());
+        v.setContent(old.getContent());
+        v.setAliases(old.getAliases());
+        v.setSummary(old.getSummary());
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        if (assistant != null) {
+            v.setUpdatedBy(assistant.getAssistantId());
+            v.setUpdatedName(assistant.getAssistantName());
+        } else {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            User user = null;
+            if (attrs != null) {
+                HttpSession session = attrs.getRequest().getSession(false);
+                user = session != null ? (User) session.getAttribute("user") : null;
+            }
+            if (user != null) {
+                v.setUpdatedBy("user_" + user.getId());
+                v.setUpdatedName(user.getDisplayName() != null ? user.getDisplayName() : user.getUsername());
+            } else {
+                v.setUpdatedBy("system");
+                v.setUpdatedName("系统");
+            }
+        }
+        if (authorOverride != null && !authorOverride.trim().isEmpty()) {
+            v.setUpdatedName(authorOverride.trim());
+        }
+        versionMapper.insert(v);
+    }
+
+    // ==================== A1：追加 / 局部替换（2026-10-25） ====================
+    //
+    // 为什么要有这两个工具：原来的「补充一段进展」只能 update 整篇 content。
+    // 而 AI 拿到的正文是被截断的（get_experience_detail 有长度上限），
+    // 整篇写回就等于把没读到的部分删掉 —— 这既是浪费，也是数据损坏。
+    // 这两个方法都在服务端直接读改写全文，客户端永远不需要持有全文。
+
+    /**
+     * 在正文末尾追加一段（服务端拼接，不受客户端截断影响）。
+     * 只在尾部追加、不会缩短原文，因此不触发截断保护。
+     */
+    @Transactional
+    public Doc appendContent(Long id, String addition) {
+        return appendContent(id, addition, null);
+    }
+
+    /** @param authorName 可选署名，记入版本快照的 updated_name（多助手共用一个 Key 时必须传） */
+    @Transactional
+    public Doc appendContent(Long id, String addition, String authorName) {
+        Doc old = docMapper.selectById(id);
+        if (old == null) {
+            return null;
+        }
+        if (addition == null || addition.trim().isEmpty()) {
+            return old;   // 空追加不写库：不递增版本、不产生快照
+        }
+        saveVersionSnapshot(old, authorName);
+        String merged = mergeAppend(old.getContent(), addition);
+
+        Doc patch = new Doc();
+        patch.setId(id);
+        patch.setContent(merged);
+        patch.setVersion(old.getVersion() + 1);
+        docMapper.updateById(patch);
+
+        Doc updated = docMapper.selectById(id);
+        callLogService.logUpdate(updated);
+        return updated;
+    }
+
+    /**
+     * 局部替换正文（服务端执行，find 的唯一性由调用方先校验）。
+     */
+    @Transactional
+    public Doc patchContent(Long id, String find, String replacement) {
+        return patchContent(id, find, replacement, null);
+    }
+
+    /** @param authorName 可选署名，记入版本快照的 updated_name */
+    @Transactional
+    public Doc patchContent(Long id, String find, String replacement, String authorName) {
+        Doc old = docMapper.selectById(id);
+        if (old == null) {
+            return null;
+        }
+        saveVersionSnapshot(old, authorName);
+        String base = old.getContent() == null ? "" : old.getContent();
+        String merged = base.replace(find, replacement == null ? "" : replacement);
+
+        Doc patch = new Doc();
+        patch.setId(id);
+        patch.setContent(merged);
+        patch.setVersion(old.getVersion() + 1);
+        docMapper.updateById(patch);
+
+        Doc updated = docMapper.selectById(id);
+        callLogService.logUpdate(updated);
+        return updated;
+    }
+
+    /**
+     * A1：把追加片段接到原文末尾。
+     *
+     * <p>这个方法是「追加不会丢原文」的核心保证，所以单独抽出来可测：
+     * 无论原文多长、有无尾部空白，返回值都必须**完整包含原文**（只允许削掉原文末尾的空白字符）。
+     */
+    static String mergeAppend(String base, String addition) {
+        String b = base == null ? "" : base;
+        String a = addition == null ? "" : addition.trim();
+        // 追加内容为空 = 什么都不做。否则会平白多出两个空行，还骗来一次版本递增
+        if (a.isEmpty()) return b;
+        // 原文只有空白时按空处理，避免拼出「开头两行空白 + 追加内容」的正文
+        if (b.trim().isEmpty()) return a;
+        // 去掉尾空白再接，避免出现四五个连续空行；注意只动尾部空白，正文一个字不删
+        return b.replaceAll("\\s+$", "") + "\n\n" + a;
+    }
+
+    /**
+     * 统计 find 在 text 中出现的次数（包级静态便于单测）。
+     * patch 的前置校验靠它：0 次说明锚点不存在，多次说明会误改，两种都必须拒绝。
+     */
+    public static int countOccurrences(String text, String find) {
+        if (text == null || find == null || find.isEmpty()) return 0;
+        int count = 0, idx = 0;
+        while ((idx = text.indexOf(find, idx)) >= 0) {
+            count++;
+            idx += find.length();
+        }
+        return count;
     }
 
     /**

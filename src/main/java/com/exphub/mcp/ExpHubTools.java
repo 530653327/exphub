@@ -757,7 +757,8 @@ public class ExpHubTools {
     @Tool(name = "mark_for_deletion", description = "【标记待删，不是删除】把一条错误的/过时的/重复的经验标记为「待删」，由用户在后台确认后才真正删除。你没有删除权限，这是你能做的唯一动作。适用场景：发现自己写错了内容、创建了重复经验、记录了已失效的方案。⚠️ 必须填 reason 说明为什么该删（用户据此决定删不删）；标记后该经验立即从搜索结果中消失，但内容仍可恢复。如误标，用 cancel_deletion 撤回。")
     public String markForDeletion(
             @ToolParam(description = "要标记待删的经验 ID") Long id,
-            @ToolParam(description = "删除原因（必填）。说清为什么该删，例如：重复经验（与 ID:123 同内容）/ 内容错误（命令已失效）/ 测试数据误写。用户在后台据此决定是否真删。") String reason) {
+            @ToolParam(description = "删除原因（必填）。说清为什么该删，例如：重复经验（与 ID:123 同内容）/ 内容错误（命令已失效）/ 测试数据误写。用户在后台据此决定是否真删。") String reason,
+            @ToolParam(description = "可选。署名（谁标的），显示在后台待删队列。不传=用当前 API Key 绑定的助手名。同一 Key 多助手共用时建议传，否则都记成同一个人", required = false) String authorName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -771,8 +772,11 @@ public class ExpHubTools {
             if (existing == null) {
                 return "❌ 未找到ID为" + id + "的经验";
             }
-            String by = (assistant != null && assistant.getAssistantName() != null)
-                    ? assistant.getAssistantName() : "unknown";
+            // B1：署名优先用调用方自报的（同一 Key 可能被多个助手共用，Key 上只存得下一个名字）
+            String by = (authorName != null && !authorName.trim().isEmpty())
+                    ? authorName.trim()
+                    : ((assistant != null && assistant.getAssistantName() != null)
+                        ? assistant.getAssistantName() : "unknown");
             Doc marked = docService.markForDeletion(id, reason, by);
 
             StringBuilder sb = new StringBuilder();
@@ -832,7 +836,7 @@ public class ExpHubTools {
             @ToolParam(description = "经验ID（必填），你参考过的经验ID") Long id,
             @ToolParam(description = "该经验是否有帮助。true=成功帮助你解决了问题，false=没有帮助") boolean helpful,
             @ToolParam(description = "反馈说明。helpful=true 时可选（可简述哪个部分有用）；helpful=false 时必填！必须说明为什么没用（如：方案过时、环境不匹配、缺少关键步骤、命令报错等），这样管理员可以优化经验内容。") String feedback,
-            @ToolParam(description = "当 helpful=false 时，如果你已经创建了一篇新的经验记录了正确的解决方案，填写新经验的ID。系统会自动将新旧两篇经验互相关联，后续 AI 可以同时参考。注意：需要先调用 create_experience 创建新经验获取 ID，再调用本工具传入 newExperienceId。") Long newExperienceId) {
+            @ToolParam(description = "可选。仅当 helpful=false 且你已经创建了新经验记录正确方案时，填新经验ID，系统会自动把新旧两篇互相关联。不传=只反馈不关联（helpful=true 时通常无需传）。", required = false) Long newExperienceId) {
 
         try {
             // 检查经验是否存在
@@ -1028,19 +1032,20 @@ public class ExpHubTools {
     /**
      * 更新经验
      */
-    @Tool(name = "update_experience", description = "更新已有经验。用于修正错误或补充短内容。如果是要整体更新长篇文档，建议使用 export_document + import_document 流程以避免内容丢失。如果确定要覆盖长文档，请设置 force=true。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
+    @Tool(name = "update_experience", description = "更新已有经验的指定字段。**只传要改的字段即可，其余不传**（2026-10-25 起不再要求全字段必填）。要清空某字段用 clearFields=\"tags,aliases\" 显式声明 —— 不要靠传 null 表达清空（协议层分不出「没传」和「传 null」）。改一小段正文优先用 patch_experience（find/replace，不读全文不截断）；追加内容用 append_experience；整体重写长篇文档仍建议 export_document + import_document。🔒 严禁在 content 中包含账号密码、API密钥、Token 等敏感信息。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
-            @ToolParam(description = "经验标题，不需要修改时传空字符串即可。⚠️ 不要把版本号写进标题（如「v2」），版本由系统 version 字段管理") String title,
-            @ToolParam(description = "经验正文，使用Markdown格式，不需要修改时传空字符串即可。注意：对于长文档，如果提供的内容明显比原文档短，系统会自动检测并提示改用 export/import 流程，除非设置 force=true。🔒 严禁包含账号密码、API密钥、Token等敏感信息") String content,
-            @ToolParam(description = "分类，如：服务器、开发、运维、部署等，不需要修改时传空字符串即可") String category,
-            @ToolParam(description = "标签，逗号分隔，不需要修改时传空字符串即可") String tags,
-            @ToolParam(description = "别名/同义词，逗号分隔，不需要修改时传空字符串即可") String aliases,
-            @ToolParam(description = "一句话摘要，不需要修改时传空字符串即可") String summary,
-            @ToolParam(description = "关联经验ID，逗号分隔。用于关联替代方案或相关经验，不需要修改时传空字符串即可。") String relatedIds,
-            @ToolParam(description = "修改作者名称。如果你是更新者且想标注自己的名字，传你的AI助手名称。不需要修改时传空字符串即可。") String authorName,
-            @ToolParam(description = "强制覆盖开关。设为true可跳过截断检测，允许用较短的内容覆盖长文档（当确认丢失不用的部分时使用）。默认false。") Boolean force,
-            @ToolParam(description = "可选。调整归属：传项目ID=归入该项目的项目空间；传 0=移回全局；不传=不改归属。用于把误落全局的文档归位，或把跨项目通用的经验从项目里移回全局", required = false) Long projectId) {
+            @ToolParam(description = "可选。新标题。不传=不改。⚠️ 不要把版本号写进标题（如「v2」），版本由系统 version 字段管理", required = false) String title,
+            @ToolParam(description = "可选。新正文（整体替换）。不传=不改。⚠️ 只改一小段请用 patch_experience，追加内容请用 append_experience —— 用本参数整篇写回容易把没读到的部分覆盖掉。🔒 严禁含账号密码/密钥/Token", required = false) String content,
+            @ToolParam(description = "可选。分类，如：服务器、开发、运维。不传=不改", required = false) String category,
+            @ToolParam(description = "可选。标签，逗号分隔。不传=不改。要清空请用 clearFields", required = false) String tags,
+            @ToolParam(description = "可选。别名/同义词，逗号分隔。不传=不改。要清空请用 clearFields", required = false) String aliases,
+            @ToolParam(description = "可选。一句话摘要。不传=不改。要清空请用 clearFields", required = false) String summary,
+            @ToolParam(description = "可选。关联经验ID，逗号分隔。不传=不改。要清空请用 clearFields", required = false) String relatedIds,
+            @ToolParam(description = "可选。修改作者名称。不传=不改", required = false) String authorName,
+            @ToolParam(description = "可选。强制覆盖开关，设为 true 可跳过截断检测。默认 false。一般不需要——局部修改请用 patch_experience", required = false) Boolean force,
+            @ToolParam(description = "可选。显式清空字段，逗号分隔。可清空：tags / aliases / summary / relatedIds / category（category 置为「未分类」）。title 与 content 不允许清空。例：clearFields=\"tags,aliases\"", required = false) String clearFields,
+            @ToolParam(description = "可选。调整归属：传项目ID=归入该项目；传 0=移回全局；不传=不改归属。用于把误落全局的文档归位，或把跨项目通用的经验从项目里移回全局", required = false) Long projectId) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -1109,6 +1114,10 @@ public class ExpHubTools {
             if (relatedIds != null && !relatedIds.isEmpty()) { updateDoc.setRelatedIds(relatedIds); changedFields.add("relatedIds"); }
             if (authorName != null && !authorName.isEmpty()) { updateDoc.setAuthorName(authorName); changedFields.add("authorName"); }
 
+            // A2：显式清空（null 无法表达清空，见 DocService.update 注释）
+            java.util.Set<String> clearSet = parseClearFields(clearFields);
+            for (String f : clearSet) changedFields.add("清空:" + f);
+
             // 一个字段都没变 + 也没要求改归属 → 明确告知「什么都没改」，不要报假成功
             if (changedFields.isEmpty() && projectId == null) {
                 return "⚠️ 没有任何字段被修改：所有参数都是空值，或与传入值相同。\n\n"
@@ -1132,7 +1141,7 @@ public class ExpHubTools {
                 }
             }
 
-            docService.update(id, updateDoc);
+            docService.update(id, updateDoc, clearSet);
             if (changeScope) {
                 docService.updateProjectId(id, targetProjectId);
             }
@@ -1168,6 +1177,170 @@ public class ExpHubTools {
             callLogService.incrementFailCalls();
             return "更新失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * A1：追加内容到正文末尾。
+     *
+     * <p>解决的核心问题：以前「补充一段进展」只能 update_experience 整篇写回，
+     * 而 AI 读到的正文是截断过的，写回就等于删掉没读到的部分。
+     * 这里服务端直接拼接，客户端完全不持有全文。
+     */
+    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。这是补充进展/追加结论的首选方式：服务端直接拼接，你不需要读全文，因此绝不会因为读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不会缩短原文，不触发截断保护。一次传一段；要多段就多次调用。")
+    public String appendExperience(
+            @ToolParam(description = "经验ID") Long id,
+            @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）。建议以小标题开头，如「### 2026-10-25 补充：xxx」，便于日后区分批次") String text,
+            @ToolParam(description = "可选。署名，记入版本快照。不传=用当前 API Key 绑定的助手名。同一 Key 被多个助手共用时建议传，否则所有改动都会记在同一个人名下", required = false) String authorName) {
+
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            if (text == null || text.trim().isEmpty()) {
+                return "❌ 追加内容不能为空。请传入要追加的 Markdown 片段。";
+            }
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+
+            int oldVer = existing.getVersion();
+            int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
+            Doc updated = docService.appendContent(id, text, authorName);
+            int newLen = updated.getContent() == null ? 0 : updated.getContent().length();
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ 已追加到正文末尾\n\n");
+            sb.append("**ID**: ").append(id).append("\n");
+            sb.append("**标题**: ").append(updated.getTitle()).append("\n");
+            sb.append("**版本**: v").append(oldVer).append(" → v").append(updated.getVersion()).append("\n");
+            sb.append("**正文字数**: ").append(oldLen).append(" → ").append(newLen)
+              .append("（+").append(newLen - oldLen).append("）\n");
+            String addPreview = text.trim();
+            if (addPreview.length() > 120) addPreview = addPreview.substring(0, 120) + "…";
+            sb.append("**追加内容开头**:\n> ").append(addPreview.replace("\n", "\n> ")).append("\n\n");
+            sb.append("原文完整保留（服务端拼接，未经过任何截断），旧版本已存为快照 v").append(oldVer).append("。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.appendExperience: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "追加失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 可被 clearFields 清空的字段白名单（title/content 不在内：清空它们没有合理语义） */
+    static final java.util.Set<String> CLEARABLE_FIELDS = java.util.Set.of(
+            "tags", "aliases", "summary", "relatedIds", "related_ids", "category");
+
+    /**
+     * 解析 clearFields 参数。包级静态便于单测。
+     * 只保留白名单内的字段，其余忽略 —— 防止调用方写 "content" 把正文清空。
+     */
+    static java.util.Set<String> parseClearFields(String clearFields) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (clearFields == null || clearFields.trim().isEmpty()) return out;
+        for (String f : clearFields.split("[,，]")) {
+            String v = f.trim();
+            if (!v.isEmpty() && CLEARABLE_FIELDS.contains(v)) out.add(v);
+            else if (!v.isEmpty()) log.warn("parseClearFields: 忽略不可清空字段 '{}'", v);
+        }
+        return out;
+    }
+
+    /** patch 锚点的最小长度：太短的 find 必然多命中，改了就是事故 */
+    private static final int PATCH_MIN_ANCHOR = 4;
+
+    /**
+     * A1：局部替换正文（服务端执行）。
+     *
+     * <p>比 update 整篇写回安全得多：只替换命中的那一段，其余原样保留。
+     * 但必须保证 find 唯一 —— 多处命中时宁可报错让调用方加长锚点，也不能替它猜改哪一处。
+     */
+    @Tool(name = "patch_experience", description = "在经验正文里做**局部替换**（find → replace）。改一个错字、更新一行结论、替换一个失效命令时用这个，不要用 update_experience 整篇写回。⚠️ find 必须在正文里**恰好出现一次**：0 次会报错（锚点不存在，先 get_experience_detail 确认原文），多次也会报错（会误改别处，请加长 find 使其唯一）。find 至少 4 个字符。replace 传空字符串表示删除该段。")
+    public String patchExperience(
+            @ToolParam(description = "经验ID") Long id,
+            @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符。建议包含前后文让锚点唯一") String find,
+            @ToolParam(description = "替换成的新内容。传空字符串表示删除这段") String replace,
+            @ToolParam(description = "可选。署名，记入版本快照。不传=用当前 API Key 绑定的助手名", required = false) String authorName) {
+
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            if (find == null || find.trim().isEmpty()) {
+                return "❌ find 不能为空。请传入要替换的原文片段。";
+            }
+            if (find.length() < PATCH_MIN_ANCHOR) {
+                return "❌ find 太短（" + find.length() + " 字符，最少 " + PATCH_MIN_ANCHOR
+                        + "）。太短的锚点几乎必然命中多处，会改错地方。请带上前后文让它唯一。";
+            }
+            Doc existing = docService.getById(id);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id + "的经验";
+            }
+
+            String body = existing.getContent() == null ? "" : existing.getContent();
+            int hits = DocService.countOccurrences(body, find);
+            if (hits == 0) {
+                return "❌ 正文里没有找到该片段，未做任何修改（仍是 v" + existing.getVersion() + "）。\n\n"
+                        + "**你找的**: `" + abbreviate(find, 80) + "`\n\n"
+                        + "可能原因：原文已被改过、换行/空格不一致、或你记错了。\n"
+                        + "建议先 get_experience_detail(id=" + id + ") 看当前正文，或 export_document 拿完整内容。";
+            }
+            if (hits > 1) {
+                return "❌ 该片段在正文中出现 **" + hits + " 次**，未做任何修改（仍是 v" + existing.getVersion() + "）。\n\n"
+                        + "多处命中时替换会误改别的地方，所以拒绝执行。请把 find 加长到唯一（多带前后各一行最有效）。\n\n"
+                        + "**各处位置**:\n" + describeHits(body, find, 3);
+            }
+
+            int oldVer = existing.getVersion();
+            int oldLen = body.length();
+            Doc updated = docService.patchContent(id, find, replace, authorName);
+            String newBody = updated.getContent() == null ? "" : updated.getContent();
+
+            int pos = body.indexOf(find);
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ 已局部替换（唯一命中，未动其他内容）\n\n");
+            sb.append("**ID**: ").append(id).append("\n");
+            sb.append("**版本**: v").append(oldVer).append(" → v").append(updated.getVersion()).append("\n");
+            sb.append("**替换位置**: 第 ").append(pos + 1).append(" 个字符起\n");
+            sb.append("**字数**: ").append(oldLen).append(" → ").append(newBody.length())
+              .append("（").append(newBody.length() - oldLen >= 0 ? "+" : "")
+              .append(newBody.length() - oldLen).append("）\n\n");
+            sb.append("**原文**: `").append(abbreviate(find, 100)).append("`\n");
+            sb.append("**改为**: `").append(replace == null || replace.isEmpty() ? "（已删除）" : abbreviate(replace, 100)).append("`\n\n");
+            sb.append("旧版本已存为快照 v").append(oldVer).append("。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.patchExperience: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "局部替换失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 截断显示用（patch 报错信息里回显片段，太长会把返回撑爆） */
+    static String abbreviate(String s, int max) {
+        if (s == null) return "";
+        String one = s.replace("\n", "\\n");
+        return one.length() > max ? one.substring(0, max) + "…" : one;
+    }
+
+    /** 多处命中时，把前 N 处的位置和上下文列出来，方便调用方加长锚点 */
+    private String describeHits(String body, String find, int limit) {
+        StringBuilder sb = new StringBuilder();
+        int idx = 0, n = 0;
+        while (n < limit && (idx = body.indexOf(find, idx)) >= 0) {
+            int from = Math.max(0, idx - 30);
+            int to = Math.min(body.length(), idx + find.length() + 30);
+            sb.append("- 第 ").append(idx + 1).append(" 字符处：…")
+              .append(body.substring(from, to).replace("\n", " "))
+              .append("…\n");
+            idx += find.length();
+            n++;
+        }
+        return sb.toString();
     }
 
     // ==================== 项目空间工具（2026-09-20 新增）====================
