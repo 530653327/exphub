@@ -1243,6 +1243,19 @@ public class ExpHubTools {
             res.append("**ID**: ").append(id).append("\n");
             res.append("**新版本**: v").append(existing.getVersion() + 1).append("\n");
             res.append("**已修改字段**: ").append(changedFields.isEmpty() ? "（无，仅调整归属）" : String.join(", ", changedFields)).append("\n");
+            // 回执自证值（AGENTS.md 第 10 章）：署名必回显，别让调用方事后去列表里才发现记成了别人。
+            // 回填后重新读一次，显示的是**库里真实的值**，不是复述入参
+            Doc afterUpdate = docService.getById(id);
+            String realUpdatedName = lastSnapshotAuthor(id);
+            res.append("**本版署名**: ").append(realUpdatedName == null ? "（未记录）" : realUpdatedName);
+            if (updatedName == null || updatedName.trim().isEmpty()) {
+                res.append("　← 本次未传 updatedName，走 Key 绑定的助手名兜底");
+            }
+            res.append("\n");
+            res.append("**文档作者**: ")
+               .append(afterUpdate != null && afterUpdate.getAuthorName() != null ? afterUpdate.getAuthorName() : "未知")
+               .append(changedFields.contains("改文档作者") ? "（本条已改归属）" : "（未改动）")
+               .append("\n");
             if (changedFields.contains("content")) {
                 int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
                 int stripped = content.length() - (cleanedContent == null ? content.length() : cleanedContent.length());
@@ -1267,6 +1280,22 @@ public class ExpHubTools {
             log.error("ExpHubTools.updateExperience: FAILED", e);
             callLogService.incrementFailCalls();
             return "更新失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /**
+     * 读该文档**最新一条**快照的操作人署名（回执自证值用）。
+     * 不缓存、不猜，直接查库 —— 回执要展示的是库里真实的值。
+     */
+    private String lastSnapshotAuthor(Long id) {
+        try {
+            java.util.List<DocVersion> vs = docService.getVersions(id);
+            if (vs == null || vs.isEmpty()) return null;
+            // getVersions 按版本倒序返回最新在前；取第一条的署名
+            return vs.get(0).getUpdatedName();
+        } catch (Exception e) {
+            log.warn("lastSnapshotAuthor failed: id={} err={}", id, e.getMessage());
+            return null;
         }
     }
 
