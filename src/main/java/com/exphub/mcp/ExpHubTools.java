@@ -810,10 +810,15 @@ public class ExpHubTools {
             @ToolParam(description = "可选。**谁改的**——操作人署名（本工具只写调用日志，不影响版本快照）", required = false) String updatedName) {
         
         try {
-            log.info("ExpHubTools.updateExperienceStatus: ENTRY - id={}, status={}", id, status);
-            
-            // 权限验证
             AiAssistant assistant = getCaller();
+            // ⚠️ 2026-10-25 修：`updatedName` 原来声明了却零使用。
+            // 参数说明承诺「只写调用日志」，可日志里连签名都没有 —— 承诺了没兑现。
+            // 现在真的写进日志，并在回执里显示，让调用方能自证署名生效（红线：回执必须自证值）。
+            String operator = resolveAuthor(updatedName, assistant);
+            log.info("ExpHubTools.updateExperienceStatus: ENTRY - id={}, status={}, operator={}",
+                    id, status, operator);
+
+            // 权限验证
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
@@ -838,7 +843,10 @@ public class ExpHubTools {
             Doc updated = docService.updateStatus(id, upperStatus);
             String statusLabel = getStatusLabel(upperStatus);
             
-            return "✅ 经验状态已更新！\n\n**ID**: " + id + "\n**标题**: " + updated.getTitle() + "\n**新状态**: " + statusLabel + "\n\n注意：非ACTIVE状态的经验默认不会被 search_experience 搜索到，其他AI助手将不会看到此经验。";
+            return "✅ 经验状态已更新！\n\n**ID**: " + id + "\n**标题**: " + updated.getTitle()
+                    + "\n**新状态**: " + statusLabel
+                    + "\n**操作人**: " + operator + "（只记日志，不改版本快照）"
+                    + "\n\n注意：非ACTIVE状态的经验默认不会被 search_experience 搜索到，其他AI助手将不会看到此经验。";
         } catch (Exception e) {
             log.error("ExpHubTools.updateExperienceStatus: FAILED", e);
             callLogService.incrementFailCalls();
@@ -872,11 +880,11 @@ public class ExpHubTools {
             if (existing == null) {
                 return "❌ 未找到ID为" + id + "的经验";
             }
-            // B1：署名优先用调用方自报的（同一 Key 可能被多个助手共用，Key 上只存得下一个名字）
-            String by = (authorName != null && !authorName.trim().isEmpty())
-                    ? authorName.trim()
-                    : ((assistant != null && assistant.getAssistantName() != null)
-                        ? assistant.getAssistantName() : "unknown");
+            // B1：署名优先用调用方自报的（同一 Key 可能被多个助手共用，Key 上只存得下一个名字）。
+            // ⚠️ 2026-10-25 修：原来这里只认 authorName，updatedName 是死参数 ——
+            // 参数说明承诺「两者都传时以本参数为准」，实际传了 updatedName 署名照样丢，
+            // 后台待删队列显示的还是 Key 绑定的名字（白泽 23:41 查源码 + 阁主实测发现）。
+            String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
             Doc marked = docService.markForDeletion(id, reason, by);
 
             StringBuilder sb = new StringBuilder();
@@ -906,6 +914,8 @@ public class ExpHubTools {
 
         try {
             AiAssistant assistant = getCaller();
+            // ⚠️ 2026-10-25 修：`updatedName` 原来是死参数（参数说明写「只写日志」，但一行日志都没打）
+            String operator = resolveAuthor(updatedName, assistant);
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
@@ -918,8 +928,10 @@ public class ExpHubTools {
                         + "，并没有被标记待删，无需恢复。";
             }
             Doc restored = docService.cancelDeletion(id);
+            log.info("ExpHubTools.cancelDeletion: #{} 撤销待删, operator={}", id, operator);
             return "✅ 已撤销待删标记\n\n**ID**: " + id + "\n**标题**: " + restored.getTitle()
                     + "\n**当前状态**: " + getStatusLabel(restored.getStatus())
+                    + "\n**操作人**: " + operator
                     + "\n\n该经验已恢复正常，会重新出现在搜索结果中。";
         } catch (Exception e) {
             log.error("ExpHubTools.cancelDeletion: FAILED", e);
@@ -1490,11 +1502,11 @@ public class ExpHubTools {
 
             List<String> parsed = DocService.parseFlags(flags);
             List<String> rejected = DocService.rejectedFlagTokens(flags);
-            // 署名优先用调用方自报的（同一 Key 只能绑一个 assistant_name，多助手共用时会打架）
-            String by = (authorName != null && !authorName.trim().isEmpty())
-                    ? authorName.trim()
-                    : ((assistant != null && assistant.getAssistantName() != null)
-                        ? assistant.getAssistantName() : "unknown");
+            // 署名优先用调用方自报的（同一 Key 只能绑一个 assistant_name，多助手共用时会打架）。
+            // ⚠️ 2026-10-25 修：这里原来只认 authorName，updatedName 声明了却零使用，
+            // 而参数说明写着「两者都传时以本参数为准」→ 传了 updatedName 署名就丢。
+            // 与 mark_superseded / mark_for_deletion 统一走同一行。
+            String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
 
             Doc updated = docService.setFlags(id, parsed, note, by);
 
@@ -1680,6 +1692,9 @@ public class ExpHubTools {
             @ToolParam(description = "可选。**谁改的**——操作人署名（正式名，建议统一用这个）。与 `authorName` 等价，两者都传时以本参数为准（本工具只写日志，两者等价）", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
+            // ⚠️ 2026-10-25 修：`authorName` / `updatedName` 原来是两个死参数
+            // （参数说明写「两者等价，仅写日志」，实际一行日志都没打）
+            String operator = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
@@ -1692,8 +1707,10 @@ public class ExpHubTools {
             }
             Long was = before.getSupersededBy();
             Doc updated = docService.clearSuperseded(id);
+            log.info("ExpHubTools.clearSuperseded: #{} 撤销被 #{} 取代, operator={}", id, was, operator);
             return "✅ 已撤销取代关系\n\n**ID**: " + id
                     + "\n**原来被 #" + was + " 取代**，现已恢复为独立条目"
+                    + "\n**操作人**: " + operator
                     + "\n**版本**: v" + updated.getVersion() + "（未变）｜**版本快照**: 未产生";
         } catch (Exception e) {
             log.error("ExpHubTools.clearSuperseded: FAILED", e);

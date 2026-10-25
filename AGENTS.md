@@ -71,9 +71,51 @@ ExpHub 是「AI 经验知识库 + 项目空间」，通过 MCP 协议给多个 A
 ## 5. 署名约定
 
 同一个 API Key 只能绑一个 `assistant_name`，而一个 Key 常被多个助手共用。
-所以**署名由调用方自报**（`authorName` 参数），Key 上的名字只当兜底。
+所以**署名由调用方自报**，Key 上的名字只当兜底。
 
-代号按「你在改哪个仓库」认，不按会话认：
+### 两个参数名，两种语义（不许混，见第 12 章）
+
+| 参数 | 语义 | 用在哪 |
+|---|---|---|
+| `updatedName` | **操作人署名**（谁改的） | 写进版本快照 `updated_name` / 待删队列「谁标的」 |
+| `authorName` | **文档作者**（作品归属） | 只在创建时设定；update 里传它会**改归属** |
+
+### 唯一正确写法（D1 之后统一）
+
+```java
+String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+```
+
+`resolveAuthor`（`ExpHubTools:1372`）的契约：trim 后非空则用之 → 否则 Key 绑定名 → 否则 `"unknown"`
+（**绝不返回 null**，否则库里写出 NULL 署名）。
+
+### 死参数：一天内踩两次，已机制化守卫
+
+| 时间 | 工具 | 症状 |
+|---|---|---|
+| 2026-10-25 上午 | `update_experience(authorName)` | 传了不生效 |
+| 2026-10-25 23:41 | `mark_for_deletion(updatedName)` | 白泽查源码 + 阁主实测才发现 |
+
+扫全文件后发现**不止一个**，一共 5 个：
+`mark_for_deletion` / `set_flags` / `update_experience_status` / `cancel_deletion` / `clear_superseded`。
+
+**如果只按被指出的那一个修，剩下四个会继续坏** —— 这是第 1 章红线「修了一条要回头问还有哪条」的又一次实证。
+
+**这个缺陷最坏的地方**：编译不报错、运行不报错、回执也不报错。
+参数说明还写着「**两者都传时以本参数为准**」——模型会照说明传，用户以为署名生效了，
+实际全记成 Key 绑定的名字，**事后回看根本分不清谁写的**。
+
+**守卫**：`DeadParamGuardTest`（4 例）扫源码，任何
+① `@ToolParam` 声明了但方法体没读
+② 存在「只认 authorName」的旧写法
+③ 参数说明承诺了「以本参数为准」却没实现
+都会让构建失败。
+
+⚠️ 写这个测试时踩过一次：一开始断言「所有带 authorName 的工具都必须走 resolveAuthor」，
+结果 `create_experience` 报错 —— 它的 `authorName` 是**文档作者（作品归属）**，语义完全不同，
+就该直接 `setAuthorName`。**想当然会把测试变成假警报。**
+
+### 代号按「你在改哪个仓库」认，不按会话认
 
 | 仓库 | 代号 | git 署名 |
 |---|---|---|
