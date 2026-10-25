@@ -188,9 +188,55 @@ class SimilarityCandidateFlowTest {
         assertTrue(r.summary().contains("99"));
     }
 
+    /**
+     * 线上实测暴露的 bug（2026-10-25 首次上线）：新写入的文档用裸 {@code Sketch.of} 构造，
+     * 没走「去模板行」这一步 → {@code lineModeReliable=false} → L0 永远回退 2-gram 口径，
+     * 于是**同一对文档在 L0 与 L2 下得到两个分数**。
+     *
+     * <p>断言：一对多行文档在 L0 与 L2 下的分数必须一致，且都不许写「回退 2-gram」。
+     */
     @Test
-    void suggestionScoreIsPersistedWithFourDecimals() {
+    void l0AndL2MustUseTheSameContentMetric() {
+        String longBodyA = String.join("\n",
+                "# 部署流程",
+                "执行 bash deploy.sh，脚本会先 git reset 再打包并重启服务。",
+                "重启后轮询 /health 九十秒，失败则退出并保留日志。",
+                "回滚方式是 git reset 到上一个 tag 再跑一遍脚本。",
+                "日志在 /usr/local/exphub/app.log，用 journalctl 看不到。");
+        String longBodyB = String.join("\n",
+                "# 部署流程",
+                "执行 bash deploy.sh，脚本会先 git reset 再打包并重启服务。",
+                "重启后轮询 /health 九十秒，失败则退出并保留日志。",
+                "回滚方式是 git reset 到上一个 tag 再跑一遍脚本。",
+                "日志在 /usr/local/exphub/app.log，用 journalctl 看不到。");
+
+        // 库里已有 #1；#2 是「刚写入」的那篇，两边都能取到它，才谈得上比口径
         when(docMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(
+                doc(1L, "ExpHub 部署流程", "exphub,部署", longBodyA, null),
+                doc(2L, "ExpHub 部署流程", "exphub,部署", longBodyB, null))));
+        ReviewCandidate fake = new ReviewCandidate();
+        fake.setId(903L);
+        fake.setStatus(ReviewCandidate.PENDING);
+        when(candidateService.enqueue(anyLong(), anyLong(), any(), anyString(), eq("L0_CREATE")))
+                .thenReturn(new ReviewCandidateService.EnqueueResult(true, fake, "ok"));
+
+        SimilarityService.L0Result l0 = service.checkOnCreate(
+                doc(2L, "ExpHub 部署流程", "exphub,部署", longBodyB, null));
+
+        // L2 侧：同一对文档走全库打分
+        SimilarityService.ScanResult l2 = service.scan(0L, 0.5, 20, 2, true, "测试");
+
+        assertEquals(1, l0.hits().size());
+        assertEquals(1, l2.rows().size());
+        assertEquals(l2.rows().get(0).score(), l0.hits().get(0).score(), 1e-9,
+                "同一对文档在 L0 与 L2 下必须是同一个分数，否则调用方不知道该信谁");
+        assertFalse(l0.hits().get(0).reasons().contains("回退 2-gram"),
+                "多行文档不该回退 2-gram 口径：" + l0.hits().get(0).reasons());
+        assertTrue(l0.hits().get(0).reasons().contains("模板行已剔除"), l0.hits().get(0).reasons());
+    }
+
+    @Test
+    void suggestionScoreIsPersistedWithFourDecimals() {        when(docMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(
                 doc(1L, "ExpHub 部署流程", "exphub,部署", BODY, null))));
         ReviewCandidate fake = new ReviewCandidate();
         fake.setId(902L);

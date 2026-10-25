@@ -73,12 +73,28 @@ public class SimilarityService {
     public record ScopeIndex(Long projectId,
                              String label,
                              List<SimilarityScorer.Sketch> sketches,
+                             Map<String, Integer> lineDf,
                              int skippedShort,
                              int skippedSuperseded,
                              LocalDateTime builtAt) {
 
         public String buildTime() {
             return builtAt == null ? "-" : builtAt.format(HHMMSS);
+        }
+
+        /**
+         * 把「还没进索引的文档」（刚写入的那篇）加工成可比较的快照。
+         *
+         * <p>必须用作用域已有的行 df 回填去模板行，否则它会以
+         * {@code lineModeReliable=false} 参与比较 → 永远回退 2-gram 口径 →
+         * **同一对文档在 L0 与 L2 下得到两个分数**。这正是线上第一次实测暴露的 bug
+         * （#648 明明是标准多行文档，回执却写「回退 2-gram 口径」）。
+         */
+        public SimilarityScorer.Sketch prepare(SimilarityScorer.Sketch incoming) {
+            Map<String, Integer> df = lineDf == null ? Map.of() : lineDf;
+            java.util.Set<String> distinct = SimilarityScorer.distinctLines(incoming.lines(), df);
+            return incoming.withDistinctLines(distinct,
+                    SimilarityScorer.isLineModeReliable(incoming.lines()));
         }
     }
 
@@ -123,8 +139,10 @@ public class SimilarityService {
         }
         try {
             ScopeIndex index = indexOf(doc.getProjectId());
-            SimilarityScorer.Sketch self = SimilarityScorer.Sketch.of(doc.getId(), doc.getTitle(),
-                    doc.getTags(), doc.getAliases(), doc.getCategory(), doc.getProjectId(), doc.getContent());
+            // 必须走 index.prepare 而不是裸 Sketch.of：否则新文档拿不到「去模板行」，
+            // 会以回退的 2-gram 口径参与比较，和 L2 的分数不一致（实测踩过）
+            SimilarityScorer.Sketch self = index.prepare(SimilarityScorer.Sketch.of(doc.getId(), doc.getTitle(),
+                    doc.getTags(), doc.getAliases(), doc.getCategory(), doc.getProjectId(), doc.getContent()));
 
             List<Suggestion> hits = new ArrayList<>();
             for (SimilarityScorer.Sketch other : index.sketches()) {
@@ -357,9 +375,10 @@ public class SimilarityService {
                     d.getCategory(), d.getProjectId(), content));
         }
         List<SimilarityScorer.Sketch> withDistinct = SimilarityScorer.applyDistinctLines(sketches);
+        Map<String, Integer> df = SimilarityScorer.lineDf(sketches);
         String label = projectId == null ? "全局库" : labelOf(projectId);
         log.debug("SimilarityService.buildIndex: scope={} docs={} usable={}", label, docs.size(), withDistinct.size());
-        return new ScopeIndex(projectId, label, withDistinct, skippedShort, skippedSuperseded, LocalDateTime.now());
+        return new ScopeIndex(projectId, label, withDistinct, df, skippedShort, skippedSuperseded, LocalDateTime.now());
     }
 
     private String labelOf(Long projectId) {
