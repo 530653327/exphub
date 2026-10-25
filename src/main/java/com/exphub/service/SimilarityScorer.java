@@ -699,14 +699,17 @@ public final class SimilarityScorer {
                 // 真被包住，重合度该接近 100%；0 行重合说明短的那篇一个字都没出现过。
                 // 结果是把 #514↔#542（标题明说是「补充」页）引向「确认长篇已包含它」——
                 // 那个确认必然失败，于是永远只能判 distinct，把一个本该合并的补充页钉在队列里。
-                String sib = siblingReason(titleA, titleB);
-                if (sib != null) {
-                    yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
-                            + "这是两份独立记录，**不是母集-子集**（行数比只说明长短，说明不了谁属于谁）。\n　　"
-                            + "**判 distinct**：谁也别并、谁也别清 —— 照母集-子集办"
-                            + "就是把一份的内容并进另一份里，等于把日期/编号弄混。";
-                }
                 if (ratioSubset) {
+                    // ⚠️ 排除项必须**只在「长短悬殊」成立时**才用（2026-10-26 02:46 部署后实测踩到：
+                    // 40 : 44 根本不悬殊，却也被写成「长短悬殊，但标题里的编号不同」——
+                    // 把一句本来只描述「行数差」的话，硬套到行数差不大的对上）。
+                    String sib = siblingReason(titleA, titleB);
+                    if (sib != null) {
+                        yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
+                                + "这是两份独立记录，**不是母集-子集**（行数比只说明长短，说明不了谁属于谁）。\n　　"
+                                + "**判 distinct**：谁也别并、谁也别清 —— 照母集-子集办"
+                                + "就是把一份的内容并进另一份里，等于把日期/编号弄混。";
+                    }
                     boolean aIsShort = linesA <= linesB;
                     if (isSupplementTitle(aIsShort ? titleA : titleB)) {
                         yield "**" + ratio + "，但正文 0 行重合 —— 短的那篇一个字都没出现在长的那篇里**，"
@@ -723,6 +726,14 @@ public final class SimilarityScorer {
                             + "两种可能，选一个：① 同一条记录的两半 → **把短的那篇并进长的那篇**，"
                             + "并完确认再清；② 两份独立记录 → 判 **distinct**（谁也别并、谁也别清）。"
                             + "\n　　" + SimilarityScorer.SIBLING_EXCLUSIONS + "；都排除不掉又拿不准 → distinct";
+                }
+                // 行数差不多、但标题的日期/编号不同 → 独立记录，直接 distinct（别留「先排除母集」这种话，
+                // 免得上一条排除结论和这条兜底自相矛盾）
+                String sib2 = siblingReason(titleA, titleB);
+                if (sib2 != null) {
+                    yield "**" + ratio + "**，而 " + sib2 + " —— 两份**独立记录**："
+                            + "正文 0 行重合、也没有任何内容证据支持合并。**判 distinct**："
+                            + "谁也别并、谁也别清（这两份各自有效，别为了「收敛」硬判 superseded）。";
                 }
                 yield "**只有标签/标题像**（" + ratio + "，正文 0 行重合 —— "
                         + "没有任何内容证据）：可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"

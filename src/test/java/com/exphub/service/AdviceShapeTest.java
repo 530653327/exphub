@@ -238,6 +238,20 @@ class AdviceShapeTest {
         assertFalse(d.contains("并回母档"), "不同编号的两个子页不是母集关系：" + d);
     }
 
+    /**
+     * 行数差不多（40 : 44）但编号不同，仍是独立记录 —— 但**不许说「长短悬殊」**
+     * （2026-10-26 02:46 部署后实测踩到：排除项写在行数比之前，40:44 也被套了「长短悬殊」）。
+     */
+    @Test
+    void nonLopsidedPairStillSaysIndependentButNotLopsided() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 40, 44,
+                "中央平原地图1提示词（平原入口）", "中央平原地图2提示词（花田小径）");
+        assertTrue(d.contains("编号不同"), "编号不同要摆出来：" + d);
+        assertTrue(d.contains("独立记录"), "结论是两份独立记录：" + d);
+        assertFalse(d.contains("长短悬殊"),
+                "40 : 44 不悬殊 —— 「长短悬殊」只能用在行数差 ≥4:1 的对上：" + d);
+    }
+
     /** 检测不出差异、又不是补充页 → 不许直接下结论，必须给出三项排除清单 */
     @Test
     void whenTitlesShowNoDifferenceMustListExclusionsNotConclude() {
