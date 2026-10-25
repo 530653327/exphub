@@ -163,14 +163,34 @@ class AdviceShapeTest {
      * 结论碰巧对，<b>理由却是错的</b>：它是典型的 24:1 母集-子集，而形态检测当时只在①层做。
      * 建议对了、理由错了，下次换个数据就会把错的理由用错地方。
      */
+    /**
+     * 0 行重合 = 最强的反向证据，**优先级高于行数比**（2026-10-26 02:42 越哥实测）。
+     *
+     * <p>上一版写「0 行重合 …… 短的那篇可能整篇被长的那篇包住」—— 两句互斥：
+     * 真被包住，重合度该接近 100%。用这个矛盾的证据去指导「确认长篇已包含它」，
+     * 那个确认必然失败，于是 #514↔#542（标题明说是补充页）永远只能判 distinct，收敛不了。
+     */
     @Test
-    void seriesLayerAlsoNamesSubsetByLineRatio() {
+    void zeroSharedLinesOutrankLineRatio() {
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5);
-        assertTrue(d.contains("母集-子集"), "行数 120:5 要认出母集-子集，不能只说「拿不准」：" + d);
-        assertTrue(d.contains("24:1"), "要把行数比摆出来，人才判得快：" + d);
-        assertTrue(d.contains("也别判 superseded"), "②层同样不许放过 superseded 这个方向：" + d);
-        assertTrue(d.contains("并回母档"), "要给出正确动作：" + d);
+        assertTrue(d.contains("24:1"), "行数比仍要摆出来（它是结构信号）：" + d);
+        assertTrue(d.contains("0 行重合"), "必须把 0 行重合当成结论依据说出来：" + d);
+        assertTrue(d.contains("不可能是"), "要直接否掉「被包住」：" + d);
+        assertFalse(d.contains("可能整篇被"),
+                "0 行重合时说「可能整篇被包住」是自相矛盾 —— 一行都没重合，包含不了：" + d);
         assertFalse(d.contains("大概率"), d);
+        assertTrue(d.contains("distinct"), "拿不准时的落点：" + d);
+    }
+
+    /** 补充页（标题含「补充/续篇/第N部分」）→ 并进母档，不是「确认已包含」 */
+    @Test
+    void supplementTitleIsMergedNotConfirmed() {
+        String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5,
+                "史越 个人档案", "史越个人档案补充：家庭、饮食偏好与饮茶习惯");
+        assertTrue(d.contains("补充页"), "要点名它是补充页：" + d);
+        assertTrue(d.contains("并进长那篇"), "正确动作是并进母档：" + d);
+        assertTrue(d.contains("不要去找"), "要明确否掉「确认已包含」那条走不通的路：" + d);
+        assertFalse(d.contains("可能整篇被"), d);
     }
 
     /**
@@ -218,18 +238,18 @@ class AdviceShapeTest {
         assertFalse(d.contains("并回母档"), "不同编号的两个子页不是母集关系：" + d);
     }
 
-    /** 检测不出差异时，不能直接下母集结论 —— 必须给出三项排除清单 */
+    /** 检测不出差异、又不是补充页 → 不许直接下结论，必须给出三项排除清单 */
     @Test
     void whenTitlesShowNoDifferenceMustListExclusionsNotConclude() {
-        // #514 个人档案 120 行 ↔ #542 个人档案补充 5 行：标题里没有日期/编号差异
+        // 标题里没有日期/编号差异，也没有「补充」这类字样（120 行 ↔ 5 行，约 24:1）
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5,
-                "史越 个人档案", "史越个人档案补充：家庭、饮食偏好与饮茶习惯");
+                "史越 个人档案", "史越个人档案的其他记录");
         assertTrue(d.contains("排除三项"), "没检测到差异 = 把排除清单摊开让人判：" + d);
         assertTrue(d.contains("日期") && d.contains("编号") && d.contains("主体"),
                 "三项都要列出来（日期/编号/主体）：" + d);
-        assertTrue(d.contains("母集-子集"), d);
-        assertTrue(d.contains("并回母档"), "确认后才给母集动作：" + d);
+        assertTrue(d.contains("两种可能"), "0 行重合只能给两种可能，不能下结论：" + d);
         assertTrue(d.contains("distinct"), d);
+        assertFalse(d.contains("并回母档"), "0 行重合时「已含」不成立，不许给母集动作：" + d);
     }
 
     /** 拿不到标题时（6 参重载）不许下母集结论，只给排除清单 */

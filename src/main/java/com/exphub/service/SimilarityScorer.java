@@ -210,9 +210,29 @@ public final class SimilarityScorer {
 
     /** 三项排除清单 —— 只报行数比的回执是不够的，必须把「哪些不同就算并列」摊开写 */
     public static final String SIBLING_EXCLUSIONS =
-            "先按顺序排除三项：① **日期不同**（10-23 vs 10-24）② **编号不同**（地图1 vs 地图2、v2 vs v3）"
-            + "③ **主体不同**（两只宠物 / 两个专家 / 两天记录）—— "
+            "先按顺序排除三项：① **日期不同**（如 10-23 vs 10-24）② **编号不同**（如 地图1 vs 地图2、v2 vs v3）"
+            + "③ **主体不同**（同一套模板写出来的两个不同对象 —— 看标题写的是谁、哪一件，"
+            + "**别照抄这几个例子去对号入座**）—— "
             + "**任何一项不同 = 并列记录，判 distinct，谁也别并、谁也别清**";
+
+    /**
+     * 标题像不像「母档的补充页」（补充 / 续篇 / 第 N 部分 / 附记）。
+     *
+     * <p><b>为什么单看标题就够（2026-10-26 02:42 越哥实测 #514↔#542）</b>：
+     * #542 标题是「史越个人档案**补充**：家庭、饮食偏好与饮茶习惯」——
+     * 它本来就是给 #514 补料的，正确动作是<b>把那 5 行并进 #514</b>，
+     * 而不是「确认 #514 已包含它」（0 行重合 = 一行都没包含，那个确认必然失败）。
+     *
+     * <p>⚠️ 只看「补充 / 续篇 / 第N部分 / 附记」这类**结构性命名**，不看内容语义——
+     * 判不了就返回 false，回执退回「拿不准判 distinct」。
+     */
+    public static boolean isSupplementTitle(String title) {
+        if (title == null || title.isBlank()) return false;
+        return SUPPLEMENT_P.matcher(title).find();
+    }
+
+    private static final java.util.regex.Pattern SUPPLEMENT_P = java.util.regex.Pattern.compile(
+            "补充|补遗|补记|追加|附记|附录|续篇|（续）|\\(续\\)|第[一二三四五六七八九十\\d]{1,3}部分");
 
     public static final double W_TAG = 0.34;
     public static final double W_TITLE = 0.33;
@@ -644,11 +664,17 @@ public final class SimilarityScorer {
                                         + "　　**别判 duplicate，也别判 superseded**，判 **distinct**："
                                         + "谁也别并、谁也别清（照母集-子集办就是把一份并进另一份）。";
                             }
+                            int kidLines = oa <= ob ? ua : ub;
+                            double kidShare = Math.min(oa, ob);
                             yield "　→ 一侧几乎整篇在另一侧里（母集-子集）："
-                                    + (oa <= ob ? "A" : "B") + " 侧独有仅 "
-                                    + (oa <= ob ? ua : ub) + " 行（占 " + Score.pct(Math.min(oa, ob))
-                                    + "），像另一侧的子页。\n　　"
-                                    + Score.subsetAction(oa <= ob ? ua : ub);
+                                    + (oa <= ob ? "A" : "B") + " 侧独有 " + kidLines
+                                    + " 行（占 " + Score.pct(kidShare) + "），像另一侧的子页。"
+                                    + (kidShare >= MAX_OWN_SHARE_FOR_TRUE_DUP
+                                       ? "⚠️ 这个占比已贴近「真重复」上限 " + Score.pct(MAX_OWN_SHARE_FOR_TRUE_DUP)
+                                         + "，属边界样本 —— 先打开两边看那 " + kidLines
+                                         + " 行到底是新增内容还是改写。" : "")
+                                    + "\n　　"
+                                    + Score.subsetAction(kidLines);
                         }
                         case PARALLEL -> "　→ 两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）："
                                 + "**别判 duplicate** —— 判了等于用其中一份取代另一份，一般判 distinct；"
@@ -657,8 +683,6 @@ public final class SimilarityScorer {
                         case UNKNOWN -> "　→ 行口径不可用，形态分不出，人工读一眼再定";
                     };
             case SERIES -> {
-                // ②层也要判形态：行数差 4 倍以上是母集-子集的强信号（2026-10-26 02:2x 越哥指出
-                // #514 120 行 ↔ #542 5 行 落在②层却只给「拿不准判 distinct」——结论对、理由错）
                 int big = Math.max(linesA, linesB), small = Math.min(linesA, linesB);
                 boolean ratioSubset = small > 0 && big >= small * MIN_LINES_RATIO_FOR_SUBSET;
                 String ratio = "两侧行数 " + linesA + " : " + linesB
@@ -669,26 +693,38 @@ public final class SimilarityScorer {
                             + " 行独有）→ 同一模板的不同实例：**别判 duplicate**，一般判 distinct；"
                             + "只有确认一侧确实是另一侧的新阶段才 superseded";
                 }
-                if (ratioSubset) {
-                    // ⚠️ 行数比只说明「长短悬殊」，说明不了「谁属于谁」（2026-10-26 02:32 越哥实测：
-                    // #548「10-23午餐实录」7 行 ↔ #558「10-24 全天饮食实录」54 行 被判成母集，
-                    // 而那是两天的独立记录 —— 照做就是把 10-23 的午餐并进 10-24）。
-                    String sib = siblingReason(titleA, titleB);
-                    if (sib != null) {
-                        yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
-                                + "这是两份独立记录，**不是母集-子集**（行数比只说明长短，说明不了谁属于谁）。\n　　"
-                                + "**判 distinct**：谁也别并、谁也别清 —— 照母集-子集办"
-                                + "就是把一份的内容并进另一份里，等于把日期/编号弄混。";
-                    }
-                    yield "**" + ratio + " —— 长短悬殊，但行数比只说明长短，说明不了谁属于谁**，"
-                            + "而正文 " + sharedLines + " 行重合（没有任何逐行内容证据，"
-                            + "短的那篇可能整篇被长的那篇包住，也可能只是碰巧短）。\n　　"
-                            + SimilarityScorer.SIBLING_EXCLUSIONS + "。\n　　"
-                            + "三项都相同、且打开长的那篇确认短那篇内容已全在里面，才按母集-子集办："
-                            + Score.subsetAction(small)
-                            + "\n　　（三项没排除干净 = 拿不准，**判 distinct 不会丢任何东西**）";
+
+                // ⚠️ 0 行重合是**最强的反向证据**，优先级高于行数比（2026-10-26 02:42 越哥实测）：
+                // 上一版写「0 行重合 …… 短的那篇可能整篇被长的那篇包住」—— 两句互斥。
+                // 真被包住，重合度该接近 100%；0 行重合说明短的那篇一个字都没出现过。
+                // 结果是把 #514↔#542（标题明说是「补充」页）引向「确认长篇已包含它」——
+                // 那个确认必然失败，于是永远只能判 distinct，把一个本该合并的补充页钉在队列里。
+                String sib = siblingReason(titleA, titleB);
+                if (sib != null) {
+                    yield "**" + ratio + " —— 长短悬殊，但 " + sib + "**："
+                            + "这是两份独立记录，**不是母集-子集**（行数比只说明长短，说明不了谁属于谁）。\n　　"
+                            + "**判 distinct**：谁也别并、谁也别清 —— 照母集-子集办"
+                            + "就是把一份的内容并进另一份里，等于把日期/编号弄混。";
                 }
-                yield "**只有标签/标题像**（" + ratio + "，正文 " + sharedLines + " 行重合 —— "
+                if (ratioSubset) {
+                    boolean aIsShort = linesA <= linesB;
+                    if (isSupplementTitle(aIsShort ? titleA : titleB)) {
+                        yield "**" + ratio + "，但正文 0 行重合 —— 短的那篇一个字都没出现在长的那篇里**，"
+                                + "而标题明说它是**补充页**。所以：\n　　"
+                                + "❌ **不要去找「长的那篇已包含它」的证据**（0 行重合，一定找不到，"
+                                + "也别按母集-子集办 —— 那套的前提是「已包含」）；\n　　"
+                                + "✅ **把这 " + small + " 行并进长那篇的对应章节**，并完打开长的那篇读一遍、"
+                                + "确认真读到了，再把短的那篇标为被取代 / 清掉；"
+                                + "拿不准该并到哪一章就判 **distinct**（两份都留着，别丢）";
+                    }
+                    yield "**" + ratio + "，但正文 0 行重合 —— 一行交集都没有**，所以"
+                            + "**不可能是「短的那篇整篇被包住」**（真被包住的话重合度该接近 100%）。"
+                            + "两份都不包含对方。\n　　"
+                            + "两种可能，选一个：① 同一条记录的两半 → **把短的那篇并进长的那篇**，"
+                            + "并完确认再清；② 两份独立记录 → 判 **distinct**（谁也别并、谁也别清）。"
+                            + "\n　　" + SimilarityScorer.SIBLING_EXCLUSIONS + "；都排除不掉又拿不准 → distinct";
+                }
+                yield "**只有标签/标题像**（" + ratio + "，正文 0 行重合 —— "
                         + "没有任何内容证据）：可能是同话题演进链，也可能是同一套模板写出来的两个不同对象"
                         + "（**别照抄示例去猜类型，看标题和正文各写了什么**）。"
                         + "⚠️ **没内容证据时不要判 superseded** —— 那等于用其中一份取代另一份。"

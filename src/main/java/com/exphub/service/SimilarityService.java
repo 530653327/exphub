@@ -452,6 +452,21 @@ public class SimilarityService {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
             c.computeIfAbsent(k, x -> new int[4])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit
         }
+
+        // ⚠️ 2026-10-26 02:42 越哥实测：①层豁免了 per-doc，②层却把同一批家族交叉对砍掉
+        //    （被挤掉的 4 对里有 3 对是 #65↔#68、#66↔#68、#67↔#68 —— 全是 #63 家族）。
+        //    同一个决策在两个出口给出相反结论：①层说「一篇母档命中多个子页该一起判」，
+        //    ②层又按「单篇最多 N 条」把同一批砍回去，读的人只会以为②层的挤压是随机的。
+        //    判法：**只要这篇文档已经在①层证明过自己有真近重复（是家族中心），它在低层就不再受 per-doc 限流。**
+        //    注意仍然受 maxRows（limit）约束 —— 家族再大也不会冲出总条数。
+        java.util.Set<Long> hubs = new java.util.HashSet<>();
+        for (Row r : sortedAbove) {
+            if (r.kind() == SimilarityScorer.Kind.DUPLICATE) {
+                hubs.add(r.docA());
+                hubs.add(r.docB());
+            }
+        }
+
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
             int[] cnt = c.get(k);
@@ -459,7 +474,8 @@ public class SimilarityService {
                 cnt[3]++;
                 continue;
             }
-            if (k != SimilarityScorer.Kind.DUPLICATE) {
+            boolean hubPair = hubs.contains(r.docA()) || hubs.contains(r.docB());
+            if (k != SimilarityScorer.Kind.DUPLICATE && !hubPair) {
                 int ca = perDocCount.getOrDefault(r.docA(), 0);
                 int cb = perDocCount.getOrDefault(r.docB(), 0);
                 if (ca >= perDoc || cb >= perDoc) {
