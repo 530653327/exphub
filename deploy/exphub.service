@@ -1,0 +1,26 @@
+[Unit]
+Description=ExpHub Application Server (port 3098/3099)
+After=network.target mysqld.service redis.service
+Wants=mysqld.service redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/exphub
+EnvironmentFile=/etc/exphub/.env
+# CentOS7 的 systemd 219 不支持 StandardOutput=append:，只能用 shell 重定向
+ExecStart=/bin/bash -c 'exec /usr/local/java17/bin/java -jar target/exphub-1.0.0.jar >> /usr/local/exphub/app.log 2>&1'
+Restart=always
+RestartSec=5
+# ⚠️ systemd 219（CentOS7）只认 [Service] 里的 StartLimitInterval / StartLimitBurst，
+# 写成 [Unit] StartLimitIntervalSec 是 230+ 的语法，在 219 上会被当成未知键忽略。
+# 这也是 2026-08-18 那次一直卡在 failed 的隐患之一：窗口太短（60s/5次）配 RestartSec=5，
+# 端口被 nohup 残留占着时 25 秒就打满配额，之后再也不重试。
+StartLimitInterval=300
+StartLimitBurst=5
+KillMode=process
+# 给 Spring Boot 优雅关机留时间，避免每次重启都留半开连接
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

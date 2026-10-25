@@ -39,12 +39,50 @@ export JAVA_HOME=/usr/local/java17
 export PATH=$JAVA_HOME/bin:$PATH
 mvn clean package -DskipTests -q
 
-# 3. 重启应用
-echo "[3/5] 重启应用..."
-# 杀掉所有旧实例：应用为双端口（3098 MCP SSE + 3099 Web），同一 JVM 占用
-# 按 jar 名 pkill 最稳妥，避免漏杀只监听 3098 的旧进程
+# 2.5 数据库迁移（2026-10-25 新增，幂等脚本，可重复执行）
+# 为什么放在重启前：新代码会 select 新增列，DDL 没跑就会报 Unknown column，服务起不来
+echo "[2.5/5] 执行数据库迁移..."
+DB_NAME="${EXPHUB_DB_NAME:-exphub}"
+if command -v mysql >/dev/null 2>&1; then
+    for f in sql/migrations/migration_2026*.sql; do
+        [ -f "$f" ] || continue
+        if mysql -u"$EXPHUB_DB_USERNAME" -p"$EXPHUB_DB_PASSWORD" "$DB_NAME" \
+                 --default-character-set=utf8mb4 < "$f" >/tmp/exphub_mig.log 2>&1; then
+            echo "  ✅ $(basename "$f")"
+        else
+            echo "  ⚠️  $(basename "$f") 执行有报错（若是幂等脚本可忽略重复列提示）"
+            tail -5 /tmp/exphub_mig.log
+        fi
+    done
+    rm -f /tmp/exphub_mig.log
+else
+    echo "  ⚠️  未找到 mysql 客户端，跳过迁移（新代码若依赖新列会启动失败）"
+fi
+
+# 2.6 同步 systemd 单元（仓库为准，2026-10-25 从 nohup 切到 systemd 托管）
+echo "[2.6/5] 检查 systemd 单元..."
+if [ -f deploy/exphub.service ]; then
+    if ! cmp -s deploy/exphub.service /etc/systemd/system/exphub.service; then
+        cp deploy/exphub.service /etc/systemd/system/exphub.service
+        systemctl daemon-reload
+        echo "  ✅ systemd 单元已更新（deploy/exphub.service → /etc/systemd/system/）"
+    else
+        echo "  ✅ systemd 单元已是仓库版本"
+    fi
+fi
+
+# 3. 重启应用（systemd 托管）
+# 2026-10-25 变更：原本是 nohup 起进程，systemd 单元形同摆设——
+#   `systemctl status exphub` 常年 failed、systemctl stop 杀不掉真进程、进程崩了没人拉。
+# 现在统一走 systemctl：deploy.sh 不再自己起 java，只负责「清场 + 交给 systemd」。
+echo "[3/5] 重启应用（systemd）..."
+
+# 清历史 failed：start-limit 计数不清掉，restart 会直接返回失败且不起进程
+systemctl reset-failed exphub 2>/dev/null || true
+
+# 兜底清场：历史 nohup 残留进程会占着 3098/3099，
+# systemd 拉起来就端口冲突 → 撞 StartLimitBurst → 又进 failed（2026-08-18 就是这么挂的）
 pkill -f 'exphub-1.0.0.jar' 2>/dev/null || true
-# 兜底：按端口确认释放（双端口都清）
 for PORT in 3098 3099; do
     PID=$(netstat -tlnp 2>/dev/null | grep ":$PORT " | awk '{print $7}' | cut -d'/' -f1 | head -1)
     if [ -n "$PID" ]; then
@@ -52,7 +90,13 @@ for PORT in 3098 3099; do
     fi
 done
 sleep 2
-nohup $JAVA_HOME/bin/java -jar target/exphub-1.0.0.jar > app.log 2>&1 &
+
+if ! systemctl restart exphub; then
+    echo "❌ systemctl restart exphub 失败，最近日志："
+    journalctl -u exphub -n 30 --no-pager 2>/dev/null || true
+    exit 1
+fi
+echo "  ✅ systemctl restart 已提交，主进程 PID=$(systemctl show -p MainPID exphub | cut -d= -f2)"
 
 # 4. 启动自检（2026-10-24 新增）
 # 此前部署完就宣告成功，应用起不来也无人知晓。这里轮询 /health：
