@@ -42,6 +42,9 @@ class SimilarityCandidateFlowTest {
     private DocMapper docMapper;
 
     @Mock
+    private DocService docService;
+
+    @Mock
     private ProjectService projectService;
 
     @Mock
@@ -68,6 +71,16 @@ class SimilarityCandidateFlowTest {
         d.setContent(body);
         d.setStatus("ACTIVE");
         return d;
+    }
+
+    /** 存活性校验走的批量取：按传入的 id 过滤，模拟「库里真实存在哪些」 */
+    private void stubAlive(List<Doc> all) {
+        when(docService.listByIds(any())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            List<Doc> out = new ArrayList<>();
+            for (Doc d : all) if (ids.contains(d.getId())) out.add(d);
+            return out;
+        });
     }
 
     @Test
@@ -123,11 +136,13 @@ class SimilarityCandidateFlowTest {
     @Test
     void scanAppliesPerDocCap() {
         // 三篇几乎完全一样的文档 → 三对都超阈值；maxPerDoc=1 时只能留下 1 对
-        when(projectService.listProjects()).thenReturn(List.of());
-        when(docMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(
+        List<Doc> store = new ArrayList<>(List.of(
                 doc(1L, "ExpHub 部署流程", "exphub,部署", BODY, null),
                 doc(2L, "ExpHub 部署流程说明", "exphub,部署", BODY, null),
-                doc(3L, "ExpHub 部署流程说明 v2", "exphub,部署", BODY, null))));
+                doc(3L, "ExpHub 部署流程说明 v2", "exphub,部署", BODY, null)));
+        when(projectService.listProjects()).thenReturn(List.of());
+        when(docMapper.selectList(any())).thenReturn(store);
+        stubAlive(store);
         ReviewCandidate fake = new ReviewCandidate();
         fake.setId(901L);
         fake.setStatus(ReviewCandidate.PENDING);
@@ -145,10 +160,12 @@ class SimilarityCandidateFlowTest {
 
     @Test
     void dryRunWritesNothing() {
-        when(projectService.listProjects()).thenReturn(List.of());
-        when(docMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(
+        List<Doc> store = new ArrayList<>(List.of(
                 doc(1L, "ExpHub 部署流程", "exphub,部署", BODY, null),
-                doc(2L, "ExpHub 部署流程", "exphub,部署", BODY, null))));
+                doc(2L, "ExpHub 部署流程", "exphub,部署", BODY, null)));
+        when(projectService.listProjects()).thenReturn(List.of());
+        when(docMapper.selectList(any())).thenReturn(store);
+        stubAlive(store);
 
         SimilarityService.ScanResult r = service.scan(null, 0.5, 20, 2, true, "测试");
 
@@ -165,11 +182,13 @@ class SimilarityCandidateFlowTest {
         Doc superseded = doc(3L, "ExpHub 部署流程（旧）", "exphub,部署", BODY, null);
         superseded.setSupersededBy(1L);
         Doc tiny = doc(4L, "一句话", "exphub", "太短了", null);
-        when(projectService.listProjects()).thenReturn(List.of());
-        when(docMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(
+        List<Doc> store = new ArrayList<>(List.of(
                 doc(1L, "ExpHub 部署流程", "exphub,部署", BODY, null),
                 doc(2L, "ExpHub 部署流程", "exphub,部署", BODY, null),
-                superseded, tiny)));
+                superseded, tiny));
+        when(projectService.listProjects()).thenReturn(List.of());
+        when(docMapper.selectList(any())).thenReturn(store);
+        stubAlive(store);
 
         SimilarityService.ScanResult r = service.scan(null, 0.5, 20, 2, true, "测试");
 
@@ -211,9 +230,11 @@ class SimilarityCandidateFlowTest {
                 "日志在 /usr/local/exphub/app.log，用 journalctl 看不到。");
 
         // 库里已有 #1；#2 是「刚写入」的那篇，两边都能取到它，才谈得上比口径
-        when(docMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(
+        List<Doc> store = new ArrayList<>(List.of(
                 doc(1L, "ExpHub 部署流程", "exphub,部署", longBodyA, null),
-                doc(2L, "ExpHub 部署流程", "exphub,部署", longBodyB, null))));
+                doc(2L, "ExpHub 部署流程", "exphub,部署", longBodyB, null)));
+        when(docMapper.selectList(any())).thenReturn(store);
+        stubAlive(store);
         ReviewCandidate fake = new ReviewCandidate();
         fake.setId(903L);
         fake.setStatus(ReviewCandidate.PENDING);

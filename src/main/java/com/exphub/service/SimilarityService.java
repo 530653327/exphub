@@ -17,8 +17,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -62,6 +64,7 @@ public class SimilarityService {
     private static final DateTimeFormatter HHMMSS = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final DocMapper docMapper;
+    private final DocService docService;
     private final ProjectService projectService;
     private final ReviewCandidateService candidateService;
 
@@ -255,6 +258,29 @@ public class SimilarityService {
         }
         above.sort(Comparator.comparingDouble(Row::score).reversed());
 
+        // ⚠️ 索引是缓存（3 分钟），期间被删掉的文档仍会出现在 pairs 里。
+        // 线上实测踩到：8 条结果里 4 条是已删文档，占满名额把真候选挤到后面 ——
+        // 入队时的存在性校验兜住了「不写脏数据」，但名额已经浪费了。
+        // 所以先按库里真实存在性过滤，再进限流与截断。
+        int staleDropped = 0;
+        Set<Long> allIds = new LinkedHashSet<>();
+        for (Row r : above) { allIds.add(r.docA()); allIds.add(r.docB()); }
+        if (!allIds.isEmpty()) {
+            Set<Long> alive = new LinkedHashSet<>();
+            for (Doc d : docService.listByIds(allIds)) alive.add(d.getId());
+            if (alive.size() < allIds.size()) {
+                List<Row> filtered = new ArrayList<>();
+                for (Row r : above) {
+                    if (alive.contains(r.docA()) && alive.contains(r.docB())) {
+                        filtered.add(r);
+                    } else {
+                        staleDropped++;
+                    }
+                }
+                above = filtered;
+            }
+        }
+
         // per-doc 限流：一条文档最多出现在 N 条候选里，取分更高的
         Map<Long, Integer> perDocCount = new LinkedHashMap<>();
         List<Row> selected = new ArrayList<>();
@@ -303,6 +329,9 @@ public class SimilarityService {
         notes.add("只比较同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内）：跨项目实测全是假阳性"
                 + "（6 个项目的 AGENTS.md 章节标题标签全同，两两 0.87，但它们各自属于不同项目）");
         notes.add("已判 distinct 的对不会重新入队；已标记取代（superseded_by 有值）的文档整条跳过");
+        if (staleDropped > 0) {
+            notes.add("本次丢弃 " + staleDropped + " 对「索引里有、库里已删」的过期候选（索引缓存 3 分钟内被删的文档会这样）");
+        }
         if (skippedShort > 0) {
             notes.add("跳过正文短于 " + SimilarityScorer.MIN_CONTENT_LEN + " 字的文档 " + skippedShort + " 篇（信息量不足，判不准）");
         }
