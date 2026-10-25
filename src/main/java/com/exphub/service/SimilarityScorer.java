@@ -146,10 +146,16 @@ public final class SimilarityScorer {
         rest.append(title.substring(last));
         java.util.regex.Matcher m = DATE_MD.matcher(rest);
         while (m.find()) {
-            String md = pad(m.group(1)) + "-" + pad(m.group(2));
-            // 只有像月份、日期的才收（避免把 2-3 这种随手写的数字当日期）
             int mm = Integer.parseInt(m.group(1)), dd = Integer.parseInt(m.group(2));
-            if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) out.add(md);
+            if (mm < 1 || mm > 12 || dd < 1 || dd > 31) continue;
+            // ⚠️ 2026-10-26 02:38 实测踩到：标题「…约 1030kcal，脂肪一顿用掉 3/4 碗…」里的 3/4
+            // 被当成 03-04，回执写成「日期不同（10-23 / 03-04 vs 10-24）」—— 噪声进了证据。
+            // 收紧两条：① 只认标题**开头**的日期（日志类命名习惯：日期在当前 12 个字符内）
+            // ② 紧跟量词/单位的（3/4 碗、2/3 杯、1/2 天）不是日期
+            if (m.start() > 12) continue;
+            int end = m.end();
+            if (end < rest.length() && "碗杯个份克千卡次分时天日人片勺".indexOf(rest.charAt(end)) >= 0) continue;
+            out.add(pad(m.group(1)) + "-" + pad(m.group(2)));
         }
         return out;
     }

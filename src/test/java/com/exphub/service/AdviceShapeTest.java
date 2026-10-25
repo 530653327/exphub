@@ -192,6 +192,22 @@ class AdviceShapeTest {
         assertFalse(d.contains("也别判 superseded"), "既然不是母集，就别套母集的建议：" + d);
     }
 
+    /**
+     * 日期识别不许把「3/4 碗」当成 03-04（2026-10-26 02:38 部署后实测踩到）。
+     *
+     * <p>#548 标题是「10-23 午餐实录与估算：约 1030kcal，脂肪一顿用掉 3/4 碗…」，
+     * 上一版把 3/4 收成 03-04，回执写成「日期不同（10-23 / 03-04 vs 10-24）」——
+     * 噪声混进证据比没证据更糟，人会以为真有两个日期。
+     */
+    @Test
+    void ratioLikeTokensAreNotDates() {
+        java.util.Set<String> m = SimilarityScorer.dateMarks(
+                "10-23 午餐实录与估算：约 1030kcal，脂肪一顿用掉 3/4 碗，蛋白 2/3 份");
+        assertEquals(java.util.Set.of("10-23"), m, "中间的比例 3/4、2/3 不是日期：" + m);
+        assertEquals(java.util.Set.of("10-23"), SimilarityScorer.dateMarks("2026年10月23日 午餐"),
+                "同一天的不同写法要归一成 MM-DD");
+    }
+
     /** 编号不同（地图1 vs 地图2）同样按并列处理，不套母集动作 */
     @Test
     void differentNumbersAreSiblingsNotSubset() {
