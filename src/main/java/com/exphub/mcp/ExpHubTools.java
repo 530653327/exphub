@@ -364,7 +364,7 @@ public class ExpHubTools {
     /**
      * 获取经验的历史版本内容
      */
-    @Tool(name = "get_experience_history", description = "获取经验的某个历史版本内容。不传version时返回所有历史版本列表（**含位置列：主表 / 📦已归档**，所以能看到被归档搬走的那几版）；传version时返回该版本的完整内容。**已归档的版本也能读** —— 主表查不到会自动回查冷存档 doc_versions_archive，归档只是搬位置、不是删除。若主表和存档都没有，会明确说「不存在」并列出两个表里实际有哪些版本，而不是笼统回「未找到」（避免被误读成数据丢失）。")
+    @Tool(name = "get_experience_history", description = "读取历史版本。不传 version 返回版本列表（含位置列：主表/📦已归档）；传 version 返回该版正文。**已归档也能读**（自动回查冷存档，归档只是搬位置、不是删除）。两个表都没有时会列出实际有哪些版本，不笼统说「未找到」。")
     public String getExperienceHistory(
             @ToolParam(description = "经验ID。") Long id,
             @ToolParam(description = "可选。要读取的特定版本号，如 7 表示读取 v7 的历史内容。不传则返回所有历史版本列表。"
@@ -730,12 +730,12 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库中相关经验。返回标题、摘要、标签、模板类型、状态等信息。默认只搜 ACTIVE（正常）状态；如需历史/归档经验，传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。检索会做宽松召回并按相关度排序，不必保证每个词都命中；用完整自然语言描述场景效果最好。⚠️ 未传 projectName 时只搜全局经验，项目专属经验不会出现在结果里；问题属于某个项目时请传 projectName。若 0 结果，会返回相近经验与排查建议，请先确认确实没有可复用经验，再考虑 create_experience 沉淀。")
+    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景效果最好）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局，项目经验不会出现。0 结果会给出相近经验与排查建议。")
     public String searchExperience(
-            @ToolParam(description = "完整的场景描述，用空格分隔多个关键词。例如：'Nginx 反向代理 HTTPS 配置'、'MySQL 慢查询 性能优化'、'Docker 部署 Spring Boot'。不要只传单个笼统的词如'nginx'") String query,
-            @ToolParam(description = "可选。指定搜索的模板类型：problem_solution(问题解决方案)、knowledge_doc(知识文档)、todo_list(待办事项)、bug_fix(Bug修复记录)、config_guide(配置指南)、how_to(操作指南)、schedule_plan(计划排期)、goal(目标)。不传则搜索所有类型。", required = false) String templateType,
-            @ToolParam(description = "可选。指定搜索的状态，默认只搜索 ACTIVE（正常可用）。如需搜索已完成或已过期的经验，传：COMPLETED,DEPRECATED,BROKEN。传 ALL 则搜索所有状态。", required = false) String includeStatus,
-            @ToolParam(description = "可选。限定在某个项目内搜索，填项目名称或别名（如'回金算'、'huijinsuan'）。不传则只搜索全局经验——项目专属经验不会出现在全局搜索结果中。", required = false) String projectName,
+            @ToolParam(description = "场景描述，空格分隔多个关键词。别只传单个笼统词（如 nginx）") String query,
+            @ToolParam(description = "可选。模板类型过滤：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal。不传=全部", required = false) String templateType,
+            @ToolParam(description = "可选。默认只搜 ACTIVE；要已完成/过期传 COMPLETED,DEPRECATED,BROKEN，ALL=全部", required = false) String includeStatus,
+            @ToolParam(description = "可选。项目名或别名（如 回金算 / huijinsuan）。不传只搜全局（项目经验不出现）", required = false) String projectName,
             @ToolParam(description = "可选。本次返回条数，默认 20，上限 50。要一次看更多就调大（例如 50），不要靠反复换关键词。", required = false) Integer limit,
             @ToolParam(description = "可选。偏移量，默认 0。上一页末尾提示「下一页 offset=N」时照抄该值翻页。", required = false) Integer offset,
             @ToolParam(description = "可选。true=精简模式，只给 ID/标题/类型/摘要（省 token，适合先扫一遍挑目标）；false=默认完整信息（含标签/作者/更新时间/历史版本提示）。", required = false) Boolean brief) {
@@ -1165,7 +1165,7 @@ public class ExpHubTools {
      * 真正删除必须由用户在后台「待删队列」里确认执行。
      * 标记后该经验立刻从搜索结果中消失（检索只查 ACTIVE），但内容仍在库里，用户可一键恢复。
      */
-    @Tool(name = "mark_for_deletion", description = "【标记待删，不是删除】把一条错误的/过时的/重复的经验标记为「待删」，由用户在后台确认后才真正删除。你没有删除权限，这是你能做的唯一动作。适用场景：发现自己写错了内容、创建了重复经验、记录了已失效的方案。⚠️ 必须填 reason 说明为什么该删（用户据此决定删不删）；标记后该经验立即从搜索结果中消失，但内容仍可恢复。如误标，用 cancel_deletion 撤回。")
+    @Tool(name = "mark_for_deletion", description = "【标记待删，不是删除】把错误/过时/重复的经验标记待删，由用户在后台确认后才真正删除（你没有删除权限）。⚠️ 必须写 reason。标记后立即从搜索结果消失，内容仍可恢复；误标用 cancel_deletion 撤回。")
     public String markForDeletion(
             @ToolParam(description = "要标记待删的经验 ID") Long id,
             @ToolParam(description = "删除原因（必填）。说清为什么该删，例如：重复经验（与 ID:123 同内容）/ 内容错误（命令已失效）/ 测试数据误写。用户在后台据此决定是否真删。") String reason,
@@ -1248,7 +1248,7 @@ public class ExpHubTools {
      * AI 反馈经验是否有帮助
      * 这是 ExpHub 核心价值指标：经验是否真正帮助了 AI 助手解决问题
      */
-    @Tool(name = "report_experience_result", description = "反馈经验是否有帮助。当你参考了某条经验去执行任务后，无论成功还是失败都应该调用此工具反馈结果。⚠️ 重要：如果经验没有帮助，必须填写 feedback 说明原因（如方案过时、环境不匹配、步骤缺失等），并且你应该用自己找到的正确方案完成任务后，创建一篇新经验并通过 newExperienceId 参数关联起来，这样后续的 AI 助手就能同时看到新旧两篇经验，获得更完整的参考。")
+    @Tool(name = "report_experience_result", description = "反馈经验是否有帮助。参考某条经验执行任务后，无论成败都应反馈。⚠️ 没帮助必须写 feedback 说明原因（过时/环境不符/步骤缺失），并用 newExperienceId 关联你新建的正确经验。")
     public String reportExperienceResult(
             @ToolParam(description = "经验ID（必填），你参考过的经验ID") Long id,
             @ToolParam(description = "该经验是否有帮助。true=成功帮助你解决了问题，false=没有帮助") boolean helpful,
@@ -1373,16 +1373,16 @@ public class ExpHubTools {
     /**
      * 创建新经验
      */
-    @Tool(name = "create_experience", description = "创建新经验。【重要】创建前必须先调用 get_template() 选择模板！必须填写 category、tags、aliases、summary 等元数据，否则其他AI无法搜索到你的经验。可选 projectId：把经验直接写进项目空间（不传则写全局）；项目经验默认隔离、不出现在全局搜索中，属于该项目的内容应传 projectId。🔒 安全提醒：严禁在 content 中包含任何敏感信息（账号密码、API密钥、Token、数据库连接串、私钥、证书等），这些内容会被存储到服务器并可被其他人搜索到。")
+    @Tool(name = "create_experience", description = "创建新经验。必须先 get_template() 选模板；category/tags/aliases/summary 必填，否则别人搜不到。projectId=写进项目空间（项目经验不进全局搜索）。🔒 content 严禁含账号/密码/密钥/Token/连接串。")
     public String createExperience(
-            @ToolParam(description = "经验标题，简短明确。⚠️ 不要把版本号写进标题（如「v2」「v3」）——系统有独立的 version 字段自动管理版本，手写版本号必然与系统脱节。想体现迭代可在标题里用内容描述") String title,
+            @ToolParam(description = "经验标题，简短明确。⚠️ 别把版本号写进标题（版本由 version 字段管理）") String title,
             @ToolParam(description = "经验正文，使用Markdown格式，按 get_template 返回的结构填写。🔒 严禁包含账号密码、API密钥、Token、数据库连接串等敏感信息") String content,
             @ToolParam(description = "模板类型标识（必填），从 get_template 返回的 type 值中选择，如：problem_solution、knowledge_doc、todo_list") String templateType,
             @ToolParam(description = "分类（必填），如：服务器、开发、运维、部署、数据库、前端等，如不确定可填 未分类") String category,
             @ToolParam(description = "标签（必填），逗号分隔，至少3-5个关键词，如：Nginx,HTTPS,代理，如不确定可填 待分类") String tags,
-            @ToolParam(description = "别名/同义词（必填），逗号分隔，用户可能用不同关键词搜索，如：反向代理,reverse proxy，如不确定可填 无") String aliases,
+            @ToolParam(description = "别名/同义词（必填），逗号分隔，不确定填 无") String aliases,
             @ToolParam(description = "一句话摘要（必填），让其他AI快速判断是否相关") String summary,
-            @ToolParam(description = "作者名称。填写你自己的名字/标识，用于区分不同AI助手创建的经验。如：CodeBuddy、Claude、GPT-4等。") String authorName,
+            @ToolParam(description = "作者标识，区分不同 AI 助手（如 CodeBuddy）") String authorName,
             @ToolParam(description = "可选。归属项目ID：把这条经验直接写进项目空间。不传=写全局。只能填你名下的项目（用 list_projects 查）", required = false) Long projectId) {
         
         try {
@@ -1454,20 +1454,19 @@ public class ExpHubTools {
     @Tool(name = "update_experience", description = "更新已有经验的指定字段。**只传要改的字段即可，其余不传**（2026-10-25 起不再要求全字段必填）。要清空某字段用 clearFields=\"tags,aliases\" 显式声明 —— 不要靠传 null 表达清空（协议层分不出「没传」和「传 null」）。改一小段正文优先用 patch_experience（find/replace，不读全文不截断）；追加内容用 append_experience；整体重写长篇文档仍建议 export_document + import_document。🔒 严禁在 content 中包含账号密码、API密钥、Token 等敏感信息。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）。通过搜索或查看详情获取") Long id,
-            @ToolParam(description = "可选。新标题。不传=不改。⚠️ 不要把版本号写进标题（如「v2」），版本由系统 version 字段管理", required = false) String title,
-            @ToolParam(description = "可选。新正文（整体替换）。不传=不改。⚠️ 只改一小段请用 patch_experience，追加内容请用 append_experience —— 用本参数整篇写回容易把没读到的部分覆盖掉。🔒 严禁含账号密码/密钥/Token", required = false) String content,
+            @ToolParam(description = "可选。新标题。不传=不改。别把版本号写进标题（版本由 version 管理）", required = false) String title,
+            @ToolParam(description = "可选。新正文（整体替换）。只改一小段用 patch_experience，追加用 append_experience（整篇写回易覆盖没读到的部分）。🔒 严禁含账号/密钥/Token", required = false) String content,
             @ToolParam(description = "可选。分类，如：服务器、开发、运维。不传=不改", required = false) String category,
             @ToolParam(description = "可选。标签，逗号分隔。不传=不改。要清空请用 clearFields", required = false) String tags,
             @ToolParam(description = "可选。别名/同义词，逗号分隔。不传=不改。要清空请用 clearFields", required = false) String aliases,
             @ToolParam(description = "可选。一句话摘要。不传=不改。要清空请用 clearFields", required = false) String summary,
             @ToolParam(description = "可选。关联经验ID，逗号分隔。不传=不改。要清空请用 clearFields", required = false) String relatedIds,
             @ToolParam(description = "可选。修改作者名称。不传=不改", required = false) String authorName,
-            @ToolParam(description = "可选。强制覆盖开关，设为 true 可跳过截断检测。默认 false。一般不需要——局部修改请用 patch_experience", required = false) Boolean force,
-            @ToolParam(description = "可选。显式清空字段，逗号分隔。可清空：tags / aliases / summary / relatedIds / category（category 置为「未分类」）。title 与 content 不允许清空。例：clearFields=\"tags,aliases\"", required = false) String clearFields,
-            @ToolParam(description = "可选。调整归属：传项目ID=归入该项目；传 0=移回全局；不传=不改归属。用于把误落全局的文档归位，或把跨项目通用的经验从项目里移回全局", required = false) Long projectId,
-            @ToolParam(description = "可选。改模板类型：problem_solution / knowledge_doc / todo_list / bug_fix / config_guide / how_to / schedule_plan / goal / project_progress / generic。不传=不改。"
-                    + "（2026-10-26 前这个只能到网页端改 —— #4 明明是使用指南却被标成 problem_solution）", required = false) String templateType,
-            @ToolParam(description = "可选。**谁改的**——写进本版快照的操作人署名（审计用）。与 authorName 完全不同：authorName 改的是「文档作者」（作品归属），本参数只记「这一次是谁动的」。一个 API Key 常被多个助手共用，不传就都记成 Key 名，回溯时分不清谁改的（烛龙/白泽/阁主 共用一个 Key 时必须传）", required = false) String updatedName) {
+            @ToolParam(description = "可选。true=跳过截断检测。一般不需要，局部改请用 patch_experience", required = false) Boolean force,
+            @ToolParam(description = "可选。显式清空字段，逗号分隔：tags/aliases/summary/relatedIds/category（category 置「未分类」）。title、content 不可清空", required = false) String clearFields,
+            @ToolParam(description = "可选。归属：项目ID=归入该项目；0=移回全局；不传=不改", required = false) Long projectId,
+            @ToolParam(description = "可选。模板类型：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal/project_progress/generic。不传=不改", required = false) String templateType,
+            @ToolParam(description = "可选。**谁改的**（写进快照的审计署名）。与 authorName 不同：那个改的是「文档作者」。多助手共用 Key 时必须传", required = false) String updatedName) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -1735,7 +1734,7 @@ public class ExpHubTools {
      * <p>比 update 整篇写回安全得多：只替换命中的那一段，其余原样保留。
      * 但必须保证 find 唯一 —— 多处命中时宁可报错让调用方加长锚点，也不能替它猜改哪一处。
      */
-    @Tool(name = "patch_experience", description = "在经验正文里做**局部替换**（find → replace）。改一个错字、更新一行结论、替换一个失效命令时用这个，不要用 update_experience 整篇写回。⚠️ find 必须在正文里**恰好出现一次**：0 次会报错（锚点不存在，先 get_experience_detail 确认原文），多次也会报错（会误改别处，请加长 find 使其唯一）。find 至少 4 个字符。replace 传空字符串表示删除该段。")
+    @Tool(name = "patch_experience", description = "在正文里做局部替换（find→replace）。改错字、更新一行结论、换一个失效命令时用它，不要整篇写回。⚠️ find 必须在正文里**恰好出现一次**（0 次或多次都报错，可加长锚点），至少 4 字符。replace 传空串=删除该段。")
     public String patchExperience(
             @ToolParam(description = "经验ID") Long id,
             @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符。建议包含前后文让锚点唯一") String find,
@@ -2002,10 +2001,10 @@ public class ExpHubTools {
         return o == null ? "-" : String.valueOf(o);
     }
 
-    @Tool(name = "set_flags", description = "给经验打**机器可读标记**（待复核 / 疑似重复 / 已被取代 / 可能失效 / 质量存疑）。整理记忆、去重、标注可疑结论时用这个，**不要用 update_experience 改 tags 来打标记**。关键差别：本工具不递增版本号、不写版本快照、不动更新时间，所以反复打标记不会让版本表膨胀。flags 传空字符串 = 清空所有标记（清空时说明与署名也一并清掉）。检索和详情会回显标记，其他 AI 看到标记就知道这条结论存疑。")
+    @Tool(name = "set_flags", description = "给经验打机器可读标记（待复核/疑似重复/已被取代/可能失效/质量存疑）。**不要用 update_experience 改 tags 代替**：本工具不递增版本、不写快照、不动更新时间。flags 传空串=清空。标记会在检索与详情回显。")
     public String setFlags(
             @ToolParam(description = "经验ID。单个用这个；批量用 ids（两者可只传一个，同传会合并去重）", required = false) Long id,
-            @ToolParam(description = "标记，逗号分隔。规范值：needs_review(待复核) / duplicate(疑似重复) / superseded(已被取代) / stale(可能失效) / low_quality(质量存疑)。也认中文：待复核、重复、取代、过期/失效、存疑/低质。传空字符串表示清空全部标记。不在白名单里的词会被忽略并在返回里列出") String flags,
+            @ToolParam(description = "标记，逗号分隔：needs_review/duplicate/superseded/stale/low_quality（也认中文）。传空串=清空。白名单外的词会被忽略并列出") String flags,
             @ToolParam(description = "可选。标记说明：为什么打这个标记、复核了什么、和哪条重复（如「与 ID:377 结论重复，以 377 为准」）。这是给人和后续 AI 看的关键信息，建议写", required = false) String note,
             @ToolParam(description = "可选。**批量**：多个 ID，逗号分隔（如 \"470,477,478\"）。20 条打同一个标记不必调 20 次", required = false) String ids,
             @ToolParam(description = "可选。署名（谁打的标记）。不传=用当前 API Key 绑定的助手名。同一 Key 被多个助手共用时建议传", required = false) String authorName,
@@ -2811,13 +2810,13 @@ public class ExpHubTools {
         return sb.toString();
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。结果按性质分层（疑似字面重复 / 同话题演进链 / 进度日志记录 / 信息不足），**层内才按分数排** —— 只看分数会把最该判的那对埋掉。⚠️ 分层统计基于**全部超阈值对**，不受 limit 影响（limit 只决定这次展示几条）；所以别用「改 limit 后进度层不见了」判断降级是否生效。建议先 dryRun=true 看清单再决定是否入队。")
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比（实测全假阳性）。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。建议先 dryRun=true 看清单。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
-            @ToolParam(description = "可选。阈值，默认 0.50（实测本库 0.50 时约 23 对，人工十分钟能过一遍；想更宽松用 0.45，想更严用 0.55）。允许区间 [0.30, 0.95]，**超出区间会被直接拒绝并说明收到了多少**（不再静默改成 0.30 —— 静默修改会让「参数没生效」这种链路问题查不出来）", required = false) Double threshold,
+            @ToolParam(description = "可选。默认 0.50（0.45 更宽松 / 0.55 更严）。区间 [0.30,0.95]，**超区间直接拒绝并回显收到的值**", required = false) Double threshold,
             @ToolParam(description = "可选。最多返回/入队几条，默认 20，上限 50", required = false) Integer limit,
-            @ToolParam(description = "可选。一篇文档最多出现在几条候选里，默认 2 —— 防止同一个模板族（如一批同格式提示词）把队列占满。⚠️ 只在①层（疑似字面重复）豁免：一篇母档命中多个子页要一起判；②层及以下照常限流", required = false) Integer maxPerDoc,
-            @ToolParam(description = "可选。**进度/日志层最多展示几条，默认 5，传 0 = 不限**。这类记录天然是分阶段记录、一般不用判，摆一堆会吃掉①②层的名额（实测曾占 60%）", required = false) Integer progressSample,
+            @ToolParam(description = "可选。单篇最多几条候选，默认 2（防模板族刷屏）。⚠️ ①层（疑似字面重复）豁免，②层及以下生效", required = false) Integer maxPerDoc,
+            @ToolParam(description = "可选。进度/日志层最多展示几条，默认 5，传 0=不限（这类不用判，多了会吃①②层名额）", required = false) Integer progressSample,
             @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
             @ToolParam(description = "可选。**谁改的**——操作人署名（建议统一用这个）。不传=用当前 API Key 绑定的助手名", required = false) String updatedName) {
         try {
@@ -4012,13 +4011,10 @@ public class ExpHubTools {
     // 实测 598 条 / 3.87 MB，Top5 文档占 42%。
 
     @Tool(name = "archive_old_versions",
-          description = "【瘦身，不删数据】把超出保留窗口的历史版本从 doc_versions 搬到冷存档 doc_versions_archive，"
-                  + "腾出主表空间。⚠️ **默认 dryRun=true，只算不写**；确认清单后再传 dryRun=false 才真正执行。"
-                  + "三件事保证安全：① 只搬**历史副本**，当前正文（docs.content）一个字都不动；"
-                  + "② **先写归档表、确认成功后才删主表**，同一事务，不存在丢数据窗口；"
-                  + "③ 按 version 倒序保留最近 N 版，**最新版永不归档**。"
-                  + "归档可回查：用 list_archived_versions(id=...) 看某篇被搬走了哪几版。"
-                  + "建议起点 keepRecent=10（够回看近期改动，又能把 #644/#631 这类 60+ 版的长文档压到 10）。")
+          description = "【瘦身，不删数据】把超出保留窗口的历史版本搬进冷存档 doc_versions_archive。"
+                  + "⚠️ **默认 dryRun=true 只算不写**，确认后传 dryRun=false。"
+                  + "安全性：只搬历史副本（docs.content 不动）；先写归档再删主表（同事务）；最新版永不归档。"
+                  + "用 list_archived_versions 回查。建议 keepRecent=10。")
     public String archiveOldVersions(
             @ToolParam(description = "可选。只处理某篇文档（传文档 ID）；不传 = 全库扫描", required = false) Long id,
             @ToolParam(description = "可选。每篇保留最近几版，默认 10；允许区间 [3, 200]，**超出区间会被直接拒绝**（不静默改成边界值）", required = false) Integer keepRecent,
