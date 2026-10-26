@@ -1,0 +1,87 @@
+{
+  "_comment": "项目识别用的 df 快照。判据是 df<30%，所以必须与作用域绑定：项目识别发生在全局域（此时还不知道属于哪个项目），故用 N_global 作分母。重新生成见 tools/search_regression.py --print-df-sql。df 会随文档增长漂移（例：hjs 在我往 #677 追加了一段含 hjs 的文档后从 24 变 25），所以带 captured_at。",
+  "captured_at": "2026-10-26T23:0x+08:00",
+  "scope": "GLOBAL (project_id IS NULL)",
+  "n_global": 316,
+  "n_all_active": 574,
+  "df_global": {
+    "问题": 173,
+    "方案": 148,
+    "数据": 135,
+    "项目": 133,
+    "系统": 122,
+    "代码": 121,
+    "配置": 113,
+    "api": 112,
+    "API": 112,
+    "服务": 105,
+    "工具": 102,
+    "经验": 94,
+    "设计": 85,
+    "接口": 81,
+    "测试": 73,
+    "部署": 72,
+    "实现": 72,
+    "流程": 68,
+    "管理": 64,
+    "功能": 60,
+    "查询": 51,
+    "模块": 44,
+    "忆阁": 42,
+    "缓存": 37,
+    "agent": 37,
+    "助手": 36,
+    "回金算": 26,
+    "hjs": 25,
+    "回收": 21,
+    "入库单": 20,
+    "拆解": 19,
+    "DeepSeek": 9,
+    "价格": 9,
+    "用量": 9,
+    "报废车": 7,
+    "余额": 5,
+    "MemHaven": 5,
+    "拆解宝": 4,
+    "xy-api": 2,
+    "缓存命中": 2
+  },
+  "projects": [
+    {
+      "id": 1,
+      "name": "exphub",
+      "project_code": "exphub",
+      "aliases": "经验库,ExpHub,exphub项目,经验共享平台"
+    },
+    {
+      "id": 2,
+      "name": "回金算",
+      "project_code": "huijinsuan",
+      "aliases": "回金算,废旧件系统,HJS,hjs-admin,回收拆解进销存,huijinsuan项目"
+    },
+    {
+      "id": 3,
+      "name": "拆解宝（报废车回收模块）",
+      "project_code": "scrap-car-recycling",
+      "aliases": "拆解宝,报废车回收模块,鼎配通报废车,回收拆解,拆解厂,4S站报废车,scrap-plant-mini,scrap-car-recycling,报废车,回收模块"
+    },
+    {
+      "id": 4,
+      "name": "Jarvis",
+      "project_code": "jarvis",
+      "aliases": "Jarvis,贾维斯,Agent助手,agent assistant,智能助手,jarvis项目,个人助理"
+    },
+    {
+      "id": 5,
+      "name": "天津工业大学校友会",
+      "project_code": "tjpu-alumni",
+      "aliases": "天津工业大学校友会,校友会小程序,天津工大,TJPU校友会,army,army项目,xy-api,coolshiyue/army,校友会后端"
+    },
+    {
+      "id": 6,
+      "name": "忆阁 MemHaven",
+      "project_code": "memhaven",
+      "aliases": "忆阁,MemHaven,memhaven,记忆阁,第二大脑,AI记忆助手,个人记忆Agent"
+    }
+  ]
+}
