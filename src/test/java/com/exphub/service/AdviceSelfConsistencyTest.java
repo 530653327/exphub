@@ -86,4 +86,29 @@ class AdviceSelfConsistencyTest {
         assertTrue(d.contains("边界"),
                 "30% 贴近真重复上限，必须提醒打开两边确认：" + d);
     }
+
+    /**
+     * 标点不许叠：`evidence + "。"` 是唯一收尾处，任何分支自己再带句号就是「。。」。
+     *
+     * <p>2026-10-26 11:3x 阁主实测 ①层 4 对全部印出「说明不了谁属于谁。。」——
+     * 单个分支漏删句号，扫一次就在清单里出现 4 次。文案缺陷不该靠人眼逐条读。
+     */
+    @Test
+    void adviceMustNotDoublePunctuate() {
+        SimilarityScorer.Kind[] kinds = {SimilarityScorer.Kind.DUPLICATE, SimilarityScorer.Kind.SERIES,
+                SimilarityScorer.Kind.UNKNOWN, SimilarityScorer.Kind.PROGRESS};
+        int[][] shapes = {{40, 195, 47}, {42, 198, 60}, {0, 120, 5}, {0, 100, 90}, {33, 33, 33}, {0, 3, 2}};
+        String[][] titles = {{"地图设计", "地图3提示词"}, {"方案", "方案 v3"}, {"", ""}, {"补充说明", "主文档"}};
+        for (SimilarityScorer.Kind k : kinds) {
+            for (int[] s : shapes) {
+                for (String[] t : titles) {
+                    String d = SimilarityScorer.advice(k, s[0], 0.7, 25, s[1], s[2], t[0], t[1]);
+                    assertFalse(d.contains("。。"), "标点叠了（" + k + " " + s[0] + "/" + s[1] + "/" + s[2]
+                            + " " + t[0] + "↔" + t[1] + "）：" + d);
+                    assertFalse(d.contains("，，") || d.contains("；；") || d.contains("：："),
+                            "标点叠了：" + d);
+                }
+            }
+        }
+    }
 }
