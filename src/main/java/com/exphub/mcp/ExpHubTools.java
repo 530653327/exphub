@@ -2292,6 +2292,41 @@ public class ExpHubTools {
         return n >= 1 && n <= c.length ? c[n - 1] : "(" + n + ")";
     }
 
+    /**
+     * 同一母档的多个「并回母档再清子页」—— <b>串行依赖，不是多个独立操作</b>（2026-10-26 10:4x 阁主指出的唯一
+     * 「会让人按错数据动手」的问题）。
+     *
+     * <p>现场：①层 4 对 merge 全部指向母档 #63（子页 #65/#66/#67/#68）。回执把 4 对并列呈现，
+     * 看起来像 4 个独立操作；但**每并完一对，#63 的行数就变**，下一对的「独有 8 行」「覆盖 83%」
+     * 立刻过期。照着旧数字并第二对，并进去的可能已经不是那 8 行了。
+     *
+     * <p>顺序规则：子页独有行从少到多（改动最小的先做；每并完一对都要回头重读母档再核下一对）。
+     * 这只是**执行建议**，真正要紧的是「一次只并一对 + 并完重读」——不做成批量操作。
+     */
+    static String mergeFamilyPlan(Long motherId, java.util.List<SimilarityService.Row> pairs) {
+        java.util.List<SimilarityService.Row> ordered = new java.util.ArrayList<>(pairs);
+        ordered.sort(java.util.Comparator
+                .comparingInt(SimilarityService.Row::kidLines)
+                .thenComparing(SimilarityService.Row::kidId,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        StringBuilder sb = new StringBuilder();
+        sb.append("   ⚠️ **同族串行依赖：母档 #").append(motherId).append(" 有 ").append(ordered.size())
+          .append(" 对「并回母档再清子页」—— 这 ").append(ordered.size()).append(" 对不是 ")
+          .append(ordered.size()).append(" 个独立操作**：每并完一对，#").append(motherId)
+          .append(" 的行数就会变，后几对的「独有 N 行 / 覆盖 X%」是**并之前**算出来的数字，会过期。\n");
+        sb.append("   建议顺序（子页独有行从少到多）：");
+        for (int k = 0; k < ordered.size(); k++) {
+            SimilarityService.Row r = ordered.get(k);
+            if (k > 0) sb.append(" → ");
+            sb.append("第").append(k + 1).append("步 #").append(r.kidId())
+              .append("（独有 ").append(r.kidLines()).append(" 行）");
+        }
+        sb.append("\n   做法：**一次只并一对** → 并完打开 #").append(motherId)
+          .append(" 读一遍确认真的并进去了 → 再核下一对的独有行还对不对得上 → 对不上就停下来重判，别照旧数字并。\n");
+        sb.append("   要回头核「这几份原本是不是并列记录」，看被略去的同族交叉对 ID（列在各层头），按 ID 查原文。\n");
+        return sb.toString();
+    }
+
     @Tool(name = "scan_similar_docs", description = "全库两两打分，把「可能重复 / 可能互相取代」的经验对放进整理候选队列。整理记忆的主力工具。默认只比同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内），跨项目不比 —— 实测跨项目全是假阳性（各项目的 AGENTS.md 章节标题标签全同，两两 0.87 但各自属于不同项目）。⚠️ 只入队、不判定、不改任何正文：重复/取代最终由人用 resolve_candidate 定。结果按性质分层（疑似字面重复 / 同话题演进链 / 进度日志记录 / 信息不足），**层内才按分数排** —— 只看分数会把最该判的那对埋掉。⚠️ 分层统计基于**全部超阈值对**，不受 limit 影响（limit 只决定这次展示几条）；所以别用「改 limit 后进度层不见了」判断降级是否生效。建议先 dryRun=true 看清单再决定是否入队。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
@@ -2358,10 +2393,36 @@ public class ExpHubTools {
                 //    —— 没差额还让人去找差额，等于凭空造一个不存在的东西。
                 //    规则：**只在真有差额时渲染解释**；有差额时也不许含糊其辞。
                 if (gap > 0) {
-                    sb.append("（差额 ").append(gap)
-                      .append(" 条 = 各层规则主动省略：③层进度类默认只抽样 ")
-                      .append(SimilarityService.DEFAULT_PROGRESS_SAMPLE)
-                      .append(" 条 / per-doc 限流，明细见每层括号）");
+                    // ⚠️ 2026-10-26 10:5x 阁主第 4 条（与「编解释」同源）：这里原来不管实际发生什么，
+                    //    都并列写「③层抽样 / per-doc 限流」。这轮差额 2 条**全来自③层抽样上限**，
+                    //    per-doc 一次都没挤掉（回执自己还写着「已补回」），却仍被列成原因 ——
+                    //    等于把「可能的因」写成「已经发生的因」。
+                    //    规则：**只摆按真实计数非零的因**，逐项写出条数；一项都没发生就说清是「本来就没那么多对」。
+                    int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0;
+                    for (SimilarityService.TierDetail d : r.tierDetail().values()) {
+                        bySample += d.droppedBySample();
+                        byPerDoc += d.droppedPerDoc();
+                        byOmitted += d.droppedRedundant();
+                        byLimit += d.droppedByLimit();
+                    }
+                    java.util.List<String> causes = new java.util.ArrayList<>();
+                    int shortOfAbove = Math.max(0, r.limit() - r.aboveThreshold());
+                    if (shortOfAbove > 0) {
+                        causes.add("超阈值对只有 " + r.aboveThreshold() + " 对，比 limit 少 " + shortOfAbove + " 条");
+                    }
+                    if (bySample > 0) {
+                        causes.add("③层进度/日志类只抽样 " + SimilarityService.DEFAULT_PROGRESS_SAMPLE
+                                + " 条，省 " + bySample + " 条");
+                    }
+                    if (byPerDoc > 0) {
+                        causes.add("「单篇最多 " + r.maxPerDoc() + " 条候选」挤掉 " + byPerDoc + " 条");
+                    }
+                    if (byOmitted > 0) causes.add("同族交叉对已略去 " + byOmitted + " 条");
+                    if (byLimit > 0) causes.add("被 limit 截断 " + byLimit + " 条");
+                    sb.append("（差额 ").append(gap).append(" 条 = ")
+                      .append(causes.isEmpty() ? "各项计数都为 0 —— 回执自相矛盾，请报缺陷"
+                                               : String.join("；", causes))
+                      .append("）");
                 }
                 if (filled) {
                     sb.append("；另有 ").append(r.filledPerDoc())
@@ -2376,6 +2437,15 @@ public class ExpHubTools {
                 int i = 1;
                 int groupNo = 0;
                 SimilarityScorer.Kind last = null;
+                // 同一母档的多个「并回母档再清子页」按母档归组：它们是串行依赖，不是多个独立操作。
+                // 先按**全部展示行**归组（家族可能跨层），组头只渲染一次，避免同一家族说四遍。
+                java.util.Map<Long, java.util.List<SimilarityService.Row>> mergeFamilies =
+                        new java.util.LinkedHashMap<>();
+                for (SimilarityService.Row r2 : r.rows()) {
+                    if (r2.motherId() == null) continue;
+                    mergeFamilies.computeIfAbsent(r2.motherId(), x -> new java.util.ArrayList<>()).add(r2);
+                }
+                java.util.Set<Long> planShown = new java.util.HashSet<>();
                 for (SimilarityService.Row row : r.rows()) {
                     // 层与层之间插一条分隔，让「分数低的反而更重要」这件事无法被忽略
                     if (row.kind() != last) {
@@ -2416,9 +2486,14 @@ public class ExpHubTools {
                             }
                             if (d.droppedRedundant() > 0) {
                                 sb.append("｜另有 ").append(d.droppedRedundant())
-                                  .append(" 条是**①层家族的内部交叉对，已略去**")
-                                  .append("（这几份与母档的关系已在①层逐对给过结论，")
-                                  .append("这里再列一遍只会和①层的「清掉这一份」打架）");
+                                  .append(" 条是**同族文档之间的交叉对，已略去**");
+                                // ⚠️ 2026-10-26 10:4x 阁主：光报「已略去 6 条」，动手前就无从回头核对
+                                //    「这几份原本是不是并列记录」。**列出 ID 备查（一行字，不占名额）**。
+                                if (!d.omittedSamples().isEmpty()) {
+                                    sb.append("：").append(String.join("、", d.omittedSamples()));
+                                }
+                                sb.append("（这几份与母档的关系已在①层逐对给过结论，")
+                                  .append("这里再列一遍只会和①层的「清掉这一份」打架；要回头核它们的原文，按上面 ID 查）");
                             }
                             if (d.droppedBySample() > 0) {
                                 sb.append("｜另有 ").append(d.droppedBySample())
@@ -2430,6 +2505,14 @@ public class ExpHubTools {
                             sb.append("）");
                         }
                         sb.append("\n");
+                        // 组头把「同族串行依赖」摊开（2026-10-26 10:4x 阁主第 1 条）
+                        for (SimilarityService.Row r2 : r.rows()) {
+                            if (r2.kind() != row.kind() || r2.motherId() == null) continue;
+                            java.util.List<SimilarityService.Row> fam = mergeFamilies.get(r2.motherId());
+                            if (fam == null || fam.size() < 2) continue;
+                            if (!planShown.add(r2.motherId())) continue;   // 同一个母档只说一次
+                            sb.append(mergeFamilyPlan(r2.motherId(), fam));
+                        }
                         last = row.kind();
                     }
                     sb.append(i++).append(". ").append(SimilarityScorer.Score.fmt(row.score()))

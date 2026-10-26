@@ -115,10 +115,26 @@ public class SimilarityService {
 
     public record L0Result(boolean ok, String note, int compared, List<L0Hit> hits, int enqueued) {}
 
-    /** 扫描出来的一行结果 */
+    /**
+     * 扫描出来的一行结果。
+     *
+     * @param motherId 「并回母档再清子页」时的母档 ID（其余动作为 null）
+     * @param kidId    同上，被并进去的子页 ID
+     * @param kidLines 同上，子页独有行数 —— <b>这个数字只在「并之前」成立</b>，
+     *                 同一母档的每一对并完都会变（2026-10-26 阁主指出的串行依赖）
+     */
     public record Row(Long docA, String titleA, Long docB, String titleB,
                       double score, String reason, String queueState,
-                      SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
+                      SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice,
+                      Long motherId, Long kidId, int kidLines) {
+
+        /** 只描述「像什么」、不涉及合并方向时的构造（母档/子页留空） */
+        public Row(Long docA, String titleA, Long docB, String titleB,
+                   double score, String reason, String queueState,
+                   SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
+            this(docA, titleA, docB, titleB, score, reason, queueState, kind, sharedLines, coverage, advice,
+                    null, null, 0);
+        }
 
         /** 分层排序键：先按「像的是什么」，同层再比分数 —— 单靠分数排会把演进链排到真重复前面 */
         static java.util.Comparator<Row> order() {
@@ -311,8 +327,17 @@ public class SimilarityService {
                     SimilarityScorer.Sketch a = list.get(i);
                     SimilarityScorer.Sketch b = list.get(j);
                     // 同一作用域内 docA<docB 只是入队口径，这里按分数排序前的展示顺序不重要
+                    //
+                    // ⚠️ 2026-10-26 10:4x 阁主指出「同族多对 merge 的串行依赖」（唯一会让人按错数据动手的）：
+                    //    一个母档同时命中 4 个子页时，4 对都给 merge，但每并完一对母档行数就变，
+                    //    后一对的「独有 N 行 / 覆盖 X%」立刻过期，回执却把 4 对并列呈现。
+                    //    → 把「母档 / 子页 / 子页独有行」一并带出去，渲染层才能按母档分组给出执行顺序。
+                    long[] sides = mergeSides(s, a.id(), b.id());
                     above.add(new Row(a.id(), a.title(), b.id(), b.title(), s.total(), s.reason(), null,
-                            s.kind(), s.sharedLines(), s.lineCoverage(), s.diagnosis()));
+                            s.kind(), s.sharedLines(), s.lineCoverage(), s.diagnosis(),
+                            sides == null ? null : sides[0],
+                            sides == null ? null : sides[1],
+                            sides == null ? 0 : (int) sides[2]));
                 }
             }
         }
@@ -391,7 +416,8 @@ public class SimilarityService {
                 }
             }
             rowsOut.add(new Row(r.docA(), r.titleA(), r.docB(), r.titleB(), r.score(), r.reason(), state,
-                    r.kind(), r.sharedLines(), r.coverage(), r.advice()));
+                    r.kind(), r.sharedLines(), r.coverage(), r.advice(),
+                    r.motherId(), r.kidId(), r.kidLines()));
         }
 
         notes.add("只比较同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内）：跨项目实测全是假阳性"
@@ -410,9 +436,13 @@ public class SimilarityService {
         //    规则：**只有真的没用满 limit 才提差额，并且直接把差额数字写出来**（不要让人翻明细）。
         String capNote = "";
         if (selected.size() < above.size()) {
+            // ⚠️ 2026-10-26 10:5x 阁主第 4 条：这里原来写「差额 N 条是各层规则主动省略」——
+            //    把「可能的因」当成「已经发生的因」。实际差额常常全部来自③层抽样上限，
+            //    per-doc 一次都没挤掉，范围行却并列报「per-doc 限流」。
+            //    现在范围行**只报差额数字**，归因留给层头（那里是按真实计数拼的），不在这里猜。
             capNote = (maxRows > selected.size())
                     ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size())
-                      + " 条是各层规则主动省略，明细见分层）"
+                      + " 条，**每条的真实归因见下面的层头**，不在这里猜）"
                     : "（limit=" + maxRows + "，已用满；其余超阈值的对见分层）";
         }
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"
@@ -439,7 +469,16 @@ public class SimilarityService {
      */
     public record TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
                              int droppedBySample, int droppedRedundant,
-                             java.util.List<String> droppedSamples) {
+                             java.util.List<String> droppedSamples,
+                             /** 被略去的同族交叉对（形如「#65↔#66」）—— 一行字备查，不占名额 */
+                             java.util.List<String> omittedSamples) {
+
+        public TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
+                          int droppedBySample, int droppedRedundant,
+                          java.util.List<String> droppedSamples) {
+            this(above, shown, droppedPerDoc, droppedByLimit, droppedBySample, droppedRedundant,
+                    droppedSamples, java.util.List.of());
+        }
 
         /** 这一层有没有「没展示出来」的对 */
         public boolean hasDrop() {
@@ -516,15 +555,22 @@ public class SimilarityService {
         //      结果补位机制又按原顺序把它们补回来 —— ②层 15 条里 6 条（40%）是这些对，结论全 distinct、纯占位。
         //   → 一并解决：**①层家族内部的交叉对不再展示**。判据是「两侧都出现在①层的某一对里」——
         //     这几份的关系在①层已逐对判过，②层这一对没有新信息，留着只会与①层的「清掉这一份」打架。
-        //   ⚠️ 只在**两侧都在①层家族内**时跳过；①层家族成员与家族外的对（如 #67↔#68 之外的普通对）照常展示。
-        java.util.Set<Long> judgedDocs = new java.util.HashSet<>();
+        //   ⚠️ 只在**同族**（连通到同一篇母档）时跳过；家族成员与家族外的对（如 #67↔#68 之外的普通对）照常展示。
+        //
+        // ⚠️ 2026-10-26 10:4x 阁主指出（潜在，当时无实例）：判定键原来是「①层已判文档全集」，
+        //    而不是「同一母档家族」。当时①层刚好有三个互不相干的家族（#63 族、#159↔#160、#59↔#71），
+        //    于是「两侧都在集合里」碰巧等于「同族」。**将来 #159 若与 #63 在②层成对，会被误略** ——
+        //    这两条从没在①层判过关系，略去等于凭空删掉一条有信息量的候选。
+        //    修法：按母档分区（对①层每一对做并查集，familyId = 连通分量的代表），
+        //    只有 docA 与 docB 落在**同一个分量**里才略去。
+        java.util.Map<Long, Long> famParent = new java.util.LinkedHashMap<>();
         for (Row r : sortedAbove) {
             if (r.kind() == SimilarityScorer.Kind.DUPLICATE) {
-                judgedDocs.add(r.docA());
-                judgedDocs.add(r.docB());
+                familyUnion(famParent, r.docA(), r.docB());
             }
         }
-        java.util.List<Row> redundant = new java.util.ArrayList<>();
+        java.util.Map<SimilarityScorer.Kind, java.util.List<String>> omitted =
+                new java.util.LinkedHashMap<>();
 
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
@@ -532,11 +578,10 @@ public class SimilarityService {
                 progressRows.add(r);   // 攒着，等可判层都坐下了再说
                 continue;
             }
-            // ①层家族内部交叉对：①层已逐对判过，这里跳过（补位也不许把它捞回来）
-            if (k != SimilarityScorer.Kind.DUPLICATE
-                    && judgedDocs.contains(r.docA()) && judgedDocs.contains(r.docB())) {
+            // 同族交叉对：①层已逐对判过，这里跳过（补位也不许把它捞回来）
+            if (k != SimilarityScorer.Kind.DUPLICATE && sameFamily(famParent, r)) {
                 c.get(k)[5]++;
-                redundant.add(r);
+                noteOmitted(omitted, k, r);
                 continue;
             }
             int[] cnt = c.get(k);
@@ -567,9 +612,9 @@ public class SimilarityService {
         for (Row r : perDocDropped) {
             if (selected.size() >= maxRows) break;
             // 双保险：同族交叉对即使进了候选池也不许补回（它的关系在①层已判过）
-            if (judgedDocs.contains(r.docA()) && judgedDocs.contains(r.docB())) {
+            if (sameFamily(famParent, r)) {
                 c.get(r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind())[5]++;
-                redundant.add(r);
+                noteOmitted(omitted, r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind(), r);
                 continue;
             }
             selected.add(r);
@@ -623,9 +668,64 @@ public class SimilarityService {
             int[] v = e.getValue();
             detail.put(e.getKey(), new TierDetail(v[0], shownNow.getOrDefault(e.getKey(), 0),
                     stillDropped.getOrDefault(e.getKey(), 0), v[3], v[4], v[5],
-                    samples.getOrDefault(e.getKey(), java.util.List.of())));
+                    samples.getOrDefault(e.getKey(), java.util.List.of()),
+                    omitted.getOrDefault(e.getKey(), java.util.List.of())));
         }
         return new Selection(java.util.List.copyOf(selected), detail, filled);
+    }
+
+    /**
+     * 一对候选如果是「并回母档再清子页」，返回 {@code {母档ID, 子页ID, 子页独有行}}；其余动作返回 null。
+     *
+     * <p>母档 = 行数多的一侧。两侧一样多时按 ID 小的当母档 —— 只是给一个确定的顺序，
+     * <b>不代表判断</b>（判不了就不该给 merge，这是 decide() 的事）。
+     *
+     * <p>抽成纯函数是为了能单测「母档/子页」不会取反：取反的后果是把母档清掉、把子页留下。
+     */
+    static long[] mergeSides(SimilarityScorer.Score s, Long idA, Long idB) {
+        if (s == null || idA == null || idB == null) return null;
+        SimilarityScorer.Action act = SimilarityScorer.decide(s.kind(), s.sharedLines(),
+                s.linesA(), s.linesB(), s.titleA(), s.titleB());
+        if (act != SimilarityScorer.Action.MERGE_THEN_CLEAR) return null;
+        boolean aMother = s.linesA() > s.linesB() || (s.linesA() == s.linesB() && idA < idB);
+        return aMother ? new long[]{idA, idB, s.uniqueB()} : new long[]{idB, idA, s.uniqueA()};
+    }
+
+    /** 记一条「被略去的同族交叉对」，回执里要能点到具体 ID（只点 ID，不展开内容） */
+    private static void noteOmitted(java.util.Map<SimilarityScorer.Kind, java.util.List<String>> acc,
+                                    SimilarityScorer.Kind k, Row r) {
+        acc.computeIfAbsent(k, x -> new java.util.ArrayList<>()).add("#" + r.docA() + "↔#" + r.docB());
+    }
+
+    /** 并查集：把①层判过的一对并到同一族（族代表固定取分量里最小的文档 ID，便于回执对账） */
+    static void familyUnion(java.util.Map<Long, Long> parent, Long a, Long b) {
+        if (a == null || b == null) return;
+        Long ra = familyRoot(parent, a), rb = familyRoot(parent, b);
+        if (ra == null) { parent.put(a, a); ra = a; }
+        if (rb == null) { parent.put(b, b); rb = b; }
+        if (ra.equals(rb)) return;
+        if (ra < rb) parent.put(rb, ra); else parent.put(ra, rb);
+    }
+
+    /** 找族代表；文档没在①层判过 → null（不是任何家族的成员） */
+    static Long familyRoot(java.util.Map<Long, Long> parent, Long x) {
+        if (x == null || !parent.containsKey(x)) return null;
+        Long cur = x;
+        while (!cur.equals(parent.get(cur))) cur = parent.get(cur);
+        parent.put(x, cur);   // 路径压缩
+        return cur;
+    }
+
+    /**
+     * 这一对的两侧是否在**同一族**里。
+     *
+     * <p>「都在①层的某对里」不等于「同族」：①层可能同时有 #63 族和 #159↔#160，
+     * 拿全集当键会把跨族对（#65↔#159）也略去 —— 而这两份从未被判过关系。
+     */
+    static boolean sameFamily(java.util.Map<Long, Long> parent, Row r) {
+        Long ra = familyRoot(parent, r.docA());
+        Long rb = familyRoot(parent, r.docB());
+        return ra != null && ra.equals(rb);
     }
 
     /** 阈值是否落在允许区间（NaN 一律无效） */

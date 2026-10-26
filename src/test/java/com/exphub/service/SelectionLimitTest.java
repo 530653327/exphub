@@ -218,6 +218,65 @@ class SelectionLimitTest {
                 "②层不该再出现子页之间的交叉对：" + sel.rows());
     }
 
+    /**
+     * 「略去」的键必须是**同一母档家族**，不是「①层已判文档全集」（2026-10-26 10:4x 阁主第 3 条）。
+     *
+     * <p>现状①层恰好有三个互不相干的家族（#63 族、#159↔#160、#59↔#71），所以「两侧都在集合里」
+     * 碰巧等于「同族」。但只要 #159 与 #63 在②层成对，就会被误略 ——
+     * 而这两条**从来没在①层判过关系**，略去等于凭空删掉一条有信息量的候选。
+     */
+    @Test
+    void crossFamilyPairsMustNotBeOmitted() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 65, 0.54));    // 家族 A
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 159, 160, 0.53));  // 家族 B（与 A 无关）
+        all.add(row(SimilarityScorer.Kind.SERIES, 65, 159, 0.50));      // 跨家族的一对
+        all.sort(SimilarityService.Row.order());
+
+        SimilarityService.Selection sel = SimilarityService.select(all, 50, 2);
+        SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
+
+        assertEquals(1, ser.shown(), "跨家族的对必须展示：两侧都在①层出现过 ≠ 同族");
+        assertEquals(0, ser.droppedRedundant(), "只有同族内部的交叉对才能略去");
+        assertTrue(ser.omittedSamples().isEmpty(), "没略去就不许列「已略去」的 ID");
+    }
+
+    /** 同族交叉对仍要略去，并且**把被略去的 ID 如实列出来**（阁主：动手前要能回头核对） */
+    @Test
+    void omittedFamilyPairsMustBeListedById() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 65, 0.54));
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 66, 0.53));
+        all.add(row(SimilarityScorer.Kind.SERIES, 65, 66, 0.50));
+        all.sort(SimilarityService.Row.order());
+
+        SimilarityService.Selection sel = SimilarityService.select(all, 50, 2);
+        SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
+
+        assertEquals(1, ser.droppedRedundant());
+        assertEquals(List.of("#65↔#66"), ser.omittedSamples(), "略去的对要点到具体 ID，不能只报个条数");
+    }
+
+    /**
+     * 母档 / 子页不许取反 —— 取反的后果是「把母档清掉、把子页留下」。
+     *
+     * <p>用真实数据形态：#63（195 行）↔ #67（47 行），共享 40 行 → 子页独有 7 行。
+     */
+    @Test
+    void mergeSidesMustNotSwapMotherAndKid() {
+        SimilarityScorer.Score s = new SimilarityScorer.Score(0.55, 0.5, 0.5, 0.5,
+                40, 195, 47, true, 40.0 / 47, 40, 25, false, "地图设计", "地图3提示词");
+        long[] sides = SimilarityService.mergeSides(s, 63L, 67L);
+        assertTrue(sides != null, "母集-子集应给出 merge");
+        assertEquals(63L, sides[0], "母档是行数多的那侧");
+        assertEquals(67L, sides[1], "子页是行数少的那侧");
+        assertEquals(7L, sides[2], "子页独有行 = 47 - 40");
+
+        // 判不了的动作不许硬给方向
+        SimilarityScorer.Score other = new SimilarityScorer.Score(0.55, 0.5, 0.5, 0.5,
+                0, 100, 90, true, 0.0, 0, 0, false, "地图1", "地图2");
+        assertEquals(null, SimilarityService.mergeSides(other, 1L, 2L), "0 行重合 + 并列记录 → 没有 merge 方向");    }
+
     @Test
     void lowerTierDropsAreReportedWithSamples() {
         List<SimilarityService.Row> all = sorted();
