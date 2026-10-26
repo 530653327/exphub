@@ -637,7 +637,13 @@ public class ExpHubTools {
         // 归档里也没有 —— 现在要区分「该文档有归档但没这个版本号」和「根本没归档过」
         List<DocVersionArchive> allArchived = versionArchiveService.listArchived(id);
         StringBuilder sb = new StringBuilder();
-        sb.append("❌ **v").append(version).append(" 不存在**（主表与冷存档都查过了）\n\n");
+        // ⚠️ 2026-10-26 08:3x 阁主实测：这里原来写「❌ v13 不存在」+「那它从来没被保存过
+        //    （例如该文档是从 v21 直接创建的）」——**第二句是替缺陷编了一个听起来合理的解释**。
+        //    #101 是从 v1 一路走来的，不可能「从 v21 创建」；真因是门户更新没存快照。
+        //    后果比措辞严重：读的人接受了这个解释，就不会再怀疑「版本号被消耗了」——
+        //    10 个永久缺失的版本号本该被发现，却被这句话解释掉了。
+        //    改成：只陈述事实（库里没有副本）+ 已知原因（带日期和修复状态）+ 明确说「不要替它编原因」。
+        sb.append("❌ **v").append(version).append(" 在库里没有副本**（主表与冷存档都查过了）\n\n");
         sb.append("当前最新版本: v").append(doc.getVersion()).append("\n");
 
         List<Integer> mainVersions = new ArrayList<>();
@@ -656,8 +662,42 @@ public class ExpHubTools {
         } else {
             sb.append("**冷存档**: 该文档从未归档过任何版本\n");
         }
-        sb.append("\n> 如果你要的版本号确实不在上面两个列表里，那它从来没被保存过（例如该文档是从 v");
-        sb.append(doc.getVersion()).append(" 直接创建的）。");
+
+        java.util.List<Integer> arcVs = new ArrayList<>();
+        for (DocVersionArchive a : allArchived) arcVs.add(a.getVersion());
+        VersionArchiveService.VersionCoverage cov = VersionArchiveService.VersionCoverage.of(mainVersions, arcVs);
+
+        if (version > cov.maxVersion()) {
+            // 事实可判：比「库里存在的最高版本号」还大 —— 这个号还没产生（或记错了）
+            sb.append("\n> 已存最高版本号是 **v").append(cov.maxVersion())
+              .append("**，你要的 v").append(version).append(" 比它还大 —— ")
+              .append("**这个版本号还没产生**（或版本号记错了）。当前正文是 v")
+              .append(doc.getVersion()).append("，先用 get_experience_detail(id=")
+              .append(id).append(") 看当前内容。");
+            return sb.toString();
+        }
+
+        if (cov.missing().contains(version)) {
+            sb.append("\n> ⚠️ v").append(version).append(" 属于**本库已知的缺号**（缺号清单：");
+            for (int i = 0; i < cov.missing().size() && i < 8; i++) {
+                if (i > 0) sb.append("、");
+                sb.append("v").append(cov.missing().get(i));
+            }
+            sb.append("）。这类版本号**被消耗过，但当时没留下正文副本**。\n");
+            sb.append("> 已知原因：早期经门户「更新我的经验」改正文时只递增版本号、未存快照")
+              .append("（2026-10-26 已修，此后不再新增）。**这些副本当时就没存，不是被归档搬走的**。\n");
+            sb.append("> ⚠️ **不要把它解释成「该文档是从 v").append(doc.getVersion())
+              .append(" 直接创建的」** —— 这份文档的主表版本号从 v")
+              .append(mainVersions.isEmpty() ? cov.maxVersion()
+                      : (int) java.util.Collections.min(mainVersions))
+              .append(" 起连续演进，只是那几版没留底。**给缺陷编一个合理的原因，下一个人就不会再追它了。**");
+            return sb.toString();
+        }
+
+        // 剩下的情况：版本号在已存范围内、但既不在主表也不在归档 —— 理论上不该出现，如实说不知道
+        sb.append("\n> v").append(version).append(" 不在主表、也不在冷存档，但它落在已存范围（v1 ~ v")
+          .append(cov.maxVersion()).append("）内，也不在缺号清单里 —— ")
+          .append("**这是不一致状态，请直接报给维护者**（不要自行推测原因）。");
         return sb.toString();
     }
 
