@@ -222,9 +222,9 @@ docker compose restart exphub  # 重启应用
 
 ---
 
-## 📦 MCP 工具列表（共 36 个）
+## 📦 MCP 工具列表（共 41 个）
 
-### 全局经验库（23 个）
+### 全局经验库（25 个）
 
 | 工具 | 功能 |
 |---|---|
@@ -235,7 +235,7 @@ docker compose restart exphub  # 重启应用
 | `get_experience_history` | 查看经验的历史版本（平台每次更新自动留存快照） |
 | `get_template` | 获取创建经验的模板 |
 | `create_experience` | 创建新经验 |
-| `update_experience` | 更新已有经验的**指定字段**（不传=不改）；要清空字段用 `clearFields` 显式声明 |
+| `update_experience` | 更新已有经验的**指定字段**（不传=不改）；要清空字段用 `clearFields` 显式声明；可改 `templateType`、`projectId`（0=移回全局） |
 | `append_experience` | **在正文末尾追加一段**（服务端拼接，不读全文 → 不会因截断丢原文）。补充进展的首选 |
 | `patch_experience` | **局部替换**正文（find→replace，必须唯一命中）。改错字/更新一行结论的首选，别用整篇写回 |
 | `update_experience_status` | 更新经验生命周期状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED） |
@@ -244,13 +244,15 @@ docker compose restart exphub  # 重启应用
 | `report_experience_result` | 反馈经验是否有帮助（成功/失败都建议反馈） |
 | `mark_for_deletion` | **标记待删**（不是删除）：必须写原因，标记后立刻从检索结果消失，内容仍在库里，由用户在后台确认才真正删除 |
 | `cancel_deletion` | 撤销待删标记，恢复为正常状态 |
-| `set_flags` | **打机器可读标记**（待复核/疑似重复/已被取代/可能失效/质量存疑）：不递增版本、不写版本快照、不动更新时间，反复打标记不会让版本表膨胀 |
+| `set_flags` | **打机器可读标记**（待复核/疑似重复/已被取代/可能失效/质量存疑）：不递增版本、不写版本快照、不动更新时间，反复打标记不会让版本表膨胀；**支持 `ids` 批量**（逗号分隔，20 条不必调 20 次） |
 | `mark_superseded` | **标记旧经验已被新经验取代**（D1 整理）：只写一条指针，不合并正文、不改状态、不递增版本；检索与详情会在旧条上显示「⛔ 已被 #N 取代」 |
 | `clear_superseded` | 撤销取代关系，恢复为独立条目 |
 | `add_review_candidate` | 把一对疑似重复的经验放进**整理候选队列**（不入队等于没发现）：不改任何数据；已判为「不同」的对不会重新入队。得分取值 **(0, 1]**，传 0 视为「未提供」存 NULL（相似度 0 = 完全不像），传 >1 会被拒 |
-| `list_review_candidates` | 查看候选队列（默认待判断，按得分倒序），带得分、理由、来源、两条标题 |
+| `list_review_candidates` | 查看候选队列（默认待判断，按得分倒序），带得分、理由、来源、两条标题；队列长时用 `brief=true`（每条一行，12 条约 1k 字符而不是 4k） |
 | `resolve_candidate` | 处理候选：`duplicate`（两条都打标记，**不合并**）/ `superseded`（旧→新指针）/ `distinct`（判为不同，此后不再入队）/ `skip` |
-| `scan_similar_docs` | **全库两两打分，自动生成候选对**（整理记忆的主力）：默认只比同一作用域内（全局库↔全局库、项目内↔项目内），跨项目不比 —— 实测跨项目全是假阳性；`dryRun=true` 先看清单不入队；一篇文档最多出现在 N 条候选里（默认 2），防止模板族占满队列 |
+| `scan_similar_docs` | **全库两两打分，自动生成候选对**（整理记忆的主力）：默认只比同一作用域内（全局库↔全局库、项目内↔项目内），跨项目不比 —— 实测跨项目全是假阳性；`dryRun=true` 先看清单不入队；一篇文档最多出现在 N 条候选里（默认 2），防止模板族占满队列。回执带索引生成时刻（索引 TTL 3 分钟）与「另有多少对未展示」的逐项归因 |
+| `diff_experiences` | **逐行比较两篇经验**：共同行 / A 独有 / B 独有 + 两侧独有行原文。**不剔模板行**（判重复要看实际差在哪）。判断「是否重复、哪份是母档、差的是新增还是改写」不必读两篇全文；行数太少时会明说「逐行不可靠」 |
+| `get_tool_stats` | **只读**工具调用统计：总览（总调用/今日/成功率/平均耗时）、使用榜、每日趋势、**从未被调用的已注册工具清单**。判断哪些工具该合并或下线、哪些描述值得压缩时用它 |
 
 ### 三个「列表」工具怎么选（职责边界）
 
@@ -264,7 +266,7 @@ docker compose restart exphub  # 重启应用
 
 一句话：**按时间 → recent，按归属 → project，按内容 → search。**
 
-### 项目空间（13 个）
+### 项目空间（14 个）
 
 | 工具 | 功能 |
 |---|---|
@@ -280,7 +282,15 @@ docker compose restart exphub  # 重启应用
 | `get_project_progress` | 读取最近的进度记录（默认 3 条，便于接续） |
 | `list_project_experiences` | 列出项目专属经验 |
 | `promote_to_global` | 把项目专属经验提升为全局经验 |
+| `delete_project` | **删除项目（只删项目本身，不删文档）**：必须用 `confirmName` 回填项目名；项目里还有文档时直接拒删，要先把文档移走 |
 | `generate_workflow_prompt` | 生成开发任务提示词（模板 + 项目默认变量 + 本次任务变量） |
+
+### 版本维护（2 个）
+
+| 工具 | 功能 |
+|---|---|
+| `archive_old_versions` | **瘦身，不删数据**：把超出保留窗口的历史版本搬进冷存档 `doc_versions_archive`。默认 `dryRun=true` 只算不写；只搬历史副本（当前正文不动）、先写归档再删主表（同事务）、最新版永不归档 |
+| `list_archived_versions` | 查看某篇文档被搬走了哪些版本（归档只是搬位置，`get_experience_history` 仍可读） |
 
 ### 经验模板类型（8 种）
 

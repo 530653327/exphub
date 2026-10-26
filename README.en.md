@@ -142,9 +142,9 @@ java -jar target/exphub-1.0.0.jar
 
 ---
 
-## 📦 MCP Tools (36 total)
+## 📦 MCP Tools (41 total)
 
-### Global Experience Library (23)
+### Global Experience Library (25)
 
 | Tool | Purpose |
 |---|---|
@@ -155,7 +155,7 @@ java -jar target/exphub-1.0.0.jar
 | `get_experience_history` | View historical versions (snapshots kept automatically) |
 | `get_template` | Get creation templates |
 | `create_experience` | Create an experience |
-| `update_experience` | Update **specified fields only** (omitted = unchanged); clear fields via `clearFields` |
+| `update_experience` | Update **specified fields only** (omitted = unchanged); clear fields via `clearFields`; can also change `templateType` and `projectId` (0 = move back to global) |
 | `append_experience` | **Append** a block to the end of the body (server-side concat, no full-text read, never truncates the original) |
 | `patch_experience` | **Local replace** in the body (find→replace, must match exactly once) |
 | `update_experience_status` | Set lifecycle status (ACTIVE/COMPLETED/BROKEN/DEPRECATED) |
@@ -164,15 +164,17 @@ java -jar target/exphub-1.0.0.jar
 | `report_experience_result` | Report whether an experience helped |
 | `mark_for_deletion` | **Mark for deletion** (not delete): reason required, disappears from search, user confirms in admin |
 | `cancel_deletion` | Cancel a deletion mark |
-| `set_flags` | **Machine-readable flags** (needs_review / duplicate / superseded / stale / low_quality): no version bump, no snapshot, does not touch `updated_at` |
+| `set_flags` | **Machine-readable flags** (needs_review / duplicate / superseded / stale / low_quality): no version bump, no snapshot, does not touch `updated_at`; **batch via `ids`** (comma-separated) |
 | `mark_superseded` | Mark an old experience as replaced by a newer one (pointer only: no merge, no version bump) |
 | `clear_superseded` | Remove the replaced-by pointer |
 | `add_review_candidate` | Queue a suspected duplicate pair for human review (changes no data). Score range is **(0, 1]**; `0` is treated as "not provided" (NULL), `>1` is rejected |
-| `list_review_candidates` | List the review queue (PENDING by default, ordered by score) |
+| `list_review_candidates` | List the review queue (PENDING by default, ordered by score); use `brief=true` for long queues (one line per row, ~1k chars instead of ~4k for 12 rows) |
 | `resolve_candidate` | Resolve a candidate: `duplicate` (flag both, no merge) / `superseded` / `distinct` / `skip` |
-| `scan_similar_docs` | **Score every pair in a scope and enqueue candidates automatically** (the main tool for memory cleanup). Only compares within the same scope (global↔global, project↔project) because cross-project matches were all false positives; `dryRun=true` previews without enqueueing; at most N pairs per doc (default 2) so one template family cannot flood the queue |
+| `scan_similar_docs` | **Score every pair in a scope and enqueue candidates automatically** (the main tool for memory cleanup). Only compares within the same scope (global↔global, project↔project) because cross-project matches were all false positives; `dryRun=true` previews without enqueueing; at most N pairs per doc (default 2) so one template family cannot flood the queue. Receipts carry the index build time (3-minute TTL) and a per-cause breakdown of pairs not shown |
+| `diff_experiences` | **Line-by-line diff of two experiences**: shared lines / only-A / only-B plus the first N unique lines of each side. **Template lines are NOT stripped** (for duplicate decisions you need to see the real difference). Use it instead of reading both documents in full; says so explicitly when a side has too few lines for a reliable line-level diff |
+| `get_tool_stats` | **Read-only** tool call stats: overview (total / today / success rate / avg cost), usage ranking, daily trend, and **registered tools never called** — the first-hand data for deciding what to merge or retire |
 
-### Project Spaces (13)
+### Project Spaces (14)
 
 | Tool | Purpose |
 |---|---|
@@ -188,7 +190,15 @@ java -jar target/exphub-1.0.0.jar
 | `get_project_progress` | Read recent progress records (default 3) |
 | `list_project_experiences` | List project-scoped experiences |
 | `promote_to_global` | Promote a project experience to global |
+| `delete_project` | **Delete a project (the project only, never its documents)**: `confirmName` must repeat the project name; refused while the project still has documents — move them out first |
 | `generate_workflow_prompt` | Generate a dev-task prompt (template + project vars + task vars) |
+
+### Version Maintenance (2)
+
+| Tool | Purpose |
+|---|---|
+| `archive_old_versions` | **Slim down, delete nothing**: move versions beyond the retention window into the cold archive `doc_versions_archive`. `dryRun=true` by default; only history copies are moved (current body untouched), archive is written before the main table is pruned (same transaction), the newest version is never archived |
+| `list_archived_versions` | List which versions of a document were moved away (archiving relocates, `get_experience_history` still reads them) |
 
 ### Experience Templates (8)
 
