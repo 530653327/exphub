@@ -441,8 +441,7 @@ public class SimilarityService {
             //    per-doc 一次都没挤掉，范围行却并列报「per-doc 限流」。
             //    现在范围行**只报差额数字**，归因留给层头（那里是按真实计数拼的），不在这里猜。
             capNote = (maxRows > selected.size())
-                    ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size())
-                      + " 条，**每条的真实归因见下面的层头**，不在这里猜）"
+                    ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size()) + " 格没被用满）"
                     : "（limit=" + maxRows + "，已用满；其余超阈值的对见分层）";
         }
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"

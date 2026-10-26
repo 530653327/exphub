@@ -2397,7 +2397,12 @@ public class ExpHubTools {
                     //    都并列写「③层抽样 / per-doc 限流」。这轮差额 2 条**全来自③层抽样上限**，
                     //    per-doc 一次都没挤掉（回执自己还写着「已补回」），却仍被列成原因 ——
                     //    等于把「可能的因」写成「已经发生的因」。
-                    //    规则：**只摆按真实计数非零的因**，逐项写出条数；一项都没发生就说清是「本来就没那么多对」。
+                    //    规则：**只摆按真实计数非零的因**，逐项写出条数。
+                    //
+                    // ⚠️ 2026-10-26 10:4x 自查又发现同一处还有第二个病：「差额」和「省略条数」是两个数。
+                    //    实测 limit=22、超阈值 23 对、展示 12 对 → 差额 10 格，而③层抽样省了 11 条，
+                    //    印成「差额 10 条 = 抽样省 11 条」自相矛盾（超阈值 23 > limit 22，有一条本来也放不下）。
+                    //    → **两个数分开摆、各自归因**：差额 N 格（limit 没被用满）／另有 M 对未展示（逐项给因）。
                     int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0;
                     for (SimilarityService.TierDetail d : r.tierDetail().values()) {
                         bySample += d.droppedBySample();
@@ -2405,11 +2410,8 @@ public class ExpHubTools {
                         byOmitted += d.droppedRedundant();
                         byLimit += d.droppedByLimit();
                     }
+                    int notShown = Math.max(0, r.aboveThreshold() - r.rows().size());
                     java.util.List<String> causes = new java.util.ArrayList<>();
-                    int shortOfAbove = Math.max(0, r.limit() - r.aboveThreshold());
-                    if (shortOfAbove > 0) {
-                        causes.add("超阈值对只有 " + r.aboveThreshold() + " 对，比 limit 少 " + shortOfAbove + " 条");
-                    }
                     if (bySample > 0) {
                         causes.add("③层进度/日志类只抽样 " + SimilarityService.DEFAULT_PROGRESS_SAMPLE
                                 + " 条，省 " + bySample + " 条");
@@ -2419,10 +2421,16 @@ public class ExpHubTools {
                     }
                     if (byOmitted > 0) causes.add("同族交叉对已略去 " + byOmitted + " 条");
                     if (byLimit > 0) causes.add("被 limit 截断 " + byLimit + " 条");
-                    sb.append("（差额 ").append(gap).append(" 条 = ")
-                      .append(causes.isEmpty() ? "各项计数都为 0 —— 回执自相矛盾，请报缺陷"
-                                               : String.join("；", causes))
-                      .append("）");
+                    sb.append("（差额 ").append(gap).append(" 格没被用满");
+                    if (notShown == 0) {
+                        sb.append("：超阈值对只有 ").append(r.aboveThreshold()).append(" 对，比 limit 少 ")
+                          .append(gap).append(" 条 —— **不是限流，是本来就没那么多**");
+                    } else {
+                        sb.append("；**另有 ").append(notShown).append(" 对未展示**，逐项归因：")
+                          .append(causes.isEmpty() ? "各项计数都为 0 —— 回执自相矛盾，请报缺陷"
+                                                   : String.join("；", causes));
+                    }
+                    sb.append("）");
                 }
                 if (filled) {
                     sb.append("；另有 ").append(r.filledPerDoc())
