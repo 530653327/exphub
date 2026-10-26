@@ -2202,8 +2202,8 @@ public class ExpHubTools {
                 if (orphanJudged > 0) {
                     // ⚠️ 2026-10-26 12:0x 阁主第 3 条：已判的悬空行**不许**建议 skip ——
                     //    那等于用「忽略」改写「判为重复」。这里只说明判定保留。
-                    sb.append(orphanPending > 0 ? "；" : "：")
-                      .append("另有 **").append(orphanJudged)
+                    sb.append(orphanPending > 0 ? "；" : "，其中 ")
+                      .append("**").append(orphanJudged)
                       .append(" 条已判过**，判定保留、无需处理（悬空行只能清空，不能改判）");
                 }
                 sb.append("\n");
