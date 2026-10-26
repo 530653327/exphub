@@ -157,11 +157,11 @@ public class ExpHubTools {
     @Value("${exphub.mcp.detail-max-chars:20000}")
     private int detailMaxChars = 20000;
 
-    @Tool(name = "get_experience_detail", description = "获取经验**当前正文**。超长会分段返回：照抄回执末尾的「下一段 offset」续读。历史版本用 get_experience_history。")
+    @Tool(name = "get_experience_detail", description = "获取经验**当前正文**。超长会分段返回。历史版本用 get_experience_history。")
     public String getExperienceDetail(
             @ToolParam(description = "经验ID。") Long id,
             @ToolParam(description = "可选。正文起始字符偏移，默认 0。只在续读超长文档时用："
-                    + "照抄上一次回执里的「下一段 offset」即可。", required = false) Integer offset) {
+                    + "照抄上一次回执末尾的「下一段 offset」。", required = false) Integer offset) {
 
         Doc doc = docService.getById(id);
 
@@ -268,7 +268,7 @@ public class ExpHubTools {
     /**
      * 导出完整文档内容（无截断，适合长文档维护）
      */
-    @Tool(name = "export_document", description = "【文档维护专用】完整导出为 Markdown（无截断），可存本地 .md 编辑。短经验用 get_experience_detail。")
+    @Tool(name = "export_document", description = "【文档维护专用】完整导出为 Markdown（无截断），存本地 .md 编辑后用 import_document 回写。它只导当前正文，不列归档清单；短经验用 get_experience_detail。")
     public String exportDocument(
             @ToolParam(description = "经验ID（必填）") Long id) {
 
@@ -304,12 +304,12 @@ public class ExpHubTools {
     /**
      * 导入完整文档内容（信任式，无截断检测，与 export_document 配对使用）
      */
-    @Tool(name = "import_document", description = "【文档维护专用】上传本地完整 Markdown 替换指定经验，与 export_document 配对。自动创建版本快照。小修改用 update_experience。")
+    @Tool(name = "import_document", description = "【文档维护专用】上传本地完整 Markdown 替换指定经验。自动创建版本快照。小修改用 update_experience。")
     public String importDocument(
             @ToolParam(description = "经验ID（必填）") Long id,
             @ToolParam(description = "完整的Markdown正文内容，将替换整个经验内容") String content,
             @ToolParam(description = "可选。**改文档作者**（作品归属），非操作人署名；只记「谁改的」用 updatedName", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——操作人署名（作品归属用 authorName）", required = false) String updatedName) {
 
         try {
             log.info("ExpHubTools.importDocument: ENTRY - id={}, contentLength={}", id, content != null ? content.length() : 0);
@@ -724,7 +724,7 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局，项目经验不会出现。0 结果会给出相近经验与排查提示。")
+    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局，项目经验不会出现。0 结果会给出相近经验与排查建议。")
     public String searchExperience(
             @ToolParam(description = "场景描述，空格分隔多个关键词") String query,
             @ToolParam(description = "可选。模板类型过滤：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal", required = false) String templateType,
@@ -1104,11 +1104,11 @@ public class ExpHubTools {
     /**
      * 更新经验状态
      */
-    @Tool(name = "update_experience_status", description = "更新经验状态：ACTIVE(正常)、COMPLETED(已完成)、BROKEN(已失效)、DEPRECATED(已过期)。")
+    @Tool(name = "update_experience_status", description = "更新经验状态。")
     public String updateExperienceStatus(
             @ToolParam(description = "经验ID（必填）") Long id,
             @ToolParam(description = "新状态，可选值：ACTIVE(正常)、COMPLETED(已完成)、BROKEN(已失效)、DEPRECATED(已过期)") String status,
-            @ToolParam(description = "可选。**谁改的**——操作人署名（本工具只写调用日志，不影响版本快照）", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——仅写调用日志，不影响版本快照", required = false) String updatedName) {
         
         try {
             AiAssistant assistant = getCaller();
@@ -1180,8 +1180,8 @@ public class ExpHubTools {
     public String markForDeletion(
             @ToolParam(description = "要标记待删的经验 ID") Long id,
             @ToolParam(description = "删除原因（必填）：说清为什么该删，后台据此决定是否真删。") String reason,
-            @ToolParam(description = "可选。署名（谁标的），显示在后台待删队列。不传=用 Key 绑定助手名。多助手共用同一 Key 时必传，否则都记成同一人", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "可选。署名（谁标的），显示在后台待删队列", required = false) String authorName,
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -1225,7 +1225,7 @@ public class ExpHubTools {
     @Tool(name = "cancel_deletion", description = "撤销「待删」标记，恢复为 ACTIVE。只有被标待删的经验才需要调用。")
     public String cancelDeletion(
             @ToolParam(description = "要恢复的经验 ID") Long id,
-            @ToolParam(description = "可选。**谁改的**——操作人署名（本工具只写日志）", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——仅写日志", required = false) String updatedName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -1477,7 +1477,7 @@ public class ExpHubTools {
             @ToolParam(description = "可选。显式清空字段，逗号分隔：tags/aliases/summary/relatedIds/category（category 置「未分类」）。title、content 不可清空", required = false) String clearFields,
             @ToolParam(description = "可选。归属：项目ID=归入项目；0=移回全局", required = false) Long projectId,
             @ToolParam(description = "可选。模板类型：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal/project_progress/generic", required = false) String templateType,
-            @ToolParam(description = "可选。**谁改的**（写进快照的审计署名；与 authorName「文档作者」不同）。多助手共用 Key 时必须传", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——写进快照的审计署名（与 authorName「文档作者」不同）", required = false) String updatedName) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -1660,12 +1660,12 @@ public class ExpHubTools {
      * 而 AI 读到的正文是截断过的，写回就等于删掉没读到的部分。
      * 这里服务端直接拼接，客户端完全不持有全文。
      */
-    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。服务端直接拼接，你不需要读全文，因此不会因读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不缩短原文、不触发截断保护。一次传一段。")
+    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。这是补充进展/追加结论的首选方式：服务端直接拼接，你不需要读全文，因此绝不会因为读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不会缩短原文，不触发截断保护。一次传一段；要多段就多次调用。")
     public String appendExperience(
             @ToolParam(description = "经验ID") Long id,
-            @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）") String text,
-            @ToolParam(description = "可选。署名，记入版本快照。不传=用 Key 绑定助手名。多助手共用同一 Key 时必传，否则所有改动记在同一人名下", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）。建议以小标题开头，如「### 2026-10-25 补充：xxx」，便于日后区分批次") String text,
+            @ToolParam(description = "可选。署名（记入版本快照）。不传=用 Key 绑定助手名。多助手共用同一 Key 时必传，否则所有改动记在同一人名下", required = false) String authorName,
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -1748,10 +1748,10 @@ public class ExpHubTools {
     @Tool(name = "patch_experience", description = "在正文里做局部替换（find→replace）。改错字、更新一行结论、换一个失效命令时用它，不要整篇写回。⚠️ find 必须在正文里**恰好出现一次**（0 次或多次都报错，可加长锚点），至少 4 字符。replace 传空串=删除该段。")
     public String patchExperience(
             @ToolParam(description = "经验ID") Long id,
-            @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符") String find,
+            @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符。建议包含前后文让锚点唯一") String find,
             @ToolParam(description = "替换成的新内容。传空字符串表示删除这段") String replace,
-            @ToolParam(description = "可选。署名，记入版本快照。不传=用当前 API Key 绑定的助手名", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "可选。署名（也记入版本快照）", required = false) String authorName,
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -2014,8 +2014,8 @@ public class ExpHubTools {
             @ToolParam(description = "标记，逗号分隔：needs_review/duplicate/superseded/stale/low_quality（也认中文）。传空串=清空。白名单外的词会被忽略并列出") String flags,
             @ToolParam(description = "可选。标记说明：为什么打、和哪条重复", required = false) String note,
             @ToolParam(description = "可选。**批量**：多个 ID 逗号分隔", required = false) String ids,
-            @ToolParam(description = "可选。署名（谁打的标记），不传=用 Key 绑定助手名", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "可选。署名（谁打的标记）", required = false) String authorName,
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -2375,8 +2375,8 @@ public class ExpHubTools {
     public String markSuperseded(
             @ToolParam(description = "被取代的旧经验 ID") Long id,
             @ToolParam(description = "取代它的新经验 ID（必须真实存在）。通常是内容更准确、时间更新的那一条") Long byId,
-            @ToolParam(description = "可选。操作人署名，仅写日志。不传=用 Key 绑定助手名", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名（本工具只写日志，两者等价）", required = false) String updatedName) {
+            @ToolParam(description = "可选.操作人署名（标记取代关系，署名只进日志）", required = false) String authorName,
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -2417,8 +2417,8 @@ public class ExpHubTools {
     @Tool(name = "clear_superseded", description = "撤销「已被取代」标记，恢复成独立条目（不影响正文/状态/标记）。")
     public String clearSuperseded(
             @ToolParam(description = "要撤销取代关系的经验 ID（原本被标记为「已被取代」的那条）") Long id,
-            @ToolParam(description = "可选。操作人署名，仅写日志", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名（本工具只写日志，两者等价）", required = false) String updatedName) {
+            @ToolParam(description = "可选。操作人署名（撤销取代关系，署名只进日志）", required = false) String authorName,
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
             // ⚠️ 2026-10-25 修：`authorName` / `updatedName` 原来是两个死参数
@@ -2462,9 +2462,9 @@ public class ExpHubTools {
             @ToolParam(description = "候选对的第一条经验 ID") Long docA,
             @ToolParam(description = "候选对的第二条经验 ID") Long docB,
             @ToolParam(description = "可选。相似度得分，取值 (**0, 1]**，只用于排序，不是判决依据。没算出来就别传（传 0 会被当「未提供」存 NULL，因为相似度 0 的语义是「完全不像」；传大于 1 的值会被拒，若是百分制请除以 100）", required = false) java.math.BigDecimal score,
-            @ToolParam(description = "可选。为什么判为相似（写清理由，人才判得快）", required = false) String reasons,
+            @ToolParam(description = "可选但强烈建议。为什么判为相似，例如「标签交集:3（nginx,https,证书）；标题重叠 0.62；正文共享 2-gram 41%」。写清理由，人才判得快", required = false) String reasons,
             @ToolParam(description = "可选。来源标记：L0_CREATE / L1_DAILY / L2_WEEKLY / MANUAL。默认 MANUAL", required = false) String source,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，不传=用 Key 绑定助手名", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
@@ -2660,7 +2660,7 @@ public class ExpHubTools {
             @ToolParam(description = "处理动作：duplicate（确为重复）/ superseded（旧被新取代）/ distinct（判为不同）/ skip（忽略）") String action,
             @ToolParam(description = "可选。判断依据：为什么判为重复或取代。写下来，日后回看才知道当时为什么这么判", required = false) String note,
             @ToolParam(description = "可选。处理人署名", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
@@ -2880,15 +2880,15 @@ public class ExpHubTools {
         return sb.toString();
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比（实测全假阳性）。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。")
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。默认 0.50（0.45 更宽松 / 0.55 更严）。区间 [0.30,0.95]，**超区间直接拒绝并回显收到的值**", required = false) Double threshold,
             @ToolParam(description = "可选。最多返回/入队几条，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。单篇最多几条候选，默认 2（防模板族刷屏）。⚠️ ①层（疑似字面重复）豁免，②层及以下生效", required = false) Integer maxPerDoc,
-            @ToolParam(description = "可选。进度/日志层最多展示几条，默认 5，传 0=不限（这类不用判，多了会吃①②层名额）", required = false) Integer progressSample,
+            @ToolParam(description = "可选。进度/日志层最多展示几条，默认 5，传 0=不限", required = false) Integer progressSample,
             @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，不传=用 Key 绑定助手名", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
@@ -3258,11 +3258,11 @@ public class ExpHubTools {
     @Tool(name = "update_project", description = "更新项目信息（名称/别名/描述/默认测试命令/默认约束），不改的字段留空。")
     public String updateProject(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "新名称，留空表示不修改", required = false) String name,
-            @ToolParam(description = "新别名，留空表示不修改", required = false) String aliases,
-            @ToolParam(description = "新描述，留空表示不修改", required = false) String description,
-            @ToolParam(description = "默认测试命令，留空表示不修改", required = false) String defaultTestCmd,
-            @ToolParam(description = "默认约束，留空表示不修改", required = false) String defaultConstraints) {
+            @ToolParam(description = "新名称", required = false) String name,
+            @ToolParam(description = "新别名", required = false) String aliases,
+            @ToolParam(description = "新描述", required = false) String description,
+            @ToolParam(description = "默认测试命令", required = false) String defaultTestCmd,
+            @ToolParam(description = "默认约束", required = false) String defaultConstraints) {
         try {
             Project patch = new Project();
             patch.setName(name);
@@ -3298,7 +3298,7 @@ public class ExpHubTools {
     public String deleteProject(
             @ToolParam(description = "项目ID") Long projectId,
             @ToolParam(description = "回填项目名（必须与现有名称完全一致）—— 防「只给 ID 时误删」") String confirmName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，仅写日志", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
@@ -3354,7 +3354,7 @@ public class ExpHubTools {
     @Tool(name = "get_project_agents", description = "读取项目 AGENTS.md。不传 chapterNo 返回 MAIN 索引（含章节目录与红线）；传 chapterNo 返回该章全文。")
     public String getProjectAgents(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "可选。可选。章节号。不传则返回 MAIN 索引", required = false) String chapterNo) {
+            @ToolParam(description = "可选。章节号。不传则返回 MAIN 索引", required = false) String chapterNo) {
         try {
             Project proj = projectService.getProject(projectId);
             if (proj == null) {
@@ -3923,7 +3923,7 @@ public class ExpHubTools {
         };
     }
 
-    @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。默认返回 10 条，摘要压缩到 60 字便于扫读；要翻页用 offset，要看完整摘要用 get_experience_detail。")
+    @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。默认返回 10 条，摘要压缩到 60 字便于扫读。")
     public String listProjectExperiences(
             @ToolParam(description = "项目ID") Long projectId,
             @ToolParam(description = "可选。按模板类型过滤", required = false) String templateType,
@@ -4106,7 +4106,7 @@ public class ExpHubTools {
             @ToolParam(description = "可选。只处理某篇文档（传文档 ID）；不传 = 全库扫描", required = false) Long id,
             @ToolParam(description = "可选。每篇保留最近几版，默认 10；允许区间 [3, 200]，**超出区间会被直接拒绝**（不静默改成边界值）", required = false) Integer keepRecent,
             @ToolParam(description = "可选。true = 只算不写（**默认 true**）。确认清单没问题后再传 false 才真正搬", required = false) Boolean dryRun,
-            @ToolParam(description = "可选。**谁改的**——操作人署名，记进存档的 archived_by 字段", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——记进存档的 archived_by 字段", required = false) String updatedName) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
@@ -4175,8 +4175,7 @@ public class ExpHubTools {
     public String listArchivedVersions(
             @ToolParam(description = "必填。文档 ID") Long id,
             @ToolParam(description = "可选。是否输出正文片段（默认 false 只列版本号与时间，避免刷屏）", required = false) Boolean withPreview,
-            @ToolParam(description = "可选。从第几条开始列（默认 0）。版本很多时用回执里的「下一段 offset」续读，"
-                    + "不要用 export_document 代替 —— 它只导当前正文，不列归档清单。", required = false) Integer offset) {
+            @ToolParam(description = "可选。从第几条开始列（默认 0）。版本很多时用回执里的「下一段 offset」续读。", required = false) Integer offset) {
         try {
             List<DocVersionArchive> list = versionArchiveService.listArchived(id);
             StringBuilder sb = new StringBuilder();
