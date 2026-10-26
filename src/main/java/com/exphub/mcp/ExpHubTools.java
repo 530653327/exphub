@@ -170,11 +170,7 @@ public class ExpHubTools {
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("# ").append(doc.getTitle()).append("\n\n");
-        sb.append("**分类**: ").append(doc.getCategory()).append("\n");
-        sb.append("**作者**: ").append(doc.getAuthorName()).append("\n");
-        sb.append("**版本**: v").append(doc.getVersion()).append("\n");
-        sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+        sb.append(renderDetailHeader(doc));
         // 存疑横幅：取代关系在前（比待复核更硬），标记在后；两块都在正文之前，
         // 避免 AI 读完长文才发现结论存疑。文案与 export_document 共用同一个方法，
         // 因为剥离器认的是这里的字面前缀 —— 两边各写一份，总有一天会对不上。
@@ -1098,6 +1094,9 @@ public class ExpHubTools {
             case "COMPLETED" -> "✅ 已完成";
             case "BROKEN" -> "🔴 已失效";
             case "DEPRECATED" -> "⏸️ 已过期";
+            // ⚠️ 2026-10-26 16:5x 补：原来漏了这个分支，回执显示成「❓ PENDING_DELETE」——
+            //    机器看得懂、中文看不懂，等于没告诉人这条正等着被删。
+            case DocService.PENDING_DELETE -> "🗑 待删（未删除）";
             default -> "❓ " + status;
         };
     }
@@ -1141,7 +1140,21 @@ public class ExpHubTools {
             if (existing == null) {
                 return "❌ 未找到ID为" + id + "的经验";
             }
-            
+
+            // ⚠️ 2026-10-26 16:5x 阁主实跑标记链路发现（反向路径）：
+            //    已标待删的文档能用这个接口把状态改成 ACTIVE —— 等于 AI 自行撤回了
+            //    「等用户确认」这道闸门，还顺手把 delete_reason / delete_marked_by 留在库里
+            //    （updateStatus 只改 status，不清待删字段）。
+            //    待删的进出必须走专用工具：进 = mark_for_deletion，出 = cancel_deletion。
+            if (DocService.PENDING_DELETE.equals(existing.getStatus())) {
+                return "❌ 该经验当前是「待删」状态，不能用状态接口改它。\n\n"
+                     + "**ID**: " + id + "\n**标题**: " + existing.getTitle()
+                     + "\n**当前状态**: " + getStatusLabel(existing.getStatus())
+                     + "\n\n待删标记的进与出必须走专用工具（闸门在用户手里，不在 AI 手里）：\n"
+                     + "· 撤销待删 → `cancel_deletion(id=" + id + ")`（它会同时清掉删除原因与标记人）\n"
+                     + "· 改成别的状态 → 先 `cancel_deletion(id=" + id + ")`，再调本工具改状态";
+            }
+
             Doc updated = docService.updateStatus(id, upperStatus);
             String statusLabel = getStatusLabel(upperStatus);
             
@@ -2228,7 +2241,31 @@ public class ExpHubTools {
      * 反向查询只在详情做，列表不做 —— 列表每行查一次就是 N+1。
      */
     /**
-     * 存疑横幅：取代关系 + 标记。detail 与 export 共用。
+     * detail 的头部元信息块（标题 + 分类/作者/版本/标签/状态）。
+     *
+     * <p>抽成静态方法是为了让单测能直接断言渲染结果 ——
+     * {@code getExperienceDetail} 依赖注入的 docService，测试里 new 不出来，
+     * 而这块恰恰是本次要锁的（「状态行在不在」「待删说不说清」）。
+     *
+     * <p>⚠️ 2026-10-26 16:5x 阁主实跑标记链路发现：头部原本只有「分类/作者/版本/标签」，
+     * <b>一个字不提「这条已标记待删」</b>。于是下一个 AI 读到会当正常文档用，
+     * 而它已在待删队列等着人确认 —— 比列表那条更危险。
+     * 状态行放在头部而不是只在横幅里：横幅是「附加说明」，头部是「这份文档是什么」，
+     * 读的人第一眼扫头部就能看到，不读横幅也不会漏。
+     */
+    static String renderDetailHeader(Doc doc) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ").append(doc.getTitle()).append("\n\n");
+        sb.append("**分类**: ").append(doc.getCategory()).append("\n");
+        sb.append("**作者**: ").append(doc.getAuthorName()).append("\n");
+        sb.append("**版本**: v").append(doc.getVersion()).append("\n");
+        sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
+        sb.append("**状态**: ").append(getStatusLabel(doc.getStatus())).append("\n");
+        return sb.toString();
+    }
+
+    /**
+     * 存疑横幅：待删状态 + 取代关系 + 标记。detail 与 export 共用。
      *
      * <p>为什么必须共用一份文案：RenderArtifactStripper 是**按字面前缀**剥的
      * （`**⛔ 已被取代**:` / `> 结论以新条为准` / `**⚑ 标记**:` / `> ⚠️ 本条被标记为`）。
@@ -2238,8 +2275,47 @@ public class ExpHubTools {
      */
     private String doubtBanner(Doc doc, Long id) {
         StringBuilder sb = new StringBuilder();
+        sb.append(renderPendingDeleteBlock(doc));
         sb.append(renderSupersedeBlock(doc, id));
         sb.append(renderFlagBlock(doc));
+        return sb.toString();
+    }
+
+    /**
+     * 待删状态块（status=PENDING_DELETE）。
+     *
+     * <p>⚠️ 2026-10-26 16:5x 阁主实跑标记链路发现：detail 回执原本只有「分类/作者/版本/标签」，
+     * **一个字不提「这条已标记待删」**。后果比列表那条更危险 —— 下一个 AI 读到会当正常文档用，
+     * 而它已在待删队列等着人确认。
+     *
+     * <p>为什么按 ID 读要显示而不是隐藏：隐藏等于让文档「凭空消失」，
+     * 用户查 ID 会以为系统坏了、也会让 AI 误以为这条不存在。
+     * 正确做法是**读得到、但一眼看出它正等着被删**。
+     *
+     * <p>措辞与剥离规则绑定：前三行一律以 {@code 🗑} 开头，第四行复用
+     * 「&gt; ⚠️ 本条被标记为…」这个既有前缀（RenderArtifactStripper 已认）。
+     * 用独占 emoji 是为了让剥离规则**只吃渲染产物、不误伤正文**——
+     * 正文里出现「**状态**: ...」这类行太常见，用它当锚点会吃掉真内容。
+     */
+    static String renderPendingDeleteBlock(Doc doc) {
+        if (!DocService.PENDING_DELETE.equals(doc.getStatus())) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("**🗑 待删**: 本条（#").append(doc.getId())
+          .append("）已标记为待删（**尚未删除**，等用户确认后才会真正删除）\n");
+        if (doc.getDeleteReason() != null && !doc.getDeleteReason().isBlank()) {
+            sb.append("**🗑 待删原因**: ").append(abbreviate(doc.getDeleteReason(), 300)).append("\n");
+        }
+        sb.append("**🗑 待删标记人**: ")
+          .append(doc.getDeleteMarkedBy() != null && !doc.getDeleteMarkedBy().isBlank()
+                  ? doc.getDeleteMarkedBy() : "未知");
+        if (doc.getDeleteMarkedAt() != null) {
+            sb.append(" | ").append(doc.getDeleteMarkedAt());
+        }
+        sb.append("\n");
+        sb.append("> ⚠️ 本条被标记为「待删」，引用前请先核实；如标记有误，可调用 cancel_deletion(id=")
+          .append(doc.getId()).append(") 撤回。\n\n");
         return sb.toString();
     }
 
@@ -3710,7 +3786,9 @@ public class ExpHubTools {
                 return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
             }
             int n = (limit == null || limit <= 0) ? 3 : Math.min(limit, 50);
-            var list = projectService.listProgress(projectId, n);
+            // ⚠️ 2026-10-26 16:5x：同族漏网 —— 进度读端原来用 listProgress（不过滤待删），
+            //    与列表/检索口径不一致。统一用「可见」查询。
+            var list = projectService.listVisibleProgress(projectId, n);
             if (list.isEmpty()) {
                 return "项目「" + proj.getName() + "」还没有进度记录。";
             }
@@ -3856,8 +3934,17 @@ public class ExpHubTools {
             if (proj == null) {
                 return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。";
             }
-            var list = projectService.listProjectDocs(projectId, templateType);
+            // ⚠️ 2026-10-26 16:5x 阁主实跑发现：这里原来用 listProjectDocs（不过滤待删），
+            //    标记待删后该文档照样排在列表第一位 —— 而 search_experience 立刻搜不到它。
+            //    **同一个状态字段两个出口两套口径**，AI 会把它当正常文档用。
+            //    口径：读端一律用「可见」查询（排除 PENDING_DELETE），与检索一致。
+            var list = projectService.listVisibleProjectDocs(projectId, templateType);
+            long pendingDelete = projectService.countPendingDeleteInProject(projectId, templateType);
             if (list.isEmpty()) {
+                if (pendingDelete > 0) {
+                    return "项目「" + proj.getName() + "」没有可见的专属经验（"
+                          + pendingDelete + " 条已标记待删，未显示）。";
+                }
                 return "项目「" + proj.getName() + "」还没有专属经验。";
             }
 
@@ -3878,7 +3965,13 @@ public class ExpHubTools {
             // 否则他没法区分「这个数是实时的」和「这个数可能是 3 分钟前的」。
             sb.append("**数据时间**: 直读主表 ")
               .append(java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
-              .append("（无索引缓存，不存在 TTL 偏差）\n\n");
+              .append("（无索引缓存，不存在 TTL 偏差）\n");
+            // ⚠️ 2026-10-26 16:5x：被排除的待删项要**说出来**。
+            //    否则「共 N 条」与后台待删队列对不上，数字又不闭合了（阁主的老要求）。
+            if (pendingDelete > 0) {
+                sb.append("（另有 ").append(pendingDelete).append(" 条已标记待删，未显示）\n");
+            }
+            sb.append("\n");
             for (Doc d : page) {
                 sb.append("- 【ID:").append(d.getId()).append("】").append(d.getTitle())
                   .append(" [").append(getTemplateTypeLabel(d.getTemplateType())).append("]\n");

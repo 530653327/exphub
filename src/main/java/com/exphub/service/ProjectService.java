@@ -315,6 +315,12 @@ public class ProjectService {
 
     /**
      * 读取最近 N 条进度（按时间倒序）
+     *
+     * <p>⚠️ 这个方法**不过滤待删**，两个调用方语义不同，不要混用：
+     * <ul>
+     *   <li>后台删项目（ProjectController）—— 必须包含待删项，否则待删文档会变成孤儿</li>
+     *   <li>MCP 读端 —— 必须用 {@link #listVisibleProgress(Long, int)}</li>
+     * </ul>
      */
     public List<Doc> listProgress(Long projectId, int limit) {
         QueryWrapper<Doc> w = new QueryWrapper<>();
@@ -325,6 +331,13 @@ public class ProjectService {
 
     /**
      * 列出项目专属经验
+     *
+     * <p>⚠️ 这个方法**不过滤待删**，两个调用方语义不同，不要混用：
+     * <ul>
+     *   <li>后台删项目（ProjectController）—— 必须包含待删项，否则待删文档会变成孤儿</li>
+     *   <li>MCP 的 delete_project 计数 —— 必须包含，否则项目只剩待删文档时会被误判为「已清空」而放行删除</li>
+     *   <li>MCP 读端 list_project_experiences —— 必须用 {@link #listVisibleProjectDocs(Long, String)}</li>
+     * </ul>
      */
     public List<Doc> listProjectDocs(Long projectId, String templateType) {
         QueryWrapper<Doc> w = new QueryWrapper<>();
@@ -340,6 +353,79 @@ public class ProjectService {
         //    上限只用于防爆内存，量级要远大于真实项目文档数。
         w.last("LIMIT 2000");
         return docMapper.selectList(w);
+    }
+
+    // ==================== 读端口径：待删项对读端不可见 ====================
+    //
+    // ⚠️ 2026-10-26 16:5x 阁主实跑标记链路发现（#674 期间）：
+    //    标记待删后，search_experience 立刻搜不到（检索只查 ACTIVE），
+    //    但 list_project_experiences 照样把它排在项目列表第一位 ——
+    //    **同一个状态字段，两个出口两套口径**。搜索认它、列表不认。
+    //    后果不是「多显示一条」，而是下一个 AI 读到它会当正常文档用，
+    //    而它已经在待删队列里等着人确认。
+    //
+    //    口径定死：**凡「MCP 读端」列出文档，一律排除 PENDING_DELETE。**
+    //    例外只有一个：按 ID 定向读取（get_experience_detail / export_document）——
+    //    那里不能藏（否则用户会以为文档凭空消失），但**必须显示待删状态与原因**
+    //    （见 ExpHubTools.renderStatusBlock）。
+
+    /**
+     * 项目专属经验里「读端可见」的部分（排除已标记待删）。
+     *
+     * <p>SQL 条件写在 {@link #visibleProjectDocsQuery(Long, String)} 里，
+     * 单测直接断言那段 SQL —— 断言字符串常量等于什么都没验。
+     */
+    public List<Doc> listVisibleProjectDocs(Long projectId, String templateType) {
+        return docMapper.selectList(visibleProjectDocsQuery(projectId, templateType));
+    }
+
+    /**
+     * 项目进度里「读端可见」的部分（排除已标记待删）。
+     */
+    public List<Doc> listVisibleProgress(Long projectId, int limit) {
+        return docMapper.selectList(visibleProgressQuery(projectId, limit));
+    }
+
+    /**
+     * 项目下已标记待删的文档数（用于回执把口径说全）。
+     *
+     * <p>为什么要单独数：读端列表排除了待删项，若回执只写「共 N 条」，
+     * 而后台待删队列里还有 M 条，数字就对不上（阁主反复强调「计数必须对得上」）。
+     */
+    public long countPendingDeleteInProject(Long projectId, String templateType) {
+        QueryWrapper<Doc> w = new QueryWrapper<>();
+        w.eq("project_id", projectId).eq("status", DocService.PENDING_DELETE);
+        if (templateType != null && !templateType.trim().isEmpty()) {
+            w.eq("template_type", templateType.trim());
+        }
+        return docMapper.selectCount(w);
+    }
+
+    /**
+     * 可见项目文档的查询条件（排除待删）。
+     *
+     * <p>抽成包级静态是为了让单测能断言**生成的 SQL**，
+     * 而不是断言「代码里写了 ne(...)」这种自证式检查。
+     */
+    static QueryWrapper<Doc> visibleProjectDocsQuery(Long projectId, String templateType) {
+        QueryWrapper<Doc> w = new QueryWrapper<>();
+        w.eq("project_id", projectId);
+        if (templateType != null && !templateType.trim().isEmpty()) {
+            w.eq("template_type", templateType.trim());
+        }
+        w.ne("status", DocService.PENDING_DELETE);
+        w.orderByDesc("updated_at");
+        w.last("LIMIT 2000");
+        return w;
+    }
+
+    /** 可见项目进度的查询条件（排除待删） */
+    static QueryWrapper<Doc> visibleProgressQuery(Long projectId, int limit) {
+        QueryWrapper<Doc> w = new QueryWrapper<>();
+        w.eq("project_id", projectId).eq("template_type", "project_progress")
+         .ne("status", DocService.PENDING_DELETE)
+         .orderByDesc("created_at").last("LIMIT " + Math.max(1, Math.min(limit, 50)));
+        return w;
     }
 
     /**
