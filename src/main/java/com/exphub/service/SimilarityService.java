@@ -405,10 +405,19 @@ public class SimilarityService {
         }
         String scopeLabel = (projectId == null) ? "全部作用域（" + scopes.size() + " 个）"
                 : (projectId == 0 ? "仅全局库" : scopes.get(0).label());
+        // ⚠️ 2026-10-26 08:4x 阁主两次实测：这里原来无条件拼「（limit=N；差额见分层明细）」，
+        //    于是「展示 22 条 / limit=22」时也在喊「差额见分层明细」—— 没有差额，却让人去找差额。
+        //    规则：**只有真的没用满 limit 才提差额，并且直接把差额数字写出来**（不要让人翻明细）。
+        String capNote = "";
+        if (selected.size() < above.size()) {
+            capNote = (maxRows > selected.size())
+                    ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size())
+                      + " 条是各层规则主动省略，明细见分层）"
+                    : "（limit=" + maxRows + "，已用满；其余超阈值的对见分层）";
+        }
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"
                 + SimilarityScorer.Score.fmt(th) + " 共 " + above.size() + " 对"
-                + (selected.size() < above.size()
-                   ? "，本次展示 " + selected.size() + " 对（limit=" + maxRows + "；差额见分层明细）" : "");
+                + (selected.size() < above.size() ? "，本次展示 " + selected.size() + " 对" + capNote : "");
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
                 above.size(), dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
                 rowsOut, tierStats, sel.detail(), notes);

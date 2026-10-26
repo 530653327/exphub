@@ -47,6 +47,24 @@ class ScanReceiptSelfProofTest {
      *
      * <p>没差额还让人去找差额，等于凭空造一个不存在的东西。
      */
+    /**
+     * 范围行（summary）同样不许在没差额时喊「差额见分层明细」。
+     *
+     * <p>2026-10-26 08:4x 实测：展示 22 条 / limit=22 时，范围行仍印
+     * 「（limit=22；差额见分层明细）」—— 上一轮只改了第二处，漏了这个模板句。
+     */
+    @Test
+    void rangeLineMustNotMentionGapWhenFull() throws IOException {
+        // 剥注释：本轮修复说明里引用了旧模板句，不剥会把「记录为什么删」当成「还没删」
+        String src = SlicedReadAndStatusFilterTest.stripComments(new String(
+                java.nio.file.Files.readAllBytes(
+                        java.nio.file.Path.of("src/main/java/com/exphub/service/SimilarityService.java")),
+                StandardCharsets.UTF_8));
+        assertFalse(src.contains("；差额见分层明细）"),
+                "范围行不许无条件拼「差额见分层明细」——只有真没满 limit 时才提，且要写出差额数字");
+        assertTrue(src.contains("已用满"), "limit 用满时要明说「已用满」，而不是让人去找不存在的差额");
+    }
+
     @Test
     void zeroGapMustNotRenderExplanation() throws IOException {
         String src = read();
