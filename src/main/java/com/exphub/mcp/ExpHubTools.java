@@ -2108,7 +2108,19 @@ public class ExpHubTools {
             for (Doc d : docService.listByIds(ids)) docMap.put(d.getId(), d);
 
             StringBuilder sb = new StringBuilder();
-            sb.append("🗂 整理候选队列 · ").append(scope).append("（").append(list.size()).append(" 条）\n\n");
+            sb.append("🗂 整理候选队列 · ").append(scope).append("（").append(list.size()).append(" 条）\n");
+            // ⚠️ 2026-10-26 11:5x 阁主：「项目 #8 扫出 1 篇，队列里却有 2 条」——
+            //    两个数各自都对，差值来自**候选行不随文档删除失效**：行还在，它引用的文档没了。
+            //    以前只有逐行写「已不存在」，头行不给总数，读的人会以为「扫出 1 篇」和「2 条」矛盾。
+            int orphan = 0;
+            for (ReviewCandidate c : list) {
+                if (docMap.get(c.getDocA()) == null || docMap.get(c.getDocB()) == null) orphan++;
+            }
+            if (orphan > 0) {
+                sb.append("⚠️ 其中 **").append(orphan).append(" 条引用的文档已被删除**（候选行不会随文档删除消失，")
+                  .append("保留是为了复盘；这些行判不了任何东西，建议 resolve_candidate(..., action=skip) 收掉）\n");
+            }
+            sb.append("\n");
             int i = 1;
             for (ReviewCandidate c : list) {
                 Doc a = docMap.get(c.getDocA());

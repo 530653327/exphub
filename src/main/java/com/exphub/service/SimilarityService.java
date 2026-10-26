@@ -313,11 +313,15 @@ public class SimilarityService {
 
         int docs = 0, skippedShort = 0, skippedSuperseded = 0;
         long pairs = 0;
+        // 各作用域篇数 —— 回执要能自证「篇数 → 对数」的换算，否则读到 553 篇/51852 对只能靠猜
+        List<String> scopeSizes = new ArrayList<>();
         List<Row> above = new ArrayList<>();
         for (ScopeIndex idx : scopes) {
             docs += idx.sketches().size();
             skippedShort += idx.skippedShort();
             skippedSuperseded += idx.skippedSuperseded();
+            int n = idx.sketches().size();
+            scopeSizes.add(idx.label() + " " + n + " 篇→" + ((long) n * (n - 1) / 2) + " 对");
             List<SimilarityScorer.Sketch> list = idx.sketches();
             for (int i = 0; i < list.size(); i++) {
                 for (int j = i + 1; j < list.size(); j++) {
@@ -447,6 +451,15 @@ public class SimilarityService {
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"
                 + SimilarityScorer.Score.fmt(th) + " 共 " + above.size() + " 对"
                 + (selected.size() < above.size() ? "，本次展示 " + selected.size() + " 对" + capNote : "");
+        // ⚠️ 2026-10-26 11:5x 阁主：「553 篇却只比较 51852 对，而 553×552/2 = 152628」——
+        //    差的 10 万对不是预筛丢的，而是**跨作用域按设计不比**（全局↔全局、项目内↔项目内）。
+        //    这个算式以前只写在工具描述的一句话里，回执里从不写，于是每个读回执的人都要自己怀疑一遍。
+        //    规则：**「比较对数」必须自带算术**，两个加数都摆出来。
+        summary += pairArithmeticNote(docs, pairs);
+        if (!scopeSizes.isEmpty()) {
+            notes.add("各作用域篇数（篇数差 1 对 = 该作用域少比较 1 对；作用域内**两两全比、无任何预筛**）："
+                    + String.join("、", scopeSizes));
+        }
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
                 above.size(), dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
                 rowsOut, tierStats, sel.detail(), notes);
@@ -763,8 +776,25 @@ public class SimilarityService {
         return sb.toString();
     }
 
-    /** 作用域索引（带 3 分钟缓存） */
-    public ScopeIndex indexOf(Long projectId) {
+    /**
+     * 「比较对数」必须自带算术：553 篇 × 552 / 2 = 152,628，而实际只比 51,852——
+     * 差的 10 万对是**跨作用域按设计不比**，不是预筛丢了。以前回执只写结果不写算式，
+     * 每个读的人都得自己怀疑一遍（2026-10-26 11:5x 阁主）。
+     *
+     * <p>纯函数，便于钉守卫：{@code docs=553, pairs=51852} → 两个加数都要出现在句子里。
+     */
+    static String pairArithmeticNote(int docs, long pairs) {
+        if (docs <= 1) return "";
+        long allCombos = (long) docs * (docs - 1) / 2;
+        long cross = allCombos - pairs;
+        if (cross > 0) {
+            return "（全组合 " + allCombos + " 对 = 同作用域 " + pairs + " + **跨作用域 " + cross
+                    + " 对按设计不比**）";
+        }
+        return "（全组合 " + allCombos + " 对，全部同作用域，一对没漏）";
+    }
+
+    /** 作用域索引（带 3 分钟缓存） */    public ScopeIndex indexOf(Long projectId) {
         String key = cacheKey(projectId);
         Cached c = cache.get(key);
         long now = System.currentTimeMillis();
