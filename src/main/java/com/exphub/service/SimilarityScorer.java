@@ -348,6 +348,28 @@ public final class SimilarityScorer {
         };
     }
 
+    /**
+     * 去掉 advice 末尾的「动作句」，只留证据。
+     *
+     * <p><b>2026-10-26 13:2x 阁主实测</b>：①层第 1 条行尾写着
+     * 「已判 DISTINCT（候选#17）—— 不必再判」，紧接着下一行又渲染
+     * 「⛔ 动作：判 distinct」—— <b>上一句说不必再判，下一句又给出动作</b>。
+     * 已经判过的对不该再渲染动作句（动作已经执行过了，再给一遍就是让他重复劳动）。
+     *
+     * <p>动作句统一以 `\n　　` + 四个动作标记之一开头（见 {@link #actionSentence}），
+     * 所以按标记切，不按「第几行」切 —— 证据部分本身是多行的。
+     */
+    public static String withoutAction(String advice) {
+        if (advice == null || advice.isEmpty()) return "";
+        String[] markers = {"\n　　✅", "\n　　⛔", "\n　　⏭"};
+        int cut = -1;
+        for (String m : markers) {
+            int i = advice.indexOf(m);
+            if (i >= 0 && (cut < 0 || i < cut)) cut = i;
+        }
+        return cut > 0 ? advice.substring(0, cut) : advice;
+    }
+
     /** 共享的形态判定（advice 与 decide 必须用同一套，否则两处会给出不同结论） */
     public static Shape shapeFor(int sharedLines, int linesA, int linesB) {
         if (linesA == 0 || linesB == 0) return Shape.UNKNOWN;

@@ -51,6 +51,9 @@ public class ExpHubTools {
     private CallLogService callLogService;
 
     @Autowired
+    private McpToolRegistry mcpToolRegistry;
+
+    @Autowired
     private ProjectService projectService;
 
     @Autowired
@@ -1871,6 +1874,134 @@ public class ExpHubTools {
         }
     }
 
+    /**
+     * 工具使用统计（**只读**）—— 2026-10-26 13:2x 阁主 / #671：调用埋点有数据，但 MCP 侧没有读入口，
+     * 于是「要不要合并 detail / export / history」「描述太长要不要压」全靠猜。
+     *
+     * <p>关键一项是 <b>从未被调用的已注册工具</b>：注册表 + 埋点两边一减就知道哪些工具从来没被用过 ——
+     * 这是精简的第一手依据，比「我觉得这个没人用」可靠。
+     */
+    @Tool(name = "get_tool_stats", description = "【只读】工具调用统计：总览、工具使用榜、每日趋势、"
+            + "**从未被调用的已注册工具清单**。用于判断哪些工具该合并/下线、哪些描述值得压缩。"
+            + "数据来自 call_logs（action='TOOL'）。只统计不修改任何东西。")
+    public String getToolStats(
+            @ToolParam(description = "可选。统计最近几天，默认 7，上限 90", required = false) Integer days,
+            @ToolParam(description = "可选。使用榜最多列几个工具，默认 20，上限 50", required = false) Integer limit) {
+        try {
+            int d = (days == null || days < 1) ? 7 : Math.min(days, 90);
+            int n = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
+
+            Map<String, Object> overview = callLogService.getToolOverview();
+            List<Map<String, Object>> ranking = callLogService.getToolRanking(d);
+            List<Map<String, Object>> trend = callLogService.getToolDailyTrend(d);
+            Map<String, String> registered = mcpToolRegistry.getTools();
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("📊 **工具调用统计**（近 ").append(d).append(" 天｜数据源 call_logs.action='TOOL'）\n\n");
+            sb.append("**总览**: 总调用 ").append(val(overview, "total"))
+              .append("｜今日 ").append(val(overview, "today"))
+              .append("｜成功 ").append(val(overview, "successCalls"))
+              .append("｜平均耗时 ").append(val(overview, "avgCostMs")).append(" ms")
+              .append("｜**有调用的工具 ").append(val(overview, "activeTools"))
+              .append(" / 已注册 ").append(registered.size()).append("**\n");
+
+            java.util.Set<String> called = new java.util.LinkedHashSet<>();
+            for (Map<String, Object> m : ranking) {
+                Object t = firstNonNull(m, "toolName", "tool_name");
+                if (t != null) called.add(String.valueOf(t));
+            }
+            java.util.List<String> neverCalled = new java.util.ArrayList<>();
+            for (String t : registered.keySet()) {
+                if (!called.contains(t)) neverCalled.add(t);
+            }
+            sb.append("\n**从未被调用（近 ").append(d).append(" 天，共 ")
+              .append(neverCalled.size()).append(" 个）**");
+            if (neverCalled.isEmpty()) {
+                sb.append("：无\n");
+            } else {
+                sb.append("：").append(String.join("、", neverCalled)).append("\n");
+                sb.append("（**这是精简的第一手依据**：先看这些是不是与别的工具能力重叠；"
+                        + "但「近 N 天没调用」不等于「该删」—— 低频但关键的运维工具也会落在这里，"
+                        + "所以至少看满 7 天再决定）\n");
+            }
+
+            sb.append("\n**使用榜（前 ").append(n).append("）**\n");
+            if (ranking.isEmpty()) {
+                sb.append("（近 ").append(d).append(" 天没有任何工具调用记录）\n");
+            } else {
+                sb.append("| # | 工具 | 调用 | 成功率 | 平均耗时 | 最大 | 最后调用 | 调用者 |\n");
+                sb.append("|---|---|---|---|---|---|---|---|\n");
+                int i = 1;
+                for (Map<String, Object> m : ranking) {
+                    if (i > n) break;
+                    Object calls = firstNonNull(m, "calls", "CALLS");
+                    Object succ = firstNonNull(m, "successCalls", "SUCCESSCALLS");
+                    long c = num(calls), s = num(succ);
+                    String rate = c > 0 ? Math.round(s * 100.0 / c) + "%" : "-";
+                    sb.append("| ").append(i++).append(" | ").append(str(firstNonNull(m, "toolName", "TOOLNAME")))
+                      .append(" | ").append(c).append(" | ").append(rate)
+                      .append(" | ").append(str(firstNonNull(m, "avgCostMs", "AVGCOSTMS"))).append(" ms")
+                      .append(" | ").append(str(firstNonNull(m, "maxCostMs", "MAXCOSTMS"))).append(" ms")
+                      .append(" | ").append(str(firstNonNull(m, "lastCallAt", "LASTCALLAT")))
+                      .append(" | ").append(str(firstNonNull(m, "callerCount", "CALLERCOUNT"))).append(" |\n");
+                }
+            }
+
+            sb.append("\n**每日趋势**\n");
+            if (trend.isEmpty()) {
+                sb.append("（无数据）\n");
+            } else {
+                java.util.List<String> parts = new java.util.ArrayList<>();
+                for (Map<String, Object> m : trend) {
+                    parts.add(str(firstNonNull(m, "date", "DATE")) + " " + num(firstNonNull(m, "calls", "CALLS"))
+                            + " 次/" + num(firstNonNull(m, "tools", "TOOLS")) + " 工具");
+                }
+                sb.append(String.join("｜", parts)).append("\n");
+            }
+
+            sb.append("\n⚠️ 口径：`action='TOOL'` 由工具调用切面写入；**没有经过 MCP 的调用不会出现在这里**。"
+                    + "「有调用的工具数」按近 ").append(d).append(" 天算，总数按注册表算 —— 两个数不同源，别相减去推别的结论。\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.getToolStats: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "查询工具统计失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 取第一个非空键（MyBatis 返回的 map 键大小写随数据库/驱动变化，不能硬编码一种） */
+    private static Object firstNonNull(Map<String, Object> m, String... keys) {
+        if (m == null) return null;
+        for (String k : keys) {
+            if (m.containsKey(k) && m.get(k) != null) return m.get(k);
+            for (Map.Entry<String, Object> e : m.entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase(k) && e.getValue() != null) {
+                    return e.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String val(Map<String, Object> m, String k) {
+        Object v = firstNonNull(m, k);
+        return v == null ? "-" : String.valueOf(v);
+    }
+
+    private static long num(Object o) {
+        if (o instanceof Number nb) return nb.longValue();
+        if (o == null) return 0L;
+        try {
+            return Long.parseLong(String.valueOf(o).replaceAll("[^0-9-]", ""));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
+
+    private static String str(Object o) {
+        return o == null ? "-" : String.valueOf(o);
+    }
+
     @Tool(name = "set_flags", description = "给经验打**机器可读标记**（待复核 / 疑似重复 / 已被取代 / 可能失效 / 质量存疑）。整理记忆、去重、标注可疑结论时用这个，**不要用 update_experience 改 tags 来打标记**。关键差别：本工具不递增版本号、不写版本快照、不动更新时间，所以反复打标记不会让版本表膨胀。flags 传空字符串 = 清空所有标记（清空时说明与署名也一并清掉）。检索和详情会回显标记，其他 AI 看到标记就知道这条结论存疑。")
     public String setFlags(
             @ToolParam(description = "经验ID。单个用这个；批量用 ids（两者可只传一个，同传会合并去重）", required = false) Long id,
@@ -2576,6 +2707,33 @@ public class ExpHubTools {
     }
 
     /**
+     * 头行的「需要你判几条」。
+     *
+     * <p><b>2026-10-26 13:2x 阁主实测</b>：dryRun 下印「本次需要你判 5 对」是**不成立**的 ——
+     * dryRun 不入队，就没有「待判」这回事（同一份回执里还写着「未入队（dryRun）」）。
+     * 两种情境分开写，别用一个词同时表达「扫出来了」和「已进队列等判」。
+     */
+    static String triageLine(boolean dry, int need, int judged, int progress) {
+        StringBuilder sb = new StringBuilder();
+        if (dry) {
+            sb.append("**dryRun：没有入队，所以不存在「待判」** —— 本次扫出 ").append(need)
+              .append(" 对值得人看一眼的候选（要真判请先 `dryRun=false` 入队）");
+        } else {
+            sb.append("**需要你判**: ").append(need).append(" 对（已进队列）");
+        }
+        java.util.List<String> why = new java.util.ArrayList<>();
+        if (judged > 0) why.add("已判过 " + judged + " 对（只是重新扫出，已标注）");
+        if (progress > 0) why.add("进度类 " + progress + " 条（不用判）");
+        if (!why.isEmpty()) sb.append("（其余 ").append(String.join("、", why)).append("）");
+        return sb.toString();
+    }
+
+    /** 这一对是否已经判过（scan 行尾状态里写的是「**已判 XXX**（候选 #N…）」） */
+    static boolean isJudged(SimilarityService.Row r) {
+        return r != null && r.queueState() != null && r.queueState().startsWith("**已判");
+    }
+
+    /**
      * 分层分组标题 —— **不带编号**。
      *
      * <p>⚠️ 2026-10-26 02:1x 越哥实测发现：原来编号是写死的（①DUPLICATE ②SERIES ③UNKNOWN ④PROGRESS），
@@ -2697,18 +2855,16 @@ public class ExpHubTools {
                 if (row.queueState() != null && row.queueState().startsWith("**已判")) { alreadyJudged++; continue; }
                 need++;
             }
-            sb.append("**本次需要你判**: ").append(need).append(" 对");
-            java.util.List<String> why = new java.util.ArrayList<>();
-            if (alreadyJudged > 0) why.add("已判过 " + alreadyJudged + " 对（只是重新扫出，已标注）");
-            if (progressOnly > 0) why.add("进度类 " + progressOnly + " 条（不用判）");
-            if (!why.isEmpty()) {
-                sb.append("（其余 ").append(String.join("、", why)).append("）");
-            }
-            sb.append("\n");
+            // ⚠️ 2026-10-26 13:2x 阁主：dryRun 下印「本次需要你判 5 对」是**不成立**的 ——
+            //    dryRun 不入队，就没有「待判」这回事（同一份回执里还写着「未入队（dryRun）」）。
+            //    两种情境分开写：入队了才有「待判」，没入队只能说「扫出几条值得看」。
+            sb.append(triageLine(dry, need, alreadyJudged, progressOnly)).append("\n");
             sb.append("**阈值**: ").append(SimilarityScorer.Score.fmt(r.threshold()))
               .append("｜**比较对数**: ").append(r.pairsCompared())
               .append("｜**超阈值**: ").append(r.aboveThreshold());
-            if (r.droppedByCap() > 0) sb.append("｜**限流丢掉**: ").append(r.droppedByCap());
+            // 2026-10-26 13:2x 阁主：同一件事两个名字（头行「限流丢掉」/ 归因「limit 截断」），
+                // 而「限流」在别处专指 per-doc 限流 → 统一成「limit 截断」。
+                if (r.droppedByCap() > 0) sb.append("｜**limit 截断**: ").append(r.droppedByCap());
             sb.append("\n");
             if (!dry) {
                 sb.append("**入队结果**: 新建 ").append(r.enqueued())
@@ -2825,17 +2981,25 @@ public class ExpHubTools {
                         // 本层动作分布：直接从已渲染的 advice 里读回标签，
                         // 这样组头与条目不可能对不上（另算一遍迟早漂移）
                         java.util.Map<String, Integer> actTally = new java.util.LinkedHashMap<>();
+                        int judgedShown = 0;
                         for (SimilarityService.Row r2 : r.rows()) {
                             if (r2.kind() != row.kind()) continue;
+                            // 已判过的对不再给动作（2026-10-26 13:2x 阁主：上一句「不必再判」、
+                            // 下一句又给「动作：判 distinct」，自相矛盾），也不计入动作分布
+                            if (isJudged(r2)) { judgedShown++; continue; }
                             String tag = actionTag(r2.advice());
                             if (!tag.isEmpty()) actTally.merge(tag, 1, Integer::sum);
                         }
-                        if (!actTally.isEmpty()) {
+                        if (!actTally.isEmpty() || judgedShown > 0) {
                             sb.append("（本层动作：");
                             int ai = 0;
                             for (var ae : actTally.entrySet()) {
                                 if (ai++ > 0) sb.append("、");
                                 sb.append(ae.getKey()).append(" ×").append(ae.getValue());
+                            }
+                            if (actTally.isEmpty()) sb.append("无");
+                            if (judgedShown > 0) {
+                                sb.append("；另 ").append(judgedShown).append(" 条**已判过、不再给动作**");
                             }
                             sb.append("）");
                         }
@@ -2908,7 +3072,11 @@ public class ExpHubTools {
                       .append("｜#").append(row.docA()).append("「").append(abbreviate(row.titleA(), 34))
                       .append("」 ↔ #").append(row.docB()).append("「").append(abbreviate(row.titleB(), 34)).append("」");
                     if (row.queueState() != null) sb.append("　→ ").append(row.queueState());
-                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines(), row.coverage(), row.advice())).append("\n");
+                    String advice = isJudged(row)
+                            // 已判过的对：动作已经执行过，再渲染一遍等于让他重复劳动
+                            ? SimilarityScorer.withoutAction(row.advice())
+                            : row.advice();
+                    sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines(), row.coverage(), advice)).append("\n");
                     // 独有行样例（2026-10-26 12:0x 阁主）：只写「独有 8 行」等于逼他读两篇全文。
                     // 给前 3 行片段，他就能先判断「是多了一段环境说明」还是「真写了别的东西」。
                     if (row.aOnlySample() != null && !row.aOnlySample().isBlank()) {

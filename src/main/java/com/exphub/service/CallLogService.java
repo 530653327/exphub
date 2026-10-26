@@ -323,6 +323,26 @@ public class CallLogService {
         return callLogMapper.getCallTrend(days);
     }
 
+    /** 工具维度总览（action='TOOL'）—— 2026-10-26 13:2x 阁主要「工具精简的数据依据」 */
+    public Map<String, Object> getToolOverview() {
+        return callLogMapper.getToolOverview();
+    }
+
+    /** 工具使用榜（近 N 天） */
+    public List<Map<String, Object>> getToolRanking(int days) {
+        return callLogMapper.getToolRanking(days);
+    }
+
+    /** 每日工具调用趋势 */
+    public List<Map<String, Object>> getToolDailyTrend(int days) {
+        return callLogMapper.getToolDailyTrend(days);
+    }
+
+    /** 工具调用按助手分布 */
+    public List<Map<String, Object>> getToolByAssistant(int days) {
+        return callLogMapper.getToolByAssistant(days);
+    }
+
     public List<Map<String, Object>> getAssistantRanking(int limit) {
         return getTopAssistants(limit);
     }
