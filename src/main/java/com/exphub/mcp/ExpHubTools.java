@@ -1873,9 +1873,40 @@ public class ExpHubTools {
      */
     private String setFlagsBatch(List<Long> targets, List<String> parsed, List<String> rejected,
                                  String note, String by) {
+        // ⚠️ 2026-10-26 12:1x 阁主：全失败时开头还印 ✅ ——
+        //    「✅ 已批量设置标记（2 条）」+「成功 0 条」并排，开头给人的是成功。
+        //    规则：**✅/❌ 由结果决定，不能由「我打算做什么」决定**。
+        //    先把逐条结果算出来，再回头决定标题，标题里也不许写「设置（N 条）」这种未兑现的承诺。
+        StringBuilder body = new StringBuilder();
+        int ok = 0, failed = 0;
+        for (Long t : targets) {
+            try {
+                Doc d = docService.getById(t);
+                if (d == null) {
+                    body.append("- #").append(t).append(" ❌ 未找到\n");
+                    failed++;
+                    continue;
+                }
+                Doc u = docService.setFlags(t, parsed, note, by);
+                body.append("- #").append(t).append(" ✅ v").append(u.getVersion())
+                    .append("（未变）「").append(abbreviate(u.getTitle(), 28)).append("」\n");
+                ok++;
+            } catch (Exception e) {
+                body.append("- #").append(t).append(" ❌ 失败：").append(e.getClass().getSimpleName()).append("\n");
+                failed++;
+            }
+        }
+
         StringBuilder sb = new StringBuilder();
-        sb.append(parsed.isEmpty() ? "✅ 已批量清空标记" : "✅ 已批量设置标记");
-        sb.append("（").append(targets.size()).append(" 条）\n");
+        String verb = parsed.isEmpty() ? "清空标记" : "设置标记";
+        if (ok == 0) {
+            sb.append("❌ **全部失败**（").append(targets.size()).append(" 条）：没有一条被修改\n");
+        } else if (failed == 0) {
+            sb.append("✅ 已批量").append(verb).append("（").append(targets.size()).append(" 条）\n");
+        } else {
+            sb.append("⚠️ **部分成功**：").append(targets.size()).append(" 条里成功 ").append(ok)
+              .append(" 条、失败 ").append(failed).append(" 条\n");
+        }
         if (!parsed.isEmpty()) {
             List<String> human = new ArrayList<>();
             for (String f : parsed) human.add(DocService.flagLabel(f) + "(" + f + ")");
@@ -1885,27 +1916,9 @@ public class ExpHubTools {
             }
             sb.append("**署名**: ").append(by).append("\n");
         }
-        sb.append("\n");
-        int ok = 0, missing = 0;
-        for (Long t : targets) {
-            try {
-                Doc d = docService.getById(t);
-                if (d == null) {
-                    sb.append("- #").append(t).append(" ❌ 未找到\n");
-                    missing++;
-                    continue;
-                }
-                Doc u = docService.setFlags(t, parsed, note, by);
-                sb.append("- #").append(t).append(" ✅ v").append(u.getVersion())
-                  .append("（未变）「").append(abbreviate(u.getTitle(), 28)).append("」\n");
-                ok++;
-            } catch (Exception e) {
-                sb.append("- #").append(t).append(" ❌ 失败：").append(e.getClass().getSimpleName()).append("\n");
-                missing++;
-            }
-        }
+        sb.append("\n").append(body);
         sb.append("\n**结果**: 成功 ").append(ok).append(" 条");
-        if (missing > 0) sb.append("｜失败/不存在 ").append(missing).append(" 条");
+        if (failed > 0) sb.append("｜失败/不存在 ").append(failed).append(" 条");
         sb.append("\n");
         if (!rejected.isEmpty()) {
             sb.append("\n⚠️ 以下词不在白名单、已忽略：").append(String.join("、", rejected))
@@ -1913,6 +1926,55 @@ public class ExpHubTools {
         }
         sb.append("\n说明：标记不改变正文、不产生历史版本；不需要时再传空串即可清空。");
         return sb.toString();
+    }
+
+    /**
+     * 「另有 M 对未展示」的逐项归因文本。
+     *
+     * <p><b>2026-10-26 12:1x 阁主实测抓到的半成品</b>：头行写
+     * 「另有 11 对未展示，逐项归因：③层抽样省 5 条」，而 11 = 5 + 6 —— 那 6 条
+     * 「同话题跳过」的说明明明就在下一段③层标题里，**数据是有的，只是没拼进头行**。
+     * 「逐项归因」四个字等于承诺把所有项都列出来，只列一项就把剩下 6 条变成未知数。
+     *
+     * <p>所以这里不只拼文本：**加总必须等于未展示数**，对不上就把差额也写出来并标「回执自相矛盾」。
+     * 宁可输出一句难看的告警，也不许让读者自己去凑数。
+     */
+    static String causesText(int notShown, int bySample, int byPerDoc, int byOmitted,
+                             int byLimit, int bySameTopic, int maxPerDoc, int sampleCap) {
+        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic;
+        if (sum == 0) return "各项计数都为 0 —— 回执自相矛盾，请报缺陷";
+        java.util.List<String> causes = new java.util.ArrayList<>();
+        if (bySample > 0) causes.add("③层进度/日志类只抽样 " + sampleCap + " 条，省 " + bySample + " 条");
+        if (bySameTopic > 0) causes.add("③层**同话题跳过** " + bySameTopic + " 条（同一话题只留分数最高的那条）");
+        if (byPerDoc > 0) causes.add("「单篇最多 " + maxPerDoc + " 条候选」挤掉 " + byPerDoc + " 条");
+        if (byOmitted > 0) causes.add("同族交叉对已略去 " + byOmitted + " 条");
+        if (byLimit > 0) causes.add("被 limit 截断 " + byLimit + " 条");
+        String s = String.join("；", causes);
+        if (sum != notShown) {
+            s += (notShown > sum
+                    ? "；**另有 " + (notShown - sum) + " 条未归因**"
+                    : "；**各项之和 " + sum + " 条超过未展示数 " + notShown + " 条**")
+                    + " —— 回执自相矛盾，请报缺陷";
+        }
+        return s;
+    }
+
+    /** 满员那种口径（`未展示 145 对 = 139 + 6`），同样要求加总吻合 */
+    static String shortCausesText(int notShown, int bySample, int byPerDoc, int byOmitted,
+                                  int byLimit, int bySameTopic) {
+        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic;
+        if (sum == 0) return "各项计数都为 0 —— 回执自相矛盾，请报缺陷";
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        if (bySample > 0) parts.add("③层抽样省 " + bySample);
+        if (bySameTopic > 0) parts.add("③层同话题跳过 " + bySameTopic);
+        if (byPerDoc > 0) parts.add("per-doc 挤掉 " + byPerDoc);
+        if (byOmitted > 0) parts.add("同族交叉对略去 " + byOmitted);
+        if (byLimit > 0) parts.add("limit 截断 " + byLimit);
+        String s = String.join(" + ", parts);
+        if (sum != notShown) {
+            s += " + **未归因 " + (notShown - sum) + " 条 —— 回执自相矛盾，请报缺陷**";
+        }
+        return s;
     }
 
     /** 截断显示用（patch 报错信息里回显片段，太长会把返回撑爆） */
@@ -2193,18 +2255,25 @@ public class ExpHubTools {
                 }
             }
             if (orphanPending + orphanJudged > 0) {
-                sb.append("⚠️ 其中 **").append(orphanPending + orphanJudged)
+                // ⚠️ 2026-10-26 12:1x 阁主：原来写「其中 2 条…已被删除…其中 2 条已判过」——
+                //    两个「2 条」是**同一批**（#26 DUPLICATE、#23 SKIPPED），措辞会让人读成 4 条。
+                //    规则：同一批就明说「这 N 条均已判过」，不同批才分列。
+                sb.append("⚠️ 共 **").append(orphanPending + orphanJudged)
                   .append(" 条引用的文档已被删除**（候选行不会随文档删除消失，保留是为了复盘）");
                 if (orphanPending > 0) {
-                    sb.append("：待判断的 **").append(orphanPending)
-                      .append(" 条**判不了任何东西，可用 resolve_candidate(..., action=skip) 清空");
+                    sb.append("：其中 **").append(orphanPending)
+                      .append(" 条待判断**判不了任何东西，可用 resolve_candidate(..., action=skip) 清空");
                 }
                 if (orphanJudged > 0) {
                     // ⚠️ 2026-10-26 12:0x 阁主第 3 条：已判的悬空行**不许**建议 skip ——
                     //    那等于用「忽略」改写「判为重复」。这里只说明判定保留。
-                    sb.append(orphanPending > 0 ? "；" : "，其中 ")
-                      .append("**").append(orphanJudged)
-                      .append(" 条已判过**，判定保留、无需处理（悬空行只能清空，不能改判）");
+                    if (orphanPending == 0) {
+                        sb.append("：**这 ").append(orphanJudged)
+                          .append(" 条均已判过**，判定保留、无需处理（悬空行只能清空，不能改判）");
+                    } else {
+                        sb.append("；另 **").append(orphanJudged)
+                          .append(" 条已判过**，判定保留、无需处理（悬空行只能清空，不能改判）");
+                    }
                 }
                 sb.append("\n");
             }
@@ -2537,33 +2606,20 @@ public class ExpHubTools {
                 // ⚠️ 2026-10-26 03:1x 阁主实测：差额为 0 时这句仍然印「（差额 0 条 …）」
                 //    —— 没差额还让人去找差额，等于凭空造一个不存在的东西。
                 //    规则：**只在真有差额时渲染解释**；有差额时也不许含糊其辞。
-                int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0;
+                int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0, bySameTopic = 0;
                 for (SimilarityService.TierDetail d : r.tierDetail().values()) {
                     bySample += d.droppedBySample();
                     byPerDoc += d.droppedPerDoc();
                     byOmitted += d.droppedRedundant();
                     byLimit += d.droppedByLimit();
+                    bySameTopic += d.droppedSameTopic();
                 }
                 int notShown = Math.max(0, r.aboveThreshold() - r.rows().size());
-                java.util.List<String> causes = new java.util.ArrayList<>();
-                java.util.List<String> shortCauses = new java.util.ArrayList<>();
-                if (bySample > 0) {
-                    causes.add("③层进度/日志类只抽样 " + SimilarityService.DEFAULT_PROGRESS_SAMPLE
-                            + " 条，省 " + bySample + " 条");
-                    shortCauses.add("③层抽样省 " + bySample);
-                }
-                if (byPerDoc > 0) {
-                    causes.add("「单篇最多 " + r.maxPerDoc() + " 条候选」挤掉 " + byPerDoc + " 条");
-                    shortCauses.add("per-doc 挤掉 " + byPerDoc);
-                }
-                if (byOmitted > 0) {
-                    causes.add("同族交叉对已略去 " + byOmitted + " 条");
-                    shortCauses.add("同族交叉对略去 " + byOmitted);
-                }
-                if (byLimit > 0) {
-                    causes.add("被 limit 截断 " + byLimit + " 条");
-                    shortCauses.add("limit 截断 " + byLimit);
-                }
+                // ⚠️ 2026-10-26 12:1x 阁主：「逐项归因」只写了一半 ——
+                //    印「另有 11 对未展示，逐项归因：③层抽样省 5 条」，而 11 = 5 + 6，
+                //    那 6 条同话题跳过的说明就在下一段③层标题里，**数据是有的，只是没拼进头行**。
+                //    「逐项归因」四个字等于承诺把所有项都列出来，只列一项就把剩下 6 条变成未知数。
+                //    → 归因文本抽成纯函数 causesText()：**加总必须等于未展示数**，对不上就自己报缺陷。
                 if (gap > 0) {
                     // ⚠️ 2026-10-26 10:5x 阁主第 4 条（与「编解释」同源）：这里原来不管实际发生什么，
                     //    都并列写「③层抽样 / per-doc 限流」。这轮差额 2 条**全来自③层抽样上限**，
@@ -2581,8 +2637,8 @@ public class ExpHubTools {
                           .append(gap).append(" 条 —— **不是限流，是本来就没那么多**");
                     } else {
                         sb.append("；**另有 ").append(notShown).append(" 对未展示**，逐项归因：")
-                          .append(causes.isEmpty() ? "各项计数都为 0 —— 回执自相矛盾，请报缺陷"
-                                                   : String.join("；", causes));
+                          .append(causesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic,
+                                  r.maxPerDoc(), SimilarityService.DEFAULT_PROGRESS_SAMPLE));
                     }
                     sb.append("）");
                 }
@@ -2604,8 +2660,7 @@ public class ExpHubTools {
                 //    规则：**满员时也要把未展示总数与各项之和摆出来，且必须能对上**。
                 if (gap == 0 && notShown > 0) {
                     sb.append("；**未展示 ").append(notShown).append(" 对 = ")
-                      .append(shortCauses.isEmpty() ? "各项计数都为 0 —— 回执自相矛盾，请报缺陷"
-                                                     : String.join(" + ", shortCauses))
+                      .append(shortCausesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic))
                       .append("**（分层数字不受 limit 影响，调大 limit 只是让更多条进清单）");
                 }
                 sb.append("\n\n");
