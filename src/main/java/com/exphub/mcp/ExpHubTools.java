@@ -728,7 +728,7 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局，项目经验不会出现。0 结果会给出相近经验与排查建议。")
+    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局，项目经验不会出现。0 结果会给出相近经验与排查提示。")
     public String searchExperience(
             @ToolParam(description = "场景描述，空格分隔多个关键词") String query,
             @ToolParam(description = "可选。模板类型过滤：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal", required = false) String templateType,
@@ -1647,10 +1647,10 @@ public class ExpHubTools {
      * 而 AI 读到的正文是截断过的，写回就等于删掉没读到的部分。
      * 这里服务端直接拼接，客户端完全不持有全文。
      */
-    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。这是补充进展/追加结论的首选方式：服务端直接拼接，你不需要读全文，因此绝不会因为读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不会缩短原文，不触发截断保护。一次传一段；要多段就多次调用。")
+    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。服务端直接拼接，你不需要读全文，因此不会因读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不缩短原文、不触发截断保护。一次传一段。")
     public String appendExperience(
             @ToolParam(description = "经验ID") Long id,
-            @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）。建议以小标题开头，如「### 2026-10-25 补充：xxx」，便于日后区分批次") String text,
+            @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）") String text,
             @ToolParam(description = "可选。署名，记入版本快照。不传=用 Key 绑定助手名。多助手共用同一 Key 时必传，否则所有改动记在同一人名下", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
 
@@ -1735,7 +1735,7 @@ public class ExpHubTools {
     @Tool(name = "patch_experience", description = "在正文里做局部替换（find→replace）。改错字、更新一行结论、换一个失效命令时用它，不要整篇写回。⚠️ find 必须在正文里**恰好出现一次**（0 次或多次都报错，可加长锚点），至少 4 字符。replace 传空串=删除该段。")
     public String patchExperience(
             @ToolParam(description = "经验ID") Long id,
-            @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符。建议包含前后文让锚点唯一") String find,
+            @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符") String find,
             @ToolParam(description = "替换成的新内容。传空字符串表示删除这段") String replace,
             @ToolParam(description = "可选。署名，记入版本快照。不传=用当前 API Key 绑定的助手名", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
@@ -2386,7 +2386,7 @@ public class ExpHubTools {
             @ToolParam(description = "候选对的第一条经验 ID") Long docA,
             @ToolParam(description = "候选对的第二条经验 ID") Long docB,
             @ToolParam(description = "可选。相似度得分，取值 (**0, 1]**，只用于排序，不是判决依据。没算出来就别传（传 0 会被当「未提供」存 NULL，因为相似度 0 的语义是「完全不像」；传大于 1 的值会被拒，若是百分制请除以 100）", required = false) java.math.BigDecimal score,
-            @ToolParam(description = "可选但强烈建议。为什么判为相似，例如「标签交集:3（nginx,https,证书）；标题重叠 0.62；正文共享 2-gram 41%」。写清理由，人才判得快", required = false) String reasons,
+            @ToolParam(description = "可选。为什么判为相似（写清理由，人才判得快）", required = false) String reasons,
             @ToolParam(description = "可选。来源标记：L0_CREATE / L1_DAILY / L2_WEEKLY / MANUAL。默认 MANUAL", required = false) String source,
             @ToolParam(description = "可选。**谁改的**——操作人署名，不传=用 Key 绑定助手名", required = false) String updatedName) {
         try {
@@ -4008,7 +4008,7 @@ public class ExpHubTools {
           description = "【瘦身，不删数据】把超出保留窗口的历史版本搬进冷存档 doc_versions_archive。"
                   + "⚠️ **默认 dryRun=true 只算不写**，确认后传 dryRun=false。"
                   + "安全性：只搬历史副本（docs.content 不动）；先写归档再删主表（同事务）；最新版永不归档。"
-                  + "用 list_archived_versions 回查。建议 keepRecent=10。")
+                  + "用 list_archived_versions 回查。")
     public String archiveOldVersions(
             @ToolParam(description = "可选。只处理某篇文档（传文档 ID）；不传 = 全库扫描", required = false) Long id,
             @ToolParam(description = "可选。每篇保留最近几版，默认 10；允许区间 [3, 200]，**超出区间会被直接拒绝**（不静默改成边界值）", required = false) Integer keepRecent,

@@ -8,8 +8,9 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -20,9 +21,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 再压就得拆安全网。越哥 2026-10-26 15:3x 拍板口径 B：验收从「降 50%」改成
  * <b>「可压缩的冗余 100% 清除」</b>。
  *
- * <p><b>「可压缩的冗余」= 以下四类</b>（这三类都不是 #674 红线第 4 条要保留的信息）：
+ * <p><b>⚠️ 第一版这个守卫是失效的（2026-10-26 16:0x 白泽实测揪出，烛龙确认）</b><br>
+ * 第一版用「字面子串匹配 + 固定禁词表」，结果：
+ * <ul>
+ *   <li>禁词表写「这是首选方式」，线上实际文本是「这是补充进展/追加结论的<b>首选方式</b>」
+ *       → <b>子串不匹配，直接放过</b></li>
+ *   <li>禁词表只有「建议先/建议传/建议用/建议统一用」，<b>没有裸「建议」</b>
+ *       → 「建议 keepRecent=10」<b>放过</b></li>
+ *   <li>白名单逻辑是「描述里只要出现任一白名单词就跳过全部检查」
+ *       → 一个正常词能让整条描述免检</li>
+ * </ul>
+ * 拿第一版的 19 条禁词表扫线上真实 tools/list → 命中 0 条，但实际残留 2 处。
+ * <b>「机器判定清零」在真实数据上抓不到东西 = 空话。</b>
+ *
+ * <p><b>这一版的三个修法</b>：
  * <ol>
- *   <li><b>教学话术</b> —— 替 AI 下结论的话（「建议先…」「务必」「这是给…看的」「最好」「用来」）</li>
+ *   <li><b>用正则而不是字面子串</b> —— 「首选方式」写成 {@code .*首选方式}，
+ *       无论前面插了什么字都命中</li>
+ *   <li><b>禁词表从「词」改成「模式 + 豁免」</b> —— 每条规则带自己的豁免正则，
+ *       不再是「全文出现任一白名单词就全免检」</li>
+ *   <li><b>加反测（guardItselfMustCatchThePatternsItMissedBefore）</b> —— 把第一版漏掉的那两句
+ *       （「这是补充进展/追加结论的首选方式」「建议 keepRecent=10」）写成断言，
+ *       <b>守卫自己必须能抓到它们</b>。否则守卫和被它检查的对象一样不可信。</li>
+ * </ol>
+ *
+ * <p><b>「可压缩的冗余」= 四类</b>（都不是 #674 红线第 4 条要保留的三类信息）：
+ * <ol>
+ *   <li><b>教学话术</b> —— 替 AI 下结论的话（「建议先…」「务必」「这是…的首选方式」「最好」「用来」）</li>
  *   <li><b>举例</b> —— 「如：xxx」「例如：xxx」；枚举值清单本身不算举例（那是参数语义，必须留）</li>
  *   <li><b>重复机制说明</b> —— 在别的工具里已经讲过一遍的机制（归档不是删除 / 两者等价 等）</li>
  *   <li><b>schema 已体现的赘述</b> —— 「不传=不改」（required=false 已经表达了）</li>
@@ -31,19 +56,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p><b>必须保留（守卫不许误伤）</b>：参数语义、默认值、区间、必填、会不会丢数据、有没有副作用、
  * 作用域语义（projectId=0 是移回全局）、枚举值清单、跨工具判断规则。
  *
- * <p><b>怎么用</b>：加新工具或改描述时，若命中本守卫 → 说明又写进了教学话术/举例，删掉即可。
- * 守卫只认「明确可判」的短语，不做语义推断，避免误报（此前项目里出现过守卫自身误报、
- * 靠剥注释才通过的先例，见 AGENTS.md）。
+ * <p><b>数据源说明</b>：本守卫用反射读注解，与 Spring AI 生成 tools/list 的数据源同源
+ * （{@code @Tool.description} / {@code @ToolParam.description}）。
+ * 线上真实载荷的交叉验证由 {@code tools/tool_desc_measure.py verify} 完成
+ * （用线上 tools/list JSON 逐条比对源码提取值，41/41 必须完全一致）——
+ * 单测只能证明「源码里没有」，加上这一步才能证明「发给模型的载荷里也没有」。
  */
 class ToolDescriptionRedundancyTest {
 
-    /** 明确可判的冗余短语 → 为什么该删 */
-    private static final String[][] FORBIDDEN = {
+    /**
+     * 规则 = {匹配正则, 为什么该删}。
+     *
+     * <p>⚠️ 写正则的三个坑（第一版就踩了）：
+     * <ol>
+     *   <li><b>不要用 {@code .*} 包裹</b> —— {@code find()} 本身就是子串搜索，
+     *       加了 {@code .*} 反而会跨行跨句乱匹配（「建议 ≤1500 字」会被后面的字拖住）。
+     *       规则越短越准。</li>
+     *   <li><b>「建议」要用零宽否定预查</b> —— {@code 建议(?!\s*[≤<]?\s*\d)}
+     *       表示「建议后面不能紧跟数字」：这样「建议 ≤1500 字」「建议 30 字内」
+     *       （字数上限，属副作用信息）放行，「建议 keepRecent=10」「建议以小标题开头」命中。</li>
+     *   <li><b>白名单不能是「全文出现任一词就全免检」</b> —— 第一版就是那样，
+     *       一个正常词能让整条描述免检。现在豁免写在规则自身的正则里。</li>
+     * </ol>
+     */
+    private static final String[][] RULES = {
             // —— 教学话术（替 AI 下结论）——
             {"建议先", "教学话术：替 AI 决定调用顺序"},
             {"建议传", "教学话术：替 AI 决定要不要传"},
             {"建议用", "教学话术：替 AI 决定用哪个工具"},
             {"建议统一用", "教学话术"},
+            {"建议(?!\\s*[≤<]?\\s*\\d)", "教学话术：裸「建议」（「建议 ≤N 字」「建议 N 字内」是字数上限，属副作用，放行）"},
             {"务必", "教学话术"},
             {"请注意", "教学话术"},
             {"最好", "教学话术"},
@@ -52,24 +94,56 @@ class ToolDescriptionRedundancyTest {
             {"不要靠", "教学话术"},
             {"不必再", "教学话术"},
             {"不要当 bug 报给用户", "教学话术"},
-            {"这是首选方式", "教学话术"},
+            // 「首选方式」：不限定前缀，才能抓住「这是补充进展/追加结论的首选方式」
+            {"首选方式", "教学话术：替 AI 决定该用哪个工具"},
             // —— 举例 ——
             {"例如：", "举例：清单应在别处，不在描述里举例"},
             {"如：", "举例"},
             // —— 重复机制说明 ——
             {"归档只是搬位置、不是删除", "重复机制：archive_old_versions 已讲过"},
-            {"与 `authorName` 等价，两者都传时以本参数为准", "重复机制：同段已说明等价"},
+            {"两者都传时以本参数为准", "重复机制：同段已说明等价"},
             // —— schema 已体现的赘述 ——
             {"不传=不改", "赘述：required=false 已经表达了"},
     };
 
-    /** 合法用法白名单：这些词本身不是冗余，只是要看清上下文 */
-    private static final String[] ALLOWED = {
-            "建议 ≤",          // 字数上限提示（副作用类）
-            "用于分段读取",    // 参数用途
-            "用于模糊搜索",    // 参数用途
-            "用于排序",        // 参数用途
+    /**
+     * 第一版守卫漏掉、但**必须能抓到**的两句。
+     * 守卫自己必须先证明它抓得住，否则「机器判定清零」就是空话。
+     */
+    private static final String[] MUST_CATCH = {
+            "在经验正文末尾追加一段内容。这是补充进展/追加结论的首选方式：服务端直接拼接。",
+            "把超出保留窗口的历史版本搬进冷存档。用 list_archived_versions 回查。建议 keepRecent=10。",
     };
+
+    /** 合法用法：这些是**必要信息**（副作用/字数上限/参数用途），守卫必须放行 */
+    private static final String[] ALLOWED_SAMPLES = {
+            "建议 ≤1500 字",
+            "用于分段读取超长历史版本",
+            "用于模糊搜索",
+            "用于排序，不是判决依据",
+    };
+
+    @Test
+    void guardItselfMustCatchThePatternsItMissedBefore() {
+        List<String> missed = new ArrayList<>();
+        for (String sample : MUST_CATCH) {
+            if (scan(sample).isEmpty()) missed.add(sample);
+        }
+        assertTrue(missed.isEmpty(),
+                "守卫抓不住自己声明要抓的样本 —— 守卫已失效，等于没有守卫：\n  " + String.join("\n  ", missed));
+    }
+
+    /** 反过来：必要信息不能被误伤（压过头比不压更贵） */
+    @Test
+    void guardMustNotFlagNecessaryInformation() {
+        List<String> wrong = new ArrayList<>();
+        for (String sample : ALLOWED_SAMPLES) {
+            List<String> hits = scan(sample);
+            if (!hits.isEmpty()) wrong.add(sample + " → " + String.join(" / ", hits));
+        }
+        assertTrue(wrong.isEmpty(),
+                "守卫误伤了必要信息（参数语义/副作用/字数上限）：\n  " + String.join("\n  ", wrong));
+    }
 
     @Test
     void toolDescriptionsMustNotContainCompressibleRedundancy() {
@@ -81,13 +155,13 @@ class ToolDescriptionRedundancyTest {
             Tool tool = m.getAnnotation(Tool.class);
             if (tool == null) continue;
             toolCount++;
-            check(tool.name(), "description", tool.description(), hits);
+            collect(tool.name(), "description", tool.description(), hits);
 
             for (Parameter p : m.getParameters()) {
                 ToolParam tp = p.getAnnotation(ToolParam.class);
                 if (tp == null) continue;
                 paramCount++;
-                check(tool.name() + "." + p.getName(), "param", tp.description(), hits);
+                collect(tool.name() + "." + p.getName(), "param", tp.description(), hits);
             }
         }
 
@@ -100,7 +174,6 @@ class ToolDescriptionRedundancyTest {
     /** 三类信息一个都不能少 —— 压过头比不压更贵（#674 红线第 4 条） */
     @Test
     void descriptionsMustKeepLossAndSideEffectSemantics() {
-        // 用一个真实工具做样本：update_experience 必须说清「清空」「不递增版本」「敏感信息」
         Tool tool = null;
         for (Method m : ExpHubTools.class.getDeclaredMethods()) {
             Tool t = m.getAnnotation(Tool.class);
@@ -126,26 +199,27 @@ class ToolDescriptionRedundancyTest {
         }
     }
 
-    private void check(String where, String kind, String text, List<String> hits) {
-        if (text == null || text.isBlank()) return;
-        for (String[] rule : FORBIDDEN) {
-            String phrase = rule[0];
-            if (!text.contains(phrase)) continue;
-            // 白名单：某些短语在特定上下文是合法的（如「建议 ≤1500 字」是字数上限提示）
-            boolean allowed = false;
-            for (String a : ALLOWED) {
-                if (text.contains(a)) { allowed = true; break; }
-            }
-            if (allowed) continue;
-            hits.add(where + " [" + kind + "] 含「" + phrase + "」—— " + rule[1] + "："
-                    + excerpt(text, phrase));
+    /** 扫一段文本，返回命中的规则说明 */
+    private List<String> scan(String text) {
+        List<String> hits = new ArrayList<>();
+        if (text == null || text.isBlank()) return hits;
+        for (String[] rule : RULES) {
+            Matcher m = Pattern.compile(rule[0]).matcher(text);
+            if (!m.find()) continue;
+            hits.add(rule[1] + "（规则 " + rule[0] + "）：" + excerpt(text, m.start(), m.end()));
+        }
+        return hits;
+    }
+
+    private void collect(String where, String kind, String text, List<String> hits) {
+        for (String h : scan(text)) {
+            hits.add(where + " [" + kind + "] " + h);
         }
     }
 
-    private String excerpt(String text, String phrase) {
-        int i = text.indexOf(phrase);
-        int from = Math.max(0, i - 20);
-        int to = Math.min(text.length(), i + phrase.length() + 20);
-        return "…" + text.substring(from, to) + "…";
+    private String excerpt(String text, int from, int to) {
+        int a = Math.max(0, from - 20);
+        int b = Math.min(text.length(), to + 20);
+        return "…" + text.substring(a, b) + "…";
     }
 }
