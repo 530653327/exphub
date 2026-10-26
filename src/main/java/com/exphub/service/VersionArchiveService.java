@@ -359,7 +359,11 @@ public class VersionArchiveService {
                 b.append("v").append(missing.get(i));
             }
             if (missing.size() > 8) b.append(" 等 ").append(missing.size()).append(" 个");
-            b.append(" 这个").append(missing.size() == 1 ? "" : "些").append("版本号在库里没有副本");
+            if (missing.size() == 1) {
+                b.append(" 这个版本号在库里没有副本");
+            } else {
+                b.append(" 这 ").append(missing.size()).append(" 个版本号在库里没有副本");
+            }
             return b.toString();
         }
 

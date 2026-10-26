@@ -686,11 +686,19 @@ public class ExpHubTools {
             sb.append("）。这类版本号**被消耗过，但当时没留下正文副本**。\n");
             sb.append("> 已知原因：早期经门户「更新我的经验」改正文时只递增版本号、未存快照")
               .append("（2026-10-26 已修，此后不再新增）。**这些副本当时就没存，不是被归档搬走的**。\n");
+            // 起点要取「主表 + 冷存档」的最小版本号：只说主表会写成「从 v9 起」，
+            // 读的人以为文档就是 v9 才建的（实际 v1~v8 在冷存档里躺着）。
+            int lowest = cov.maxVersion();
+            for (Integer mv : mainVersions) lowest = Math.min(lowest, mv);
+            for (Integer av : arcVs) lowest = Math.min(lowest, av);
             sb.append("> ⚠️ **不要把它解释成「该文档是从 v").append(doc.getVersion())
-              .append(" 直接创建的」** —— 这份文档的主表版本号从 v")
-              .append(mainVersions.isEmpty() ? cov.maxVersion()
-                      : (int) java.util.Collections.min(mainVersions))
-              .append(" 起连续演进，只是那几版没留底。**给缺陷编一个合理的原因，下一个人就不会再追它了。**");
+              .append(" 直接创建的」** —— 这份文档的版本号从 v").append(lowest).append(" 一路上来");
+            if (!arcVs.isEmpty()) {
+                sb.append("（v1~v").append((int) java.util.Collections.max(arcVs))
+                  .append(" 在冷存档里仍可读）");
+            }
+            sb.append("，只是这几版当时没留副本。")
+              .append("**给缺陷编一个合理的原因，下一个人就不会再追它了。**");
             return sb.toString();
         }
 
