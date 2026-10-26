@@ -332,7 +332,13 @@ public class ProjectService {
         if (templateType != null && !templateType.trim().isEmpty()) {
             w.eq("template_type", templateType.trim());
         }
-        w.orderByDesc("updated_at").last("LIMIT 50");
+        w.orderByDesc("updated_at");
+        // ⚠️ 2026-10-26 12:1x 自查（阁主要求「计数必须对得上」时顺带发现）：
+        //    这里原来硬编码 `LIMIT 50`，而 `list_project_experiences` 的回执写「共 N 条」用的是
+        //    这个 list 的 size —— 项目 #1 实际 52 条，回执却说「共 50 条专属经验」，
+        //    而且 offset 翻到 50 以后永远拿不到东西（分页被悄悄截断）。
+        //    上限只用于防爆内存，量级要远大于真实项目文档数。
+        w.last("LIMIT 2000");
         return docMapper.selectList(w);
     }
 
