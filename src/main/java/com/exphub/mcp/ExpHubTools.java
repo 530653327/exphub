@@ -2520,8 +2520,12 @@ public class ExpHubTools {
                                 if (!d.omittedSamples().isEmpty()) {
                                     sb.append("：").append(String.join("、", d.omittedSamples()));
                                 }
-                                sb.append("（这几份与母档的关系已在①层逐对给过结论，")
-                                  .append("这里再列一遍只会和①层的「清掉这一份」打架；要回头核它们的原文，按上面 ID 查）");
+                                // ⚠️ 2026-10-26 11:1x 自查：原来写「再列一遍只会和①层的『清掉这一份』打架」——
+                                //    ①层加上编号排除后那 4 对全是 distinct，**这句话描述的因已经不存在了**
+                                //    （留着一句解释旧行为的理由，比没有理由更容易骗过下一个人）。
+                                //    现在只说事实：①层已逐对判过 → 这里重复没新信息；要核对就按 ID 查原文。
+                                sb.append("（这几份与母档的关系已在①层逐对给过结论，这里再列一遍没有新信息；")
+                                  .append("要回头核它们原本是不是并列记录，按上面 ID 查原文）");
                             }
                             if (d.droppedBySample() > 0) {
                                 sb.append("｜另有 ").append(d.droppedBySample())
