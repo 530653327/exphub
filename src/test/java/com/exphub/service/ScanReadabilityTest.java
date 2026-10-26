@@ -71,6 +71,29 @@ class ScanReadabilityTest {
         assertEquals(4, distinctTopics.size(), "抽中的必须来自 4 个不同话题，不能是同一个族：" + distinctTopics);
     }
 
+    /** 已判过的对不许占③层名额（#470↔#477 = 候选 #13 已 DISTINCT 还占 1 个名额） */
+    @Test
+    void judgedPairsMustNotConsumeProgressSlots() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        // 第 1 条是「已判过」的，分数最高 —— 老逻辑它会吃掉一个名额
+        all.add(progress(470, 477, "待开发：list_recent_memories 工具", "实现 list_recent_memories", 0.62));
+        all.add(progress(900, 901, "百炼宠物 - 地图1 生成", "百炼宠物 - 地图2 生成", 0.55));
+        all.add(progress(910, 911, "回金算 - 入库单改造", "回金算 - 入库单联调", 0.54));
+        all.add(progress(920, 921, "Jarvis - 语音唤醒", "Jarvis - 语音唤醒优化", 0.53));
+        all.sort(SimilarityService.Row.order());
+
+        java.util.Set<String> judged = java.util.Set.of("470-477");
+        SimilarityService.Selection sel = SimilarityService.select(all, 20, 2, 3, judged);
+
+        for (SimilarityService.Row r : sel.rows()) {
+            assertTrue(!judged.contains(r.docA() + "-" + r.docB()),
+                    "已判过的对不该出现在清单里（它不占名额，也不该再让判一遍）");
+        }
+        SimilarityService.TierDetail d = sel.detail().get(SimilarityScorer.Kind.PROGRESS);
+        assertEquals(1, d.droppedJudged(), "跳过几条已判过的要记账，否则差额对不上：" + d);
+        assertEquals(3, d.shown(), "腾出的名额要让给未判过的话题，而不是空着：" + d);
+    }
+
     /** 话题 token 必须抓得住工具名这类长标识符（中文 3-gram 也要有） */
     @Test
     void topicTokensMustCatchIdentifierAndChinese() {

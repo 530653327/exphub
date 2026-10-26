@@ -940,6 +940,13 @@ public class ExpHubTools {
     private static final int LIST_DEFAULT_SIZE = 10;
     private static final int LIST_MAX_SIZE = 50;
 
+    /** update_experience 允许的模板类型（与 doc_templates 表 + 进度类一致） */
+    static final java.util.List<String> ALLOWED_TEMPLATE_TYPES_LIST = java.util.List.of(
+            "problem_solution", "knowledge_doc", "todo_list", "bug_fix", "config_guide",
+            "how_to", "schedule_plan", "goal", "project_progress", "generic");
+    static final java.util.Set<String> ALLOWED_TEMPLATE_TYPES =
+            new java.util.LinkedHashSet<>(ALLOWED_TEMPLATE_TYPES_LIST);
+
     /**
      * 归档版本清单每页条数（2026-10-26）。
      *
@@ -1455,6 +1462,8 @@ public class ExpHubTools {
             @ToolParam(description = "可选。强制覆盖开关，设为 true 可跳过截断检测。默认 false。一般不需要——局部修改请用 patch_experience", required = false) Boolean force,
             @ToolParam(description = "可选。显式清空字段，逗号分隔。可清空：tags / aliases / summary / relatedIds / category（category 置为「未分类」）。title 与 content 不允许清空。例：clearFields=\"tags,aliases\"", required = false) String clearFields,
             @ToolParam(description = "可选。调整归属：传项目ID=归入该项目；传 0=移回全局；不传=不改归属。用于把误落全局的文档归位，或把跨项目通用的经验从项目里移回全局", required = false) Long projectId,
+            @ToolParam(description = "可选。改模板类型：problem_solution / knowledge_doc / todo_list / bug_fix / config_guide / how_to / schedule_plan / goal / project_progress / generic。不传=不改。"
+                    + "（2026-10-26 前这个只能到网页端改 —— #4 明明是使用指南却被标成 problem_solution）", required = false) String templateType,
             @ToolParam(description = "可选。**谁改的**——写进本版快照的操作人署名（审计用）。与 authorName 完全不同：authorName 改的是「文档作者」（作品归属），本参数只记「这一次是谁动的」。一个 API Key 常被多个助手共用，不传就都记成 Key 名，回溯时分不清谁改的（烛龙/白泽/阁主 共用一个 Key 时必须传）", required = false) String updatedName) {
         
         try {
@@ -1523,6 +1532,17 @@ public class ExpHubTools {
             if (summary != null && !summary.isEmpty()) { updateDoc.setSummary(summary); changedFields.add("summary"); }
             if (relatedIds != null && !relatedIds.isEmpty()) { updateDoc.setRelatedIds(relatedIds); changedFields.add("relatedIds"); }
             if (authorName != null && !authorName.isEmpty()) { updateDoc.setAuthorName(authorName); changedFields.add("改文档作者"); }
+            // 2026-10-26 13:0x 阁主第 6 条：模板类型原来只能到网页端改（#4 是使用指南却被标成 problem_solution）
+            if (templateType != null && !templateType.isBlank()) {
+                String tt = templateType.trim().toLowerCase(java.util.Locale.ROOT);
+                if (!ALLOWED_TEMPLATE_TYPES.contains(tt)) {
+                    return "❌ 未知模板类型：「" + templateType.trim() + "」\n\n可用值："
+                         + String.join(" / ", ALLOWED_TEMPLATE_TYPES_LIST) + "\n"
+                         + "（模板类型影响：进度类会降到扫描最后层、列表显示的分类标签）";
+                }
+                updateDoc.setTemplateType(tt);
+                changedFields.add("templateType");
+            }
             // updatedName 不进 changedFields：它只影响本版署名，不改任何内容。
             // 若算进去，只传 updatedName 也会「成功」并产生一个没有任何内容变化的空版本。
 
@@ -1776,6 +1796,81 @@ public class ExpHubTools {
         }
     }
 
+    /**
+     * 逐行比较两篇经验（2026-10-26 13:0x 阁主第 2 条）。
+     *
+     * <p>他的原话：「要知道两条文档差在哪，只能读两篇全文 —— 这是**判断重复最底层的操作**，
+     * 却没有专门工具」。扫描清单只给「独有 8 行」和前 3 行片段，要落到「判 duplicate 还是 distinct」
+     * 还差一步；两篇上千字时读全文直接占满上下文。
+     */
+    @Tool(name = "diff_experiences", description = "逐行比较两篇经验：给出 共同行 / A 独有 / B 独有 的行数，"
+            + "并把两侧独有行的前 N 行原文列出来 —— 判断「是否重复、哪份是母档、差的是新增还是改写」不必读两篇全文。"
+            + "⚠️ 口径与扫描不同：**不剔模板行**（判重复要看实际差在哪），所以行数会和 scan 的「独有行」略有差异。")
+    public String diffExperiences(
+            @ToolParam(description = "第一篇经验 ID") Long idA,
+            @ToolParam(description = "第二篇经验 ID") Long idB,
+            @ToolParam(description = "可选。每侧最多列几行独有原文，默认 10，上限 50", required = false) Integer maxLines) {
+        try {
+            if (idA == null || idB == null) {
+                return "❌ 需要两个 ID：diff_experiences(idA=?, idB=?)";
+            }
+            if (idA.equals(idB)) {
+                return "❌ idA 与 idB 是同一个 ID（" + idA + "），自己和自己比较没有意义";
+            }
+            Doc a = docService.getById(idA);
+            Doc b = docService.getById(idB);
+            if (a == null) return "❌ 未找到 ID 为 " + idA + " 的经验";
+            if (b == null) return "❌ 未找到 ID 为 " + idB + " 的经验";
+
+            int cap = (maxLines == null || maxLines < 1) ? 10 : Math.min(maxLines, 50);
+            SimilarityScorer.Diff d = SimilarityScorer.diffLines(a.getContent(), b.getContent());
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("📑 **#").append(idA).append("「").append(abbreviate(a.getTitle(), 40)).append("」 ↔ #")
+              .append(idB).append("「").append(abbreviate(b.getTitle(), 40)).append("」**\n\n");
+            sb.append("**行统计**: A ").append(d.linesA()).append(" 行 / B ").append(d.linesB())
+              .append(" 行｜**共同 ").append(d.shared()).append(" 行**")
+              .append("｜A 独有 ").append(d.onlyA().size()).append(" 行")
+              .append("｜B 独有 ").append(d.onlyB().size()).append(" 行\n");
+            sb.append("（口径：**未剔模板行**，标题/分隔行也算内容。与扫描回执的「独有行」不同源，"
+                    + "扫描为了不被骨架骗会剔模板，所以这里的独有行会更多）\n");
+            if (!d.lineMode()) {
+                sb.append("⚠️ 有一侧有效行少于 ").append(SimilarityScorer.MIN_LINES_FOR_LINE_MODE)
+                  .append(" 行 —— **逐行比较不可靠**，请当作粗看\n");
+            }
+
+            appendDiffSide(sb, "A", d.onlyA(), cap);
+            appendDiffSide(sb, "B", d.onlyB(), cap);
+
+            sb.append("\n**怎么读**\n");
+            sb.append("· 一侧独有很少、另一侧很多 → 前者大概率是后者的子页（但**先看独有的是不是新增内容**，"
+                    + "别把「母档补了新章节」当成「子页被包住」）\n");
+            sb.append("· 共同 ").append(d.shared()).append(" 行 + 两侧独有都很多 → 同一套模板写出的两个实例，判 distinct\n");
+            if (d.shared() == 0) {
+                sb.append("· **共同 0 行 = 没有任何内容证据** → 不许判 duplicate / superseded\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.diffExperiences: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "比较失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    private void appendDiffSide(StringBuilder sb, String side, java.util.List<String> lines, int cap) {
+        if (lines.isEmpty()) {
+            sb.append("\n**").append(side).append(" 独有**：无（这一份的行全部出现在另一份里）\n");
+            return;
+        }
+        sb.append("\n**").append(side).append(" 独有（前 ").append(Math.min(cap, lines.size()))
+          .append(" 行 / 共 ").append(lines.size()).append(" 行）**\n");
+        int n = 0;
+        for (String ln : lines) {
+            if (n++ >= cap) break;
+            sb.append("- ").append(abbreviate(ln, 160)).append("\n");
+        }
+    }
+
     @Tool(name = "set_flags", description = "给经验打**机器可读标记**（待复核 / 疑似重复 / 已被取代 / 可能失效 / 质量存疑）。整理记忆、去重、标注可疑结论时用这个，**不要用 update_experience 改 tags 来打标记**。关键差别：本工具不递增版本号、不写版本快照、不动更新时间，所以反复打标记不会让版本表膨胀。flags 传空字符串 = 清空所有标记（清空时说明与署名也一并清掉）。检索和详情会回显标记，其他 AI 看到标记就知道这条结论存疑。")
     public String setFlags(
             @ToolParam(description = "经验ID。单个用这个；批量用 ids（两者可只传一个，同传会合并去重）", required = false) Long id,
@@ -1940,12 +2035,13 @@ public class ExpHubTools {
      * 宁可输出一句难看的告警，也不许让读者自己去凑数。
      */
     static String causesText(int notShown, int bySample, int byPerDoc, int byOmitted,
-                             int byLimit, int bySameTopic, int maxPerDoc, int sampleCap) {
-        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic;
+                             int byLimit, int bySameTopic, int byJudged, int maxPerDoc, int sampleCap) {
+        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic + byJudged;
         if (sum == 0) return "各项计数都为 0 —— 回执自相矛盾，请报缺陷";
         java.util.List<String> causes = new java.util.ArrayList<>();
         if (bySample > 0) causes.add("③层进度/日志类只抽样 " + sampleCap + " 条，省 " + bySample + " 条");
         if (bySameTopic > 0) causes.add("③层**同话题跳过** " + bySameTopic + " 条（同一话题只留分数最高的那条）");
+        if (byJudged > 0) causes.add("③层**已判过的对不占名额** " + byJudged + " 条（判过就不该再花名额）");
         if (byPerDoc > 0) causes.add("「单篇最多 " + maxPerDoc + " 条候选」挤掉 " + byPerDoc + " 条");
         if (byOmitted > 0) causes.add("同族交叉对已略去 " + byOmitted + " 条");
         if (byLimit > 0) causes.add("被 limit 截断 " + byLimit + " 条");
@@ -1961,12 +2057,13 @@ public class ExpHubTools {
 
     /** 满员那种口径（`未展示 145 对 = 139 + 6`），同样要求加总吻合 */
     static String shortCausesText(int notShown, int bySample, int byPerDoc, int byOmitted,
-                                  int byLimit, int bySameTopic) {
-        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic;
+                                  int byLimit, int bySameTopic, int byJudged) {
+        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic + byJudged;
         if (sum == 0) return "各项计数都为 0 —— 回执自相矛盾，请报缺陷";
         java.util.List<String> parts = new java.util.ArrayList<>();
         if (bySample > 0) parts.add("③层抽样省 " + bySample);
         if (bySameTopic > 0) parts.add("③层同话题跳过 " + bySameTopic);
+        if (byJudged > 0) parts.add("③层已判过不占名额 " + byJudged);
         if (byPerDoc > 0) parts.add("per-doc 挤掉 " + byPerDoc);
         if (byOmitted > 0) parts.add("同族交叉对略去 " + byOmitted);
         if (byLimit > 0) parts.add("limit 截断 " + byLimit);
@@ -2213,10 +2310,12 @@ public class ExpHubTools {
     }
 
     /** 列出候选队列（默认只看待判断的） */
-    @Tool(name = "list_review_candidates", description = "查看记忆整理候选队列：哪些经验对可能重复或互相取代、相似度多少、为什么判为相似。默认只看 PENDING（待判断）的，按得分倒序；status=ALL 可看全部状态。看完用 resolve_candidate 处理。")
+    @Tool(name = "list_review_candidates", description = "查看记忆整理候选队列：哪些经验对可能重复或互相取代、相似度多少、为什么判为相似。默认只看 PENDING（待判断）的，按得分倒序；status=ALL 可看全部状态。看完用 resolve_candidate 处理。⚠️ 队列长时用 **brief=true**：每条压成一行（候选号/状态/得分/来源/A↔B），20 条也只有一两千字，避免被客户端截断。")
     public String listReviewCandidates(
             @ToolParam(description = "可选。状态：PENDING（默认，待判断）/ DUPLICATE / SUPERSEDED / DISTINCT / SKIPPED；**ALL = 不限状态**（与 check_my_todos 的 ALL 语义一致）", required = false) String status,
-            @ToolParam(description = "可选。最多返回几条，默认 20，上限 50", required = false) Integer limit) {
+            @ToolParam(description = "可选。最多返回几条，默认 20，上限 50", required = false) Integer limit,
+            @ToolParam(description = "可选。**精简模式**：每条只留一行（候选号/状态/得分/来源/A↔B），不印理由与判定人。"
+                    + "队列一长（>20 条）或回执被截断时用这个。默认 false", required = false) Boolean brief) {
         try {
             int size = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
             String st;
@@ -2279,6 +2378,7 @@ public class ExpHubTools {
             }
             sb.append("\n");
             int i = 1;
+            boolean compact = Boolean.TRUE.equals(brief);
             for (ReviewCandidate c : list) {
                 Doc a = docMap.get(c.getDocA());
                 Doc b = docMap.get(c.getDocB());
@@ -2289,10 +2389,19 @@ public class ExpHubTools {
                 sb.append(" **").append(c.getStatus()).append("**（")
                   .append(ReviewCandidateService.statusLabel(c.getStatus())).append("）");
                 // 得分缺失时明确写「未记录」，不要静默不显示 ——
-                // 否则「没记分」和「记了 0 分」在列表里看起来一样
-                sb.append("｜相似度 ").append(ReviewCandidateService.formatScore(c.getScore()))
-                  .append(c.getScore() == null ? "（未记录）" : "");
-                sb.append("｜来源 ").append(c.getSource()).append("\n");
+                // 否则「没记分」和「记了 0 分」在列表里看起来一样。
+                // ⚠️ 2026-10-26 13:0x 阁主抓到拼接 bug：`formatScore(null)` 本身已返回「未记录」，
+                //    外面又拼一次 → 「未记录（未记录）」。**兜底文案只能在源头出现一次。**
+                sb.append("｜相似度 ").append(ReviewCandidateService.formatScore(c.getScore()));
+                sb.append("｜来源 ").append(c.getSource());
+                if (compact) {
+                    // brief 模式：一行到底（2026-10-26 13:0x 阁主：12 条就 4140 字符，第 12 条只剩半行）
+                    sb.append("｜#").append(c.getDocA()).append(" ↔ #").append(c.getDocB());
+                    if (a == null || b == null) sb.append("（**已不存在**）");
+                    sb.append("\n");
+                    continue;
+                }
+                sb.append("\n");
                 // 已判过的显示谁判的、什么时候判的、判词是什么 —— 复盘时「当时为什么这么判」比结论更重要
                 if (!ReviewCandidate.PENDING.equals(c.getStatus()) && c.getResolvedAt() != null) {
                     sb.append("   判定: ").append(c.getResolvedBy() == null ? "（未记录）" : c.getResolvedBy())
@@ -2314,6 +2423,12 @@ public class ExpHubTools {
                 }
                 sb.append("\n");
             }
+            if (compact) {
+                // 2026-10-26 13:0x 阁主：12 条完整回执 4140 字符，第 12 条被客户端截成半行。
+                sb.append("---\n（**brief 模式**：只列 候选号/状态/得分/来源/A↔B，共 ")
+                  .append(sb.length()).append(" 字符。要看理由与判定人：去掉 brief 重查，或用 limit 分页）\n");
+                return sb.toString();
+            }
             sb.append("---\n处理方式：resolve_candidate(candidateId=..., action=duplicate|superseded|distinct|skip, note=...)\n")
               .append("· duplicate = 两条都打重复标记（**不合并**）\n")
               .append("· superseded = 较旧那条标为被较新那条取代（**只写指针**）\n")
@@ -2323,6 +2438,13 @@ public class ExpHubTools {
                       + SimilarityScorer.Score.SUBSET_RULE_SHORT + "；"
                       + "两侧各约一半是同模板实例（判 distinct）。"
                       + "正文 0 行重合时也没有内容证据，不要判 superseded —— 那等于用其中一份取代另一份");
+            // 回执自己报体积：超过 6000 字符很可能已被客户端截断（实测 4140 就断在第 12 条半行）。
+            // 不许静默——读的人以为看全了，其实少了几条。
+            if (sb.length() > 6000) {
+                sb.append("\n\n⚠️ 本条回执 ").append(sb.length())
+                  .append(" 字符，**可能已被客户端截断**（后面几条会只剩半行）。")
+                  .append("要一次看全：`brief=true`（每条一行），或用 limit 分页。");
+            }
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.listReviewCandidates: FAILED", e);
@@ -2567,6 +2689,22 @@ public class ExpHubTools {
                   .append(" 秒 —— 刚改过文档时，这里最多可能差 ")
                   .append(SimilarityService.INDEX_TTL_SECONDS).append(" 秒）\n");
             }
+            // ⚠️ 2026-10-26 13:0x 阁主第 4 条：他**逐条读完 12 条才发现是 0 条需要处理**。
+            //    头行给出「需要你判几条」，就能省掉整次通读。
+            int need = 0, alreadyJudged = 0, progressOnly = 0;
+            for (SimilarityService.Row row : r.rows()) {
+                if (row.kind() == SimilarityScorer.Kind.PROGRESS) { progressOnly++; continue; }
+                if (row.queueState() != null && row.queueState().startsWith("**已判")) { alreadyJudged++; continue; }
+                need++;
+            }
+            sb.append("**本次需要你判**: ").append(need).append(" 对");
+            java.util.List<String> why = new java.util.ArrayList<>();
+            if (alreadyJudged > 0) why.add("已判过 " + alreadyJudged + " 对（只是重新扫出，已标注）");
+            if (progressOnly > 0) why.add("进度类 " + progressOnly + " 条（不用判）");
+            if (!why.isEmpty()) {
+                sb.append("（其余 ").append(String.join("、", why)).append("）");
+            }
+            sb.append("\n");
             sb.append("**阈值**: ").append(SimilarityScorer.Score.fmt(r.threshold()))
               .append("｜**比较对数**: ").append(r.pairsCompared())
               .append("｜**超阈值**: ").append(r.aboveThreshold());
@@ -2606,13 +2744,14 @@ public class ExpHubTools {
                 // ⚠️ 2026-10-26 03:1x 阁主实测：差额为 0 时这句仍然印「（差额 0 条 …）」
                 //    —— 没差额还让人去找差额，等于凭空造一个不存在的东西。
                 //    规则：**只在真有差额时渲染解释**；有差额时也不许含糊其辞。
-                int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0, bySameTopic = 0;
+                int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0, bySameTopic = 0, byJudged = 0;
                 for (SimilarityService.TierDetail d : r.tierDetail().values()) {
                     bySample += d.droppedBySample();
                     byPerDoc += d.droppedPerDoc();
                     byOmitted += d.droppedRedundant();
                     byLimit += d.droppedByLimit();
                     bySameTopic += d.droppedSameTopic();
+                    byJudged += d.droppedJudged();
                 }
                 int notShown = Math.max(0, r.aboveThreshold() - r.rows().size());
                 // ⚠️ 2026-10-26 12:1x 阁主：「逐项归因」只写了一半 ——
@@ -2638,7 +2777,7 @@ public class ExpHubTools {
                     } else {
                         sb.append("；**另有 ").append(notShown).append(" 对未展示**，逐项归因：")
                           .append(causesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic,
-                                  r.maxPerDoc(), SimilarityService.DEFAULT_PROGRESS_SAMPLE));
+                                  byJudged, r.maxPerDoc(), SimilarityService.DEFAULT_PROGRESS_SAMPLE));
                     }
                     sb.append("）");
                 }
@@ -2660,7 +2799,7 @@ public class ExpHubTools {
                 //    规则：**满员时也要把未展示总数与各项之和摆出来，且必须能对上**。
                 if (gap == 0 && notShown > 0) {
                     sb.append("；**未展示 ").append(notShown).append(" 对 = ")
-                      .append(shortCausesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic))
+                      .append(shortCausesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic, byJudged))
                       .append("**（分层数字不受 limit 影响，调大 limit 只是让更多条进清单）");
                 }
                 sb.append("\n\n");
@@ -2741,6 +2880,13 @@ public class ExpHubTools {
                                 sb.append("｜另有 ").append(d.droppedSameTopic())
                                   .append(" 条因**与已抽中的是同话题**跳过（同一话题只留分数最高的那条，")
                                   .append("腾出的名额让给别的话题）");
+                            }
+                            // ⚠️ 2026-10-26 13:0x 阁主第 3 条：已判过的对占着抽样名额
+                            //    （#470↔#477 是候选 #13，已判 DISTINCT 却还占 1 个名额）。
+                            //    现在这类对不占名额，这里必须报出来 —— 否则「全库 16 对、展示 5 条」的差额对不上。
+                            if (d.droppedJudged() > 0) {
+                                sb.append("｜另有 ").append(d.droppedJudged())
+                                  .append(" 条**已判过、不占名额**（判过就不该再花名额，让给未判过的话题）");
                             }
                             if (d.droppedByLimit() > 0) {
                                 sb.append("｜另有 ").append(d.droppedByLimit()).append(" 对被 limit 截断");
@@ -2895,6 +3041,76 @@ public class ExpHubTools {
         } catch (Exception e) {
             log.error("ExpHubTools.updateProject: FAILED", e);
             return "更新失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 删除项目（2026-10-26 13:0x 阁主第 7 条：MCP 有 list/create/update，**能创建不能删除**）。
+     *
+     * <p>两条硬约束，都是「删错了没法撤」的对策：
+     * <ol>
+     *   <li><b>必须回填项目名</b> —— 只给 ID 的误删无法发现（ID 是数字，没人记得住几号叫什么）。</li>
+     *   <li><b>项目里还有文档就不删</b> —— 不给「连文档一起删」的开关。要删先把文档移走
+     *       （`update_experience(projectId=0)` 移回全局 / `promote_to_global`），删文档走
+     *       `mark_for_deletion` + 网页端确认，这两步都是有意为之的独立动作。</li>
+     * </ol>
+     */
+    @Tool(name = "delete_project", description = "删除一个项目（**只删项目本身，不删任何文档**）。"
+            + "两道保险：①必须用 confirmName 回填项目名（只传 ID 不给删）；②项目里还有文档时拒绝删除，"
+            + "要先把文档移走（update_experience(projectId=0)）再删。删完会回读项目列表自证。")
+    public String deleteProject(
+            @ToolParam(description = "项目ID") Long projectId,
+            @ToolParam(description = "回填项目名（必须与现有名称完全一致）—— 防「只给 ID 时误删」") String confirmName,
+            @ToolParam(description = "可选。**谁改的**——操作人署名，仅写日志", required = false) String updatedName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            Project p = projectService.getProject(projectId);
+            if (p == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你的项目。";
+            }
+            String must = p.getName() == null ? "" : p.getName().trim();
+            if (confirmName == null || !must.equals(confirmName.trim())) {
+                return "❌ 未删除：confirmName 与项目名不一致。\n\n"
+                     + "该项目实际名称：**「" + must + "」**\n"
+                     + "请原样回填：delete_project(projectId=" + projectId + ", confirmName=\""
+                     + must + "\")\n\n"
+                     + "（要求回填名字而不是只给 ID，是因为 ID 是数字，误删一次无法发现更无法撤回）";
+            }
+            int docs = projectService.listProjectDocs(projectId, null).size();
+            if (docs > 0) {
+                return "❌ 未删除：项目「" + must + "」下还有 **" + docs + " 篇文档**。\n\n"
+                     + "删除项目**不会**连文档一起删，也不会把它们移走 —— 所以这里直接不放行。\n"
+                     + "先把文档移出去（任选）：\n"
+                     + "· `update_experience(id=?, projectId=0)` → 移回全局\n"
+                     + "· `promote_to_global(id=?)` → 提升为全局经验\n"
+                     + "全部移走后重新调用本工具。";
+            }
+            String operator = resolveAuthor(updatedName, assistant);
+            int deleted = projectService.deleteProject(projectId);
+            if (deleted == 0) {
+                return "❌ 删除失败：服务层返回 0（可能不是你名下的项目）。未做任何改动。";
+            }
+            // 自证：回读项目列表，确认它真的不在了
+            boolean still = false;
+            for (Project x : projectService.listProjects()) {
+                if (projectId.equals(x.getId())) { still = true; break; }
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append(still ? "⚠️ 回读仍有该项目，删除可能未生效" : "✅ 项目已删除").append("\n\n");
+            sb.append("**ID**: ").append(projectId).append("\n");
+            sb.append("**名称**: ").append(must).append("\n");
+            sb.append("**其下文档**: 0 篇（删除前已确认，没有文档被删或改归属）\n");
+            sb.append("**回读自证**: list_projects ").append(still ? "仍包含 #" + projectId : "已不含 #" + projectId).append("\n");
+            sb.append("**操作人**: ").append(operator).append("\n");
+            log.info("ExpHubTools.deleteProject: #{}「{}」 by={}", projectId, must, operator);
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.deleteProject: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "删除项目失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 

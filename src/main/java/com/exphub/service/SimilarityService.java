@@ -424,21 +424,27 @@ public class SimilarityService {
         //    （#63 命中 4 个子页，被「每篇最多 2 条」砍掉两条），而低层把空出的名额填满 ——
         //    观感与「按分数截断」一样，读的人会以为分层没生效。抽出来才测得动。
         int sampleCap = (progressSample == null) ? DEFAULT_PROGRESS_SAMPLE : Math.max(0, progressSample);
-        Selection sel = select(above, maxRows, perDoc, sampleCap);
-        List<Row> selected = sel.rows();
-        int dropped = 0;
-        for (TierDetail d : sel.detail().values()) dropped += d.droppedPerDoc() + d.droppedByLimit();
-
-        int enqueued = 0, pending = 0, resolved = 0;
-        // ⚠️ 2026-10-26 12:0x 阁主：①层里 #63↔#67（候选 #17）、#159↔#160（候选 #25）**早判过了**，
+        // ⚠️ 2026-10-26 13:0x 阁主：①层里 #63↔#67（候选 #17）、#159↔#160（候选 #25）**早判过了**，
         //    这次照样排前排、照样写「判 distinct」，他就得再判一遍。
         //    → 每对先查已有候选行（dryRun 也查），判过就在行尾标出来。
+        //    同时把它们交给 select()：**③层的抽样名额不许被已判过的对占掉**（候选 #13 那条）。
         Map<String, ReviewCandidate> existing = Map.of();
         try {
             existing = candidateService.pairMap();
         } catch (Exception e) {
             log.warn("SimilarityService.scan: 读候选队列失败（不影响扫描）: {}", e.toString());
         }
+        Set<String> judgedPairs = new LinkedHashSet<>();
+        for (Map.Entry<String, ReviewCandidate> en : existing.entrySet()) {
+            String st = en.getValue().getStatus();
+            if (st != null && !ReviewCandidate.PENDING.equals(st)) judgedPairs.add(en.getKey());
+        }
+        Selection sel = select(above, maxRows, perDoc, sampleCap, judgedPairs);
+        List<Row> selected = sel.rows();
+        int dropped = 0;
+        for (TierDetail d : sel.detail().values()) dropped += d.droppedPerDoc() + d.droppedByLimit();
+
+        int enqueued = 0, pending = 0, resolved = 0;
         List<Row> rowsOut = new ArrayList<>();
         for (Row r : selected) {
             String state;
@@ -546,13 +552,15 @@ public class SimilarityService {
                              /** 被略去的同族交叉对（形如「#65↔#66」）—— 一行字备查，不占名额 */
                              java.util.List<String> omittedSamples,
                              /** ③层抽样时因「与已抽中的是同话题」而跳过的条数（2026-10-26 12:0x） */
-                             int droppedSameTopic) {
+                             int droppedSameTopic,
+                             /** ③层抽样时因「这对已经判过」而跳过的条数 —— 已判的对不该占名额（2026-10-26 13:0x） */
+                             int droppedJudged) {
 
         public TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
                           int droppedBySample, int droppedRedundant,
                           java.util.List<String> droppedSamples) {
             this(above, shown, droppedPerDoc, droppedByLimit, droppedBySample, droppedRedundant,
-                    droppedSamples, java.util.List.of(), 0);
+                    droppedSamples, java.util.List.of(), 0, 0);
         }
 
         public TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
@@ -560,13 +568,21 @@ public class SimilarityService {
                           java.util.List<String> droppedSamples,
                           java.util.List<String> omittedSamples) {
             this(above, shown, droppedPerDoc, droppedByLimit, droppedBySample, droppedRedundant,
-                    droppedSamples, omittedSamples, 0);
+                    droppedSamples, omittedSamples, 0, 0);
+        }
+
+        public TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
+                          int droppedBySample, int droppedRedundant,
+                          java.util.List<String> droppedSamples,
+                          java.util.List<String> omittedSamples, int droppedSameTopic) {
+            this(above, shown, droppedPerDoc, droppedByLimit, droppedBySample, droppedRedundant,
+                    droppedSamples, omittedSamples, droppedSameTopic, 0);
         }
 
         /** 这一层有没有「没展示出来」的对 */
         public boolean hasDrop() {
             return droppedPerDoc > 0 || droppedByLimit > 0 || droppedBySample > 0
-                    || droppedRedundant > 0 || droppedSameTopic > 0;
+                    || droppedRedundant > 0 || droppedSameTopic > 0 || droppedJudged > 0;
         }
     }
 
@@ -605,6 +621,17 @@ public class SimilarityService {
     }
 
     static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc, int progressSample) {
+        return select(sortedAbove, maxRows, perDoc, progressSample, java.util.Set.of());
+    }
+
+    /**
+     * @param judgedPairs 已经判过的对（键 = {@link ReviewCandidateService#pairKey}）。
+     *                    <b>③层的抽样名额不许被它们占掉</b>（2026-10-26 13:0x 阁主：
+     *                    `#470↔#477` 是候选 #13、已判 DISTINCT，还占着 5 个名额中的 1 个）。
+     *                    ①层照常展示 —— 那里他需要看见「这对判过、不必再判」。
+     */
+    static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc, int progressSample,
+                            java.util.Set<String> judgedPairs) {
         java.util.Map<SimilarityScorer.Kind, int[]> c = new java.util.LinkedHashMap<>();
         java.util.Map<SimilarityScorer.Kind, java.util.List<String>> samples = new java.util.LinkedHashMap<>();
         java.util.List<Row> selected = new java.util.ArrayList<>();
@@ -613,7 +640,7 @@ public class SimilarityService {
 
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
-            c.computeIfAbsent(k, x -> new int[7])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample [5]=redundant [6]=sameTopic
+            c.computeIfAbsent(k, x -> new int[8])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample [5]=redundant [6]=sameTopic [7]=judged
         }
 
         // ⚠️ 2026-10-26 02:51 越哥实测：上一版把 per-doc 豁免扩散到了②层，结果 6 个名额被一个家族占满 ——
@@ -715,6 +742,14 @@ public class SimilarityService {
         java.util.Set<String> seenTopics = new java.util.LinkedHashSet<>();
         for (Row r : progressRows) {
             int[] cnt = c.get(SimilarityScorer.Kind.PROGRESS);
+            // ⚠️ 2026-10-26 13:0x 阁主第 3 条：**已判过的对不该占抽样名额**。
+            //    `#470↔#477` 已经是候选 #13（DISTINCT），还占着 5 个名额里的 1 个 ——
+            //    等于把名额花在「不用判的东西」上，未判过的话题反而抽不进来。
+            //    这道闸要放在抽样上限**之前**，否则名额已经被它吃掉了。
+            if (judgedPairs.contains(ReviewCandidateService.pairKey(r.docA(), r.docB()))) {
+                cnt[7]++;
+                continue;
+            }
             // ⚠️ 2026-10-26 11:1x 实测发现的因果顺序错误：原来**先判名额满没满、再判抽样上限**，
             //    于是 limit=20 时③层剩下 139 条被记成「被 limit 截断」，而实际挡路的是
             //    **抽样上限 5 条**（调大 limit 到 50 也还是 5 条）—— 回执等于暗示「调大 limit 就能看到」。
@@ -776,7 +811,7 @@ public class SimilarityService {
                     stillDropped.getOrDefault(e.getKey(), 0), v[3], v[4], v[5],
                     samples.getOrDefault(e.getKey(), java.util.List.of()),
                     omitted.getOrDefault(e.getKey(), java.util.List.of()),
-                    v[6]));
+                    v[6], v[7]));
         }
         return new Selection(java.util.List.copyOf(selected), detail, filled);
     }

@@ -1023,6 +1023,52 @@ public final class SimilarityScorer {
         return out;
     }
 
+    /** 两篇文档的逐行差异视图 */
+    public record Diff(List<String> onlyA, List<String> onlyB, int shared, boolean lineMode,
+                       int linesA, int linesB) {}
+
+    /**
+     * 两篇文档的逐行差异（2026-10-26 13:0x 阁主：判断重复最底层的操作，却没有专门工具）。
+     *
+     * <p>口径：**不去模板**（与扫描不同）。判重复要看「实际差在哪」，模板行也算内容；
+     * 去模板只在打分时用（那里的目的是别被骨架骗）。
+     *
+     * <p>行太少（任一侧 &lt; {@link #MIN_LINES_FOR_LINE_MODE}）时 {@code lineMode=false}，
+     * 调用方要说明「这级粒度不可靠」，不要假装逐行可信。
+     */
+    public static Diff diffLines(String contentA, String contentB) {
+        // ⚠️ 这里**不用** lines()：它按 MIN_LINE_LEN=8 丢掉短行（打分要稳定，短行会放大噪声）。
+        //    diff 的用途正相反 —— 用户要看「实际差在哪」，`端口 8088` 这种短行恰恰是差异所在，
+        //    丢了就等于告诉用户「两边一样」。所以 diff 用原始行（trim 掉空白，空行不计）。
+        List<String> la = diffLinesOf(contentA);
+        List<String> lb = diffLinesOf(contentB);
+        Set<String> sa = new LinkedHashSet<>(la);
+        Set<String> sb = new LinkedHashSet<>(lb);
+        List<String> onlyA = new ArrayList<>();
+        List<String> onlyB = new ArrayList<>();
+        int shared = 0;
+        for (String s : sa) {
+            if (sb.contains(s)) shared++;
+            else onlyA.add(s);
+        }
+        for (String s : sb) {
+            if (!sa.contains(s)) onlyB.add(s);
+        }
+        boolean reliable = la.size() >= MIN_LINES_FOR_LINE_MODE && lb.size() >= MIN_LINES_FOR_LINE_MODE;
+        return new Diff(onlyA, onlyB, shared, reliable, la.size(), lb.size());
+    }
+
+    /** diff 专用切行：保留所有非空行（不去 markdown 前缀、不按长度过滤） */
+    static List<String> diffLinesOf(String content) {
+        List<String> out = new ArrayList<>();
+        if (content == null || content.isEmpty()) return out;
+        for (String raw : content.split("\n")) {
+            String s = raw == null ? "" : raw.trim();
+            if (!s.isEmpty()) out.add(s);
+        }
+        return out;
+    }
+
     /** 统计一组文档的行频次（作用域内） */    public static Map<String, Integer> lineDf(Collection<Sketch> sketches) {
         Map<String, Integer> df = new LinkedHashMap<>();
         for (Sketch s : sketches) {
