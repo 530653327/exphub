@@ -779,28 +779,38 @@ public final class SimilarityScorer {
         int kidLines = linesA <= linesB ? ua : ub;
 
         String evidence = switch (kind) {
-            case DUPLICATE -> "**正文重合度高**（共享 " + sharedLines + " 行，平均 " + sharedAvgLen
-                    + " 字，覆盖较短那篇 " + cov + "）\n"
-                    + "　⚠️ 重合高 ≠ 就是重复：这一层混着三种形态，用独有行数分辨 —— A 独有 " + ua
-                    + " 行（占 " + Score.pct(oa) + "）、B 独有 " + ub + " 行（占 " + Score.pct(ob) + "）。\n"
-                    + "　→ 形态：" + switch (shape) {
-                        case TRUE_DUP -> "两侧独有都很少（整篇复制）";
-                        case SUBSET -> "一侧几乎整篇在另一侧里（母集-子集），"
-                                + (oa <= ob ? "A" : "B") + " 侧独有 " + kidLines + " 行（占 "
-                                + Score.pct(Math.min(oa, ob)) + "），像另一侧的子页"
-                                + (Math.min(oa, ob) >= MAX_OWN_SHARE_FOR_TRUE_DUP
-                                   ? "。⚠️ 这个占比已贴近「真重复」上限 "
-                                     + Score.pct(MAX_OWN_SHARE_FOR_TRUE_DUP)
-                                     + "，属边界样本 —— 先打开两边看那 " + kidLines
-                                     + " 行是新增内容还是改写" : "");
-                        case PARALLEL -> "两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）";
-                        case UNKNOWN -> "行口径不可用，形态分不出";
-                      }
-                    + (sib == null ? "" : "\n　→ **但 " + sib + "** —— 两份独立记录，"
-                       + "形态上的「被包含」不等于「该被取代」")
-                    + (numKid == null ? "" : "\n　→ **但" + numKid + "** —— 带编号的那份是「一套里的第 N 份」"
-                       + "（同一模板的并列实例），不是母档的从属部分；这里的「被包含」来自共用骨架，"
-                       + "**不构成合并理由** —— 合并就得把这 N 个并列实例压成一份");
+            case DUPLICATE -> {
+                String head = "**正文重合度高**（共享 " + sharedLines + " 行，平均 " + sharedAvgLen
+                        + " 字，覆盖较短那篇 " + cov + "）\n"
+                        + "　独有行数：A 独有 " + ua + " 行（占 " + Score.pct(oa) + "）、B 独有 " + ub
+                        + " 行（占 " + Score.pct(ob) + "）。\n";
+                // ⚠️ 2026-10-26 11:3x 阁主：原来先写「形态：母集-子集…像另一侧的子页」再紧接着否定它，
+                //    读者先吃进一个结论、再看它被推翻，等于先误导再纠正。
+                //    **身份检查必须先过；形态只在没有被否决时才判**（形态只说明「行被包含」，
+                //    说明不了「谁属于谁」，所以它没资格在被否决之后继续被陈述）。
+                String veto = numKid != null ? numKid : sib;
+                if (veto != null) {
+                    String concl = numKid != null
+                            ? "带编号的那份是「一套里的第 N 份」（同一模板的并列实例），不是母档的从属部分"
+                            : "两份独立记录";
+                    yield head + "　→ **先过身份检查：" + veto + "** —— " + concl + "。\n"
+                            + "　→ 所以**不判母集-子集**：行数上的「被包含」来自共用骨架，说明不了谁属于谁。";
+                }
+                yield head + "　⚠️ 重合高 ≠ 就是重复：这一层混着三种形态，用独有行数分辨。\n"
+                        + "　→ 形态：" + switch (shape) {
+                            case TRUE_DUP -> "两侧独有都很少（整篇复制）";
+                            case SUBSET -> "一侧几乎整篇在另一侧里（母集-子集），"
+                                    + (oa <= ob ? "A" : "B") + " 侧独有 " + kidLines + " 行（占 "
+                                    + Score.pct(Math.min(oa, ob)) + "），像另一侧的子页"
+                                    + (Math.min(oa, ob) >= MAX_OWN_SHARE_FOR_TRUE_DUP
+                                       ? "。⚠️ 这个占比已贴近「真重复」上限 "
+                                         + Score.pct(MAX_OWN_SHARE_FOR_TRUE_DUP)
+                                         + "，属边界样本 —— 先打开两边看那 " + kidLines
+                                         + " 行是新增内容还是改写" : "");
+                            case PARALLEL -> "两侧各有约一半独有行（同一套模板写出来的两个对象 / 两份并列记录）";
+                            case UNKNOWN -> "行口径不可用，形态分不出";
+                          };
+            }
             case SERIES -> {
                 int big = Math.max(linesA, linesB), small = Math.min(linesA, linesB);
                 boolean ratioSubset = small > 0 && big >= small * MIN_LINES_RATIO_FOR_SUBSET;

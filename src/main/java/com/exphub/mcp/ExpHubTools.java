@@ -2403,6 +2403,33 @@ public class ExpHubTools {
                 // ⚠️ 2026-10-26 03:1x 阁主实测：差额为 0 时这句仍然印「（差额 0 条 …）」
                 //    —— 没差额还让人去找差额，等于凭空造一个不存在的东西。
                 //    规则：**只在真有差额时渲染解释**；有差额时也不许含糊其辞。
+                int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0;
+                for (SimilarityService.TierDetail d : r.tierDetail().values()) {
+                    bySample += d.droppedBySample();
+                    byPerDoc += d.droppedPerDoc();
+                    byOmitted += d.droppedRedundant();
+                    byLimit += d.droppedByLimit();
+                }
+                int notShown = Math.max(0, r.aboveThreshold() - r.rows().size());
+                java.util.List<String> causes = new java.util.ArrayList<>();
+                java.util.List<String> shortCauses = new java.util.ArrayList<>();
+                if (bySample > 0) {
+                    causes.add("③层进度/日志类只抽样 " + SimilarityService.DEFAULT_PROGRESS_SAMPLE
+                            + " 条，省 " + bySample + " 条");
+                    shortCauses.add("③层抽样省 " + bySample);
+                }
+                if (byPerDoc > 0) {
+                    causes.add("「单篇最多 " + r.maxPerDoc() + " 条候选」挤掉 " + byPerDoc + " 条");
+                    shortCauses.add("per-doc 挤掉 " + byPerDoc);
+                }
+                if (byOmitted > 0) {
+                    causes.add("同族交叉对已略去 " + byOmitted + " 条");
+                    shortCauses.add("同族交叉对略去 " + byOmitted);
+                }
+                if (byLimit > 0) {
+                    causes.add("被 limit 截断 " + byLimit + " 条");
+                    shortCauses.add("limit 截断 " + byLimit);
+                }
                 if (gap > 0) {
                     // ⚠️ 2026-10-26 10:5x 阁主第 4 条（与「编解释」同源）：这里原来不管实际发生什么，
                     //    都并列写「③层抽样 / per-doc 限流」。这轮差额 2 条**全来自③层抽样上限**，
@@ -2414,24 +2441,6 @@ public class ExpHubTools {
                     //    实测 limit=22、超阈值 23 对、展示 12 对 → 差额 10 格，而③层抽样省了 11 条，
                     //    印成「差额 10 条 = 抽样省 11 条」自相矛盾（超阈值 23 > limit 22，有一条本来也放不下）。
                     //    → **两个数分开摆、各自归因**：差额 N 格（limit 没被用满）／另有 M 对未展示（逐项给因）。
-                    int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0;
-                    for (SimilarityService.TierDetail d : r.tierDetail().values()) {
-                        bySample += d.droppedBySample();
-                        byPerDoc += d.droppedPerDoc();
-                        byOmitted += d.droppedRedundant();
-                        byLimit += d.droppedByLimit();
-                    }
-                    int notShown = Math.max(0, r.aboveThreshold() - r.rows().size());
-                    java.util.List<String> causes = new java.util.ArrayList<>();
-                    if (bySample > 0) {
-                        causes.add("③层进度/日志类只抽样 " + SimilarityService.DEFAULT_PROGRESS_SAMPLE
-                                + " 条，省 " + bySample + " 条");
-                    }
-                    if (byPerDoc > 0) {
-                        causes.add("「单篇最多 " + r.maxPerDoc() + " 条候选」挤掉 " + byPerDoc + " 条");
-                    }
-                    if (byOmitted > 0) causes.add("同族交叉对已略去 " + byOmitted + " 条");
-                    if (byLimit > 0) causes.add("被 limit 截断 " + byLimit + " 条");
                     sb.append("（差额 ").append(gap).append(" 格没被用满");
                     if (notShown == 0) {
                         sb.append("：超阈值对只有 ").append(r.aboveThreshold()).append(" 对，比 limit 少 ")
@@ -2456,10 +2465,14 @@ public class ExpHubTools {
                           .append(" 条是**补位补回的**（原被 per-doc 挤掉，在名额填满之前补回）");
                     }
                 }
-                if (r.droppedByCap() > 0) {
-                    sb.append("；另有 ").append(r.droppedByCap())
-                      .append(" 条超阈值但被 limit 截掉 —— **分层数字不受 limit 影响**，")
-                      .append("调大 limit 只是让更多条进清单，不会改变上面的统计");
+                // ⚠️ 2026-10-26 11:3x 阁主：头行算术不闭合 ——「165 = 展示 20 + limit 截断 139 + 同族略去 6」，
+                //    但头行只报了 droppedByCap（它**不含「已略去」**），那 6 条没交代。
+                //    规则：**满员时也要把未展示总数与各项之和摆出来，且必须能对上**。
+                if (gap == 0 && notShown > 0) {
+                    sb.append("；**未展示 ").append(notShown).append(" 对 = ")
+                      .append(shortCauses.isEmpty() ? "各项计数都为 0 —— 回执自相矛盾，请报缺陷"
+                                                     : String.join(" + ", shortCauses))
+                      .append("**（分层数字不受 limit 影响，调大 limit 只是让更多条进清单）");
                 }
                 sb.append("\n\n");
                 int i = 1;
