@@ -208,12 +208,40 @@ public final class SimilarityScorer {
         return null;
     }
 
-    /** 三项排除清单 —— 只报行数比的回执是不够的，必须把「哪些不同就算并列」摊开写 */
+    /**
+     * 编号排除（<b>母集-子集专用</b>）：子页一侧带「带字编号」、母档一侧没有编号 → 不能判合并。
+     *
+     * <p><b>为什么单列一条（2026-10-26 11:0x 阁主实测，阻塞项）</b>：
+     * #63「百炼宠物 - 中央平原地图设计」与 #65~#68「…地图1/2/3/4 提示词」被判成母集-子集，
+     * 4 对全给「把这 8 行并进另一份、清掉这一份」。但**#65~#68 是并列的四个场景提示词**，
+     * 编号 1/2/3/4 就是「一套里的第 N 份」——把它们逐个并进 #63 再清掉，
+     * 等于把四个场景压成一份，而且②层那 6 条「互为独立记录」的佐证已被略去，**动手前无从回头核对**。
+     *
+     * <p>为什么不是 {@link #siblingReason}：那条要求**两侧都有编号且不相交**（地图1 vs 地图2），
+     * 而母档一侧没有编号（地图设计），条件不成立 —— 所以它挡不住这一类。
+     *
+     * <p>为什么不能一刀切「任一侧有编号就 distinct」：「方案」vs「方案 v3」这种是同一份演进，
+     * 该 merge 不该 distinct。只有**带编号的那份是子页、母档没编号**时才否定——
+     * 编号说明它不是母档的从属部分。
+     *
+     * @return 命中原因（人话）；不命中返回 null
+     */
+    public static String numberedKidReason(String kidTitle, String motherTitle) {
+        if (kidTitle == null || motherTitle == null) return null;
+        java.util.Set<String> kid = numberMarks(kidTitle);
+        if (kid.isEmpty()) return null;
+        if (!numberMarks(motherTitle).isEmpty()) return null;
+        return "子页一侧带编号（" + String.join(" / ", kid) + "）、母档一侧没有编号";
+    }
+
+    /** 排除清单 —— 只报行数比的回执是不够的，必须把「哪些不同就算并列」摊开写 */
     public static final String SIBLING_EXCLUSIONS =
-            "先按顺序排除三项：① **日期不同**（如 10-23 vs 10-24）② **编号不同**（如 地图1 vs 地图2、v2 vs v3）"
+            "先按顺序排除四项：① **日期不同**（如 10-23 vs 10-24）② **编号不同**（如 地图1 vs 地图2、v2 vs v3）"
             + "③ **主体不同**（同一套模板写出来的两个不同对象 —— 看标题写的是谁、哪一件，"
-            + "**别照抄这几个例子去对号入座**）—— "
-            + "**任何一项不同 = 并列记录，判 distinct，谁也别并、谁也别清**";
+            + "**别照抄这几个例子去对号入座**）"
+            + "④ **一侧带编号、另一侧没有**（地图1 vs 地图设计 —— 带编号的是「一套里的第 N 份」，"
+            + "不是另一个的从属部分）—— "
+            + "**任何一项成立 = 并列记录，判 distinct，谁也别并、谁也别清**";
 
     /**
      * 标题像不像「母档的补充页」（补充 / 续篇 / 第 N 部分 / 附记）。
@@ -281,7 +309,17 @@ public final class SimilarityScorer {
             Shape sh = shapeFor(sharedLines, linesA, linesB);
             if (sh == Shape.TRUE_DUP) return contentEvidence ? Action.DUPLICATE : Action.DISTINCT;
             // 母集-子集必须有内容证据（共享行 ≥1）：0 行重合说明一行都没被包含，补不出「已含」
-            if (sh == Shape.SUBSET) return contentEvidence ? Action.MERGE_THEN_CLEAR : Action.DISTINCT;
+            if (sh == Shape.SUBSET) {
+                if (!contentEvidence) return Action.DISTINCT;
+                // 编号排除（2026-10-26 11:0x 阁主：①层 4 对仍给 merge 是错的）：
+                // 子页带编号、母档没编号 → 那份是「一套里的第 N 份」，不是母档的从属部分。
+                // 地图1/2/3/4 与「地图设计」的「被包含」来自共用骨架，不构成合并理由。
+                if (numberedKidReason(linesA <= linesB ? titleA : titleB,
+                                      linesA <= linesB ? titleB : titleA) != null) {
+                    return Action.DISTINCT;
+                }
+                return Action.MERGE_THEN_CLEAR;
+            }
             return Action.DISTINCT;   // PARALLEL / UNKNOWN
         }
         // SERIES：有内容重合是「共用骨架」→ 两份独立
@@ -731,6 +769,10 @@ public final class SimilarityScorer {
         Shape shape = shapeFor(sharedLines, linesA, linesB);
         String cov = Score.pct(lineCoverage);
         String sib = siblingReason(titleA, titleB);
+        // 母集-子集专用：子页带编号、母档没编号 → 并列实例，不判合并（理由见 numberedKidReason）
+        String numKid = (shape == Shape.SUBSET)
+                ? numberedKidReason(linesA <= linesB ? titleA : titleB, linesA <= linesB ? titleB : titleA)
+                : null;
         // ⚠️ 动作只从这里出（2026-10-26 02:51 越哥定）：文案只描述证据，动作由 decide() 决定并渲染。
         // 这样「同一对同时给出两个动作」在结构上不可能出现。
         Action act = decide(kind, sharedLines, linesA, linesB, titleA, titleB);
@@ -755,7 +797,10 @@ public final class SimilarityScorer {
                         case UNKNOWN -> "行口径不可用，形态分不出";
                       }
                     + (sib == null ? "" : "\n　→ **但 " + sib + "** —— 两份独立记录，"
-                       + "形态上的「被包含」不等于「该被取代」");
+                       + "形态上的「被包含」不等于「该被取代」")
+                    + (numKid == null ? "" : "\n　→ **但" + numKid + "** —— 带编号的那份是「一套里的第 N 份」"
+                       + "（同一模板的并列实例），不是母档的从属部分；这里的「被包含」来自共用骨架，"
+                       + "**不构成合并理由** —— 合并就得把这 N 个并列实例压成一份");
             case SERIES -> {
                 int big = Math.max(linesA, linesB), small = Math.min(linesA, linesB);
                 boolean ratioSubset = small > 0 && big >= small * MIN_LINES_RATIO_FOR_SUBSET;

@@ -260,12 +260,15 @@ class SelectionLimitTest {
     /**
      * 母档 / 子页不许取反 —— 取反的后果是「把母档清掉、把子页留下」。
      *
-     * <p>用真实数据形态：#63（195 行）↔ #67（47 行），共享 40 行 → 子页独有 7 行。
+     * <p>用母集-子集的形态：大 195 行、小 47 行，共享 40 行 → 子页独有 7 行。
+     * 标题故意**不带编号**：带编号的那种由 {@link #numberedKidMustNotBeMergedIntoUnnumberedMother} 钉住，
+     * 两种情况必须分开测，否则「编号排除生效」会被误当成「母档取反」。
      */
     @Test
     void mergeSidesMustNotSwapMotherAndKid() {
         SimilarityScorer.Score s = new SimilarityScorer.Score(0.55, 0.5, 0.5, 0.5,
-                40, 195, 47, true, 40.0 / 47, 40, 25, false, "地图设计", "地图3提示词");
+                40, 195, 47, true, 40.0 / 47, 40, 25, false,
+                "前端开发专家", "前端开发专家（旧稿）");
         long[] sides = SimilarityService.mergeSides(s, 63L, 67L);
         assertTrue(sides != null, "母集-子集应给出 merge");
         assertEquals(63L, sides[0], "母档是行数多的那侧");
@@ -275,7 +278,32 @@ class SelectionLimitTest {
         // 判不了的动作不许硬给方向
         SimilarityScorer.Score other = new SimilarityScorer.Score(0.55, 0.5, 0.5, 0.5,
                 0, 100, 90, true, 0.0, 0, 0, false, "地图1", "地图2");
-        assertEquals(null, SimilarityService.mergeSides(other, 1L, 2L), "0 行重合 + 并列记录 → 没有 merge 方向");    }
+        assertEquals(null, SimilarityService.mergeSides(other, 1L, 2L), "0 行重合 + 并列记录 → 没有 merge 方向");
+    }
+
+    /**
+     * ①层编号排除（2026-10-26 11:0x 阁主，阻塞项）：
+     * 子页带「带字编号」、母档没有编号 → <b>不许</b>判「并进母档、清掉子页」。
+     *
+     * <p>现场：#63「中央平原地图设计」（195 行，无编号）↔ #65「中央平原地图1提示词」（47 行，带「地图1」），
+     * 共享 40 行 → 形态确实是母集-子集，但 #65~#68 是**并列的四个场景提示词**，
+     * 逐个并进 #63 再清掉 = 把四个场景压成一份。
+     */
+    @Test
+    void numberedKidMustNotBeMergedIntoUnnumberedMother() {
+        SimilarityScorer.Score s = new SimilarityScorer.Score(0.55, 0.5, 0.5, 0.5,
+                40, 195, 47, true, 40.0 / 47, 40, 25, false,
+                "百炼宠物 - 中央平原地图设计", "百炼宠物 - 中央平原地图1提示词（平原入口）");
+
+        assertEquals(SimilarityScorer.Kind.DUPLICATE, s.kind(), "前置条件：仍属①层母集-子集形态");
+        assertEquals(SimilarityScorer.Action.DISTINCT,
+                SimilarityScorer.decide(s.kind(), s.sharedLines(), s.linesA(), s.linesB(), s.titleA(), s.titleB()),
+                "带编号的是「一套里的第 N 份」，不是母档的从属部分");
+        assertEquals(null, SimilarityService.mergeSides(s, 63L, 65L),
+                "没有合并方向，就不许渲染「并进母档、清掉子页」");
+        assertTrue(s.diagnosis().contains("第 N 份"), "回执必须说清为什么不能并：" + s.diagnosis());
+        assertTrue(!s.diagnosis().contains("动作：先把这"), "更不许出现合并动作句：" + s.diagnosis());
+    }
 
     @Test
     void lowerTierDropsAreReportedWithSamples() {

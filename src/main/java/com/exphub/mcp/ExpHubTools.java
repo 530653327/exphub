@@ -379,6 +379,17 @@ public class ExpHubTools {
 
             List<DocVersion> versions = docService.getVersions(id);
 
+            // ⚠️ 2026-10-26 11:0x 阁主实测：`version=0` 会一路落到最后那个兜底分支，回
+            //    「v0 不在主表、也不在冷存档，但落在已存范围内…**这是不一致状态，请直接报给维护者**」——
+            //    把**非法输入**说成**库不一致**，让人白跑一趟还去怀疑数据坏了。
+            //    版本号从 v1 开始，非法值必须在入口明拒，并给出正确的三个入口。
+            if (version != null && version < 1) {
+                return "❌ 版本号必须 ≥ 1（收到 " + version + "）。版本号从 v1 开始，没有 v0，也不接受负数。\n\n"
+                        + "· 看**当前正文**：`get_experience_detail(id=" + id + ")`\n"
+                        + "· 看**历史版本列表**：`get_experience_history(id=" + id + ")`（不传 version）\n"
+                        + "· 看**某个历史版本**：`get_experience_history(id=" + id + ", version=库里存在的版本号)`";
+            }
+
             if (version != null) {
                 // ⚠️ 2026-10-26 01:1x：**先判「这是不是当前版本」**。
                 // 当前正文存在 docs 表，doc_versions 里没有它 —— 原来会被归到「不存在」里，
@@ -2433,8 +2444,17 @@ public class ExpHubTools {
                     sb.append("）");
                 }
                 if (filled) {
-                    sb.append("；另有 ").append(r.filledPerDoc())
-                      .append(" 条原本被 per-doc 挤掉，因名额有余**已补回清单**");
+                    // ⚠️ 2026-10-26 11:0x 阁主实测：范围行说「limit=22，已用满」，紧接着这句又写
+                    //    「因**名额有余**已补回清单」—— 同一个回执里一边说满了、一边说还有余。
+                    //    两句字面都对（补位发生在填满**之前**），但并排读就是自相矛盾。
+                    //    规则：满员时说清「补回发生在填满之前」，不许再用「名额有余」。
+                    if (gap > 0) {
+                        sb.append("；另有 ").append(r.filledPerDoc())
+                          .append(" 条原本被 per-doc 挤掉，因名额有余**已补回清单**");
+                    } else {
+                        sb.append("；其中 ").append(r.filledPerDoc())
+                          .append(" 条是**补位补回的**（原被 per-doc 挤掉，在名额填满之前补回）");
+                    }
                 }
                 if (r.droppedByCap() > 0) {
                     sb.append("；另有 ").append(r.droppedByCap())

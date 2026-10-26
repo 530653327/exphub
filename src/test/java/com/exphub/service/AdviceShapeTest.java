@@ -248,15 +248,16 @@ class AdviceShapeTest {
                 "40 : 44 不悬殊 —— 「长短悬殊」只能用在行数差 ≥4:1 的对上：" + d);
     }
 
-    /** 检测不出差异、又不是补充页 → 不许直接下结论，必须给出三项排除清单 */
+    /** 检测不出差异、又不是补充页 → 不许直接下结论，必须给出四项排除清单 */
     @Test
     void whenTitlesShowNoDifferenceMustListExclusionsNotConclude() {
         // 标题里没有日期/编号差异，也没有「补充」这类字样（120 行 ↔ 5 行，约 24:1）
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5,
                 "史越 个人档案", "史越个人档案的其他记录");
-        assertTrue(d.contains("排除三项"), "没检测到差异 = 把排除清单摊开让人判：" + d);
+        assertTrue(d.contains("排除四项"), "没检测到差异 = 把排除清单摊开让人判：" + d);
         assertTrue(d.contains("日期") && d.contains("编号") && d.contains("主体"),
-                "三项都要列出来（日期/编号/主体）：" + d);
+                "日期/编号/主体 三项都要列出来：" + d);
+        assertTrue(d.contains("一侧带编号"), "第四项（一侧带编号）也要列出：" + d);
         assertTrue(d.contains("动作：判 distinct"), "0 行重合下唯一动作是 distinct：" + d);
         assertFalse(d.contains("并进另一份"), "0 行重合时「已含」不成立，不许给合并动作：" + d);
     }
@@ -265,7 +266,7 @@ class AdviceShapeTest {
     @Test
     void withoutTitlesMustNotConcludeSubset() {
         String d = SimilarityScorer.advice(SimilarityScorer.Kind.SERIES, 0, 0.0, 0, 120, 5);
-        assertTrue(d.contains("排除三项"), "没有标题就判不了归属，必须退回排除清单：" + d);
+        assertTrue(d.contains("排除四项"), "没有标题就判不了归属，必须退回排除清单：" + d);
     }
 
     /** 行数差不悬殊时不许乱扣「母集-子集」的帽子 */

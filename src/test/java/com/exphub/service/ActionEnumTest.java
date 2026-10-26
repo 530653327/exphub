@@ -93,8 +93,13 @@ class ActionEnumTest {
         // 真重复（两侧独有都很少 + 有内容证据）才给 duplicate
         assertEquals(SimilarityScorer.Action.DUPLICATE,
                 SimilarityScorer.decide(SimilarityScorer.Kind.DUPLICATE, 39, 40, 40, "甲", "乙"));
-        // 母集-子集（有内容证据 + 一侧独有很少）→ 合并后清
+        // 母集-子集（有内容证据 + 一侧独有很少）→ 合并后清；**标题不带编号**（带编号由下面那条挡）
         assertEquals(SimilarityScorer.Action.MERGE_THEN_CLEAR,
-                SimilarityScorer.decide(SimilarityScorer.Kind.DUPLICATE, 39, 195, 47, "地图设计", "地图3提示词"));
+                SimilarityScorer.decide(SimilarityScorer.Kind.DUPLICATE, 39, 195, 47, "中央平原地图设计", "场景补充稿"));
+        // ①层编号排除（2026-10-26 11:0x 阁主，阻塞项）：子页带编号、母档没编号 → 并列实例，不许合并
+        assertEquals(SimilarityScorer.Action.DISTINCT,
+                SimilarityScorer.decide(SimilarityScorer.Kind.DUPLICATE, 39, 195, 47,
+                        "中央平原地图设计", "中央平原地图3提示词"),
+                "地图1/2/3/4 是「一套里的第 N 份」，逐个并进母档等于把并列压成一份");
     }
 }
