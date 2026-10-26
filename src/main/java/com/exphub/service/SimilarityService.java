@@ -623,12 +623,16 @@ public class SimilarityService {
         // 第三段：最后才给③层（进度/日志）—— 受 progressSample 与剩余名额双重约束
         for (Row r : progressRows) {
             int[] cnt = c.get(SimilarityScorer.Kind.PROGRESS);
-            if (selected.size() >= maxRows) {
-                cnt[3]++;
-                continue;
-            }
+            // ⚠️ 2026-10-26 11:1x 实测发现的因果顺序错误：原来**先判名额满没满、再判抽样上限**，
+            //    于是 limit=20 时③层剩下 139 条被记成「被 limit 截断」，而实际挡路的是
+            //    **抽样上限 5 条**（调大 limit 到 50 也还是 5 条）—— 回执等于暗示「调大 limit 就能看到」。
+            //    两道闸都是硬闸，但**先绑的那道才该被记成原因**：抽样上限先，名额后。
             if (progressSample > 0 && cnt[1] >= progressSample) {
                 cnt[4]++;
+                continue;
+            }
+            if (selected.size() >= maxRows) {
+                cnt[3]++;
                 continue;
             }
             int ca = perDocCount.getOrDefault(r.docA(), 0);
