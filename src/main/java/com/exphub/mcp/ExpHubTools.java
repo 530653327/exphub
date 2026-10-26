@@ -593,7 +593,9 @@ public class ExpHubTools {
      *   <li>归档表里有 → 返回归档正文，并标明「已归档」+ 归档时间/归档人</li>
      *   <li>归档表没有、但该文档有归档记录 → 说「这个版本号在主表和存档里都没有」，
      *       并列出真正存在的版本范围（含归档侧）</li>
-     *   <li>该文档从来没归档过 → 就是单纯的版本号不存在</li>
+     *   <li>该文档从来没归档过 → 只剩主表可查；查不到就按「库里没有副本」+ 缺号清单回答，
+     *       <b>不许替它编一个原因</b>（2026-10-26 08:3x：原来写「那它从来没被保存过
+     *       （例如该文档是从 vN 直接创建的）」，把「版本号被消耗」解释掉了）</li>
      * </ol>
      */
     private String archivedVersionResponse(Long id, Integer version, Doc doc, List<DocVersion> versions,
