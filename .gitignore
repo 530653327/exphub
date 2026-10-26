@@ -24,3 +24,7 @@ application-prod.yml
 
 # 本地工作记忆文件
 .codebuddy/
+
+# Python 缓存（tools/*.py 的编译产物，不入库）
+__pycache__/
+*.pyc
