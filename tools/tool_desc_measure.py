@@ -96,6 +96,14 @@ def concat_strings(src, i):
 
 # ---------- 从源码提取 ----------
 
+#: Java 关键字/基础类型名 —— 它们出现在参数名**之前**，不能被当成参数名
+JAVA_KEYWORDS = {
+    'final', 'String', 'Long', 'Integer', 'Boolean', 'Double', 'Float', 'Long',
+    'int', 'long', 'boolean', 'double', 'float', 'String[]', 'List', 'Map',
+    'Object', 'var', 'new', 'return', 'this', 'null',
+}
+
+
 def extract_from_source(path):
     src = open(path, encoding='utf-8').read()
     tools = []   # (name, description)
@@ -129,15 +137,60 @@ def extract_from_source(path):
                 continue
             dstart = i + dm.end()
             desc, dend = concat_strings(src, dstart)
-            # 参数名 = 注解之后的第一个标识符
-            pm = re.search(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*[,)]', src[dend:dend + 200])
-            params.append((cur, pm.group(1) if pm else '?', desc))
+            # 参数名 = 注解**闭合括号之后**的第一个标识符。
+            #
+            # ⚠️ 2026-10-26 17:5x 修（测量工具自己失效，与守卫失效同一类病）：
+            #   原实现从「字符串字面量结尾」直接正则找 `标识符[,)]`，
+            #   而注解里还有 `, required = false)` —— 于是把 **false 当成了参数名**。
+            #   实测：update_project 的 5 个可选参数全被识别成 "false"，
+            #   线上载荷明明有 name/aliases/description/defaultTestCmd/defaultConstraints。
+            #   → 「158 个参数」这个数一直是错的（真实 178 个）。
+            #   现在改成：先跳过整个注解的括号内容，再取 `) Type name`。
+            pname = param_name_after_annotation(src, dend)
+            params.append((cur, pname if pname else '?', desc))
             continue
         nm = re.search(r'name\s*=\s*"([a-z_]+)"', src[m.end():m.end() + 400])
         cur = nm.group(1) if nm else None
         continue
 
     return tools, params
+
+
+def param_name_after_annotation(src, i):
+    """从 @ToolParam(...) 的闭合括号之后，取声明的类型名（Java 里就是参数名）。
+
+    @ToolParam(description = "新名称，留空表示不修改", required = false) String name
+                                                    ↑ 闭合括号在这   ↑ 之后是 "String name"
+    返回 "name"。
+    """
+    # 1) 跳过注解剩余部分：找到与之配对的右括号
+    #    （注解里可能含嵌套括号，如 required = false 或数组默认值）
+    depth = 1
+    j = i
+    n = len(src)
+    while j < n and depth > 0:
+        c = src[j]
+        if c == '"':
+            _, j = java_string_at(src, j)
+            continue
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+        j += 1
+    if depth != 0:
+        return None
+    # 2) 闭合括号之后：跳过空白与类型修饰符（final / String / Long / Integer / boolean ...），
+    #    取最后一个标识符 —— 它才是参数名。
+    tail = src[j:j + 200]
+    m = re.search(r'([A-Za-z_][A-Za-z0-9_]*)\s*(?:[,)=;{]|$)', tail)
+    if not m:
+        return None
+    # 排除 Java 关键字与类型名（它们在参数名之前）
+    candidate = m.group(1)
+    if candidate in JAVA_KEYWORDS:
+        return None
+    return candidate
 
 
 # ---------- 主流程 ----------

@@ -361,8 +361,8 @@ public class ExpHubTools {
     @Tool(name = "get_experience_history", description = "读取历史版本。不传 version 返回版本列表（含位置列：主表/📦已归档）；传 version 返回该版正文。**已归档也能读**（自动回查冷存档）。两个表都没有会列出实际有哪些版本。")
     public String getExperienceHistory(
             @ToolParam(description = "经验ID。") Long id,
-            @ToolParam(description = "可选。要读取的特定版本号，如 7 表示读取 v7 的历史内容。不传则返回所有历史版本列表。"
-                    + "⚠️ 传当前版本号（如 v58 是当前版）会明确告知「这就是当前正文」，不会误报「不存在」。") Integer version,
+            @ToolParam(description = "可选。要读取的特定版本号（填 7 就是读 v7 的历史内容）。不传则返回所有历史版本列表。"
+                    + "⚠️ 传当前版本号（v58 就是当前版）会明确告知「这就是当前正文」，不会误报「不存在」。") Integer version,
             @ToolParam(description = "可选。**正文起始字符偏移**，默认 0。用于分段读取超长历史版本："
                     + "先按返回的「下一段 offset」续读，直到它显示「已是最后一段」。"
                     + "主表版本和归档版本都支持。", required = false) Integer offset) {
@@ -729,7 +729,7 @@ public class ExpHubTools {
             @ToolParam(description = "场景描述，空格分隔多个关键词") String query,
             @ToolParam(description = "可选。模板类型过滤：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal", required = false) String templateType,
             @ToolParam(description = "可选。默认只搜 ACTIVE；要已完成/过期传 COMPLETED,DEPRECATED,BROKEN，ALL=全部", required = false) String includeStatus,
-            @ToolParam(description = "可选。项目名或别名（如 回金算 / huijinsuan）。不传只搜全局（项目经验不出现）", required = false) String projectName,
+            @ToolParam(description = "可选。项目名或别名。不传只搜全局（项目经验不出现）", required = false) String projectName,
             @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。偏移量，默认 0（翻页照抄上页提示的 offset 值）", required = false) Integer offset,
             @ToolParam(description = "可选。true=精简（只 ID/标题/类型/摘要）；false=完整", required = false) Boolean brief) {
@@ -2012,8 +2012,8 @@ public class ExpHubTools {
     public String setFlags(
             @ToolParam(description = "经验ID。单个用这个；批量用 ids（两者可只传一个，同传会合并去重）", required = false) Long id,
             @ToolParam(description = "标记，逗号分隔：needs_review/duplicate/superseded/stale/low_quality（也认中文）。传空串=清空。白名单外的词会被忽略并列出") String flags,
-            @ToolParam(description = "可选。标记说明：为什么打、和哪条重复（如「与 ID:377 结论重复」）", required = false) String note,
-            @ToolParam(description = "可选。**批量**：多个 ID 逗号分隔（如 \"470,477,478\"）", required = false) String ids,
+            @ToolParam(description = "可选。标记说明：为什么打、和哪条重复", required = false) String note,
+            @ToolParam(description = "可选。**批量**：多个 ID 逗号分隔", required = false) String ids,
             @ToolParam(description = "可选。署名（谁打的标记），不传=用 Key 绑定助手名", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
 
@@ -2658,7 +2658,7 @@ public class ExpHubTools {
     public String resolveCandidate(
             @ToolParam(description = "候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
             @ToolParam(description = "处理动作：duplicate（确为重复）/ superseded（旧被新取代）/ distinct（判为不同）/ skip（忽略）") String action,
-            @ToolParam(description = "可选。判断依据，例如「两条命令完全相同，后者多了 systemd 部分」。写下来，日后回看才知道当时为什么这么判", required = false) String note,
+            @ToolParam(description = "可选。判断依据：为什么判为重复或取代。写下来，日后回看才知道当时为什么这么判", required = false) String note,
             @ToolParam(description = "可选。处理人署名", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——操作人署名，与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
         try {
@@ -3183,11 +3183,11 @@ public class ExpHubTools {
 
     @Tool(name = "create_project", description = "创建一个项目空间。项目归集该项目的 AGENTS.md、进度与专属经验，默认隔离、不进全局搜索。")
     public String createProject(
-            @ToolParam(description = "项目名称，如'回金算'") String name,
-            @ToolParam(description = "项目编码，英文唯一标识，如'huijinsuan'") String projectCode,
-            @ToolParam(description = "项目别名，逗号分隔，用于模糊搜索，如'废旧件系统,HJS'。可留空", required = false) String aliases,
+            @ToolParam(description = "项目名称") String name,
+            @ToolParam(description = "项目编码，英文唯一标识") String projectCode,
+            @ToolParam(description = "项目别名，逗号分隔，用于模糊搜索。可留空", required = false) String aliases,
             @ToolParam(description = "项目描述，可留空", required = false) String description,
-            @ToolParam(description = "默认测试命令，工作流模板用，如'mvn test'。可留空", required = false) String defaultTestCmd,
+            @ToolParam(description = "默认测试命令，工作流模板用。可留空", required = false) String defaultTestCmd,
             @ToolParam(description = "默认约束，工作流模板用。可留空", required = false) String defaultConstraints) {
         try {
             Project p = new Project();
@@ -3354,7 +3354,7 @@ public class ExpHubTools {
     @Tool(name = "get_project_agents", description = "读取项目 AGENTS.md。不传 chapterNo 返回 MAIN 索引（含章节目录与红线）；传 chapterNo 返回该章全文。")
     public String getProjectAgents(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "可选。章节号，如'1'、'14'。不传则返回 MAIN 索引", required = false) String chapterNo) {
+            @ToolParam(description = "可选。可选。章节号。不传则返回 MAIN 索引", required = false) String chapterNo) {
         try {
             Project proj = projectService.getProject(projectId);
             if (proj == null) {
@@ -3695,8 +3695,8 @@ public class ExpHubTools {
     @Tool(name = "update_project_agents_chapter", description = "写入或更新项目 AGENTS.md 的某一章正文。按章独立更新，不触发长文档覆盖保护，每章独立保留版本快照。⚠️ 不要写「# 第 N 章 · 标题」和「> 加载策略: ...」这两行——由系统自动生成并拼接，写进 content 会导致重复且版本号脱节。建议 ≤3000 字。")
     public String updateProjectAgentsChapter(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "章节号，如'1'、'14'") String chapterNo,
-            @ToolParam(description = "章节标题，如'项目概述'") String chapterTitle,
+            @ToolParam(description = "章节号") String chapterNo,
+            @ToolParam(description = "章节标题") String chapterTitle,
             @ToolParam(description = "章节正文（Markdown）。不要包含「# 第 N 章」标题行和「加载策略」行（系统自动生成）") String content,
             @ToolParam(description = "加载策略：ALWAYS(每次会话必读) / ON_DEMAND(按需)。默认 ON_DEMAND", required = false) String loadStrategy,
             @ToolParam(description = "排序号，默认0", required = false) Integer sortOrder,
@@ -3805,7 +3805,7 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "list_recent_memories", description = "按更新时间倒序列出本 Key 的记忆（全局 + 自有项目），游标分页。要按关键词找用 search_experience。整理记忆用 since 只看最近一段（如 since=today）。")
+    @Tool(name = "list_recent_memories", description = "按更新时间倒序列出本 Key 的记忆（全局 + 自有项目），游标分页。要按关键词找用 search_experience。整理记忆用 since 只看最近一段。")
     public String listRecentMemories(
             @ToolParam(description = "每页条数，默认 10，上限 50（超过 50 按 50）", required = false) Integer pageSize,
             @ToolParam(description = "翻页游标：首页不传；后续页传上一页返回的 NEXT_CURSOR 值。非法格式按首页处理", required = false) String cursor,
@@ -3926,7 +3926,7 @@ public class ExpHubTools {
     @Tool(name = "list_project_experiences", description = "列出项目专属经验。项目经验默认隔离，不会出现在全局 search_experience 结果中。默认返回 10 条，摘要压缩到 60 字便于扫读；要翻页用 offset，要看完整摘要用 get_experience_detail。")
     public String listProjectExperiences(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "可选。按模板类型过滤，如 bug_fix、config_guide", required = false) String templateType,
+            @ToolParam(description = "可选。按模板类型过滤", required = false) String templateType,
             @ToolParam(description = "可选。每页条数，默认 10，上限 50", required = false) Integer pageSize,
             @ToolParam(description = "可选。跳过前 N 条（从 0 开始），配合 pageSize 翻页。默认 0", required = false) Integer offset) {
         try {
@@ -4036,7 +4036,7 @@ public class ExpHubTools {
     @Tool(name = "generate_workflow_prompt", description = "生成填空完成的开发任务提示词：工作流模板 + 项目默认变量 + 本次任务变量。默认约束与测试命令自动带入。")
     public String generateWorkflowPrompt(
             @ToolParam(description = "项目ID") Long projectId,
-            @ToolParam(description = "本次任务，一句话，如'实现采购订单导出Excel接口'") String task,
+            @ToolParam(description = "本次任务，一句话") String task,
             @ToolParam(description = "涉及文件，每行一个，格式：路径 —— 要改什么", required = false) String files,
             @ToolParam(description = "验收标准，每行一条可测条件", required = false) String criteria,
             @ToolParam(description = "任务级别：S(小修小补)/M(单点功能)/L(跨模块)。默认 M", required = false) String level,
