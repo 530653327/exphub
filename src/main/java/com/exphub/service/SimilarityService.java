@@ -59,8 +59,9 @@ public class SimilarityService {
     public static final double CREATE_THRESHOLD = 0.55;
     /** 单次写入最多提示几条 */
     public static final int CREATE_TOP_N = 3;
-    /** 索引缓存时长 */
-    private static final long INDEX_TTL_MS = 180_000L;
+    /** 索引缓存时长（秒）—— 回执必须把它印出来，否则读的人分不清「数据没变」和「缓存过期」 */
+    public static final int INDEX_TTL_SECONDS = 180;
+    private static final long INDEX_TTL_MS = INDEX_TTL_SECONDS * 1000L;
     /** 单作用域最多索引多少篇（防极端库把内存吃满） */
     private static final int MAX_INDEX_DOCS = 5000;
 
@@ -126,14 +127,24 @@ public class SimilarityService {
     public record Row(Long docA, String titleA, Long docB, String titleB,
                       double score, String reason, String queueState,
                       SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice,
-                      Long motherId, Long kidId, int kidLines) {
+                      Long motherId, Long kidId, int kidLines,
+                      String aOnlySample, String bOnlySample) {
 
         /** 只描述「像什么」、不涉及合并方向时的构造（母档/子页留空） */
         public Row(Long docA, String titleA, Long docB, String titleB,
                    double score, String reason, String queueState,
                    SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
             this(docA, titleA, docB, titleB, score, reason, queueState, kind, sharedLines, coverage, advice,
-                    null, null, 0);
+                    null, null, 0, "", "");
+        }
+
+        /** 带合并方向、但不带独有行样例（历史调用点） */
+        public Row(Long docA, String titleA, Long docB, String titleB,
+                   double score, String reason, String queueState,
+                   SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice,
+                   Long motherId, Long kidId, int kidLines) {
+            this(docA, titleA, docB, titleB, score, reason, queueState, kind, sharedLines, coverage, advice,
+                    motherId, kidId, kidLines, "", "");
         }
 
         /** 分层排序键：先按「像的是什么」，同层再比分数 —— 单靠分数排会把演进链排到真重复前面 */
@@ -180,7 +191,24 @@ public class SimilarityService {
                              List<Row> rows,
                              java.util.Map<SimilarityScorer.Kind, Integer> tierStats,
                              java.util.Map<SimilarityScorer.Kind, TierDetail> tierDetail,
-                             List<String> notes) {}
+                             List<String> notes,
+                             /** 索引生成时刻（最旧作用域，HH:mm:ss）—— 没这个时间戳，读的人分不清「数据没变」与「缓存过期」 */
+                             String indexBuiltAt,
+                             /** 索引已存在多少秒（TTL 180s） */
+                             long indexAgeSeconds) {
+
+        public ScanResult(boolean ok, String summary, double threshold, boolean dryRun, int docsCompared,
+                          int skippedShort, int skippedSuperseded, long pairsCompared, int aboveThreshold,
+                          int droppedByCap, int maxPerDoc, int limit, int filledPerDoc, int enqueued,
+                          int alreadyPending, int alreadyResolved, List<Row> rows,
+                          java.util.Map<SimilarityScorer.Kind, Integer> tierStats,
+                          java.util.Map<SimilarityScorer.Kind, TierDetail> tierDetail,
+                          List<String> notes) {
+            this(ok, summary, threshold, dryRun, docsCompared, skippedShort, skippedSuperseded,
+                    pairsCompared, aboveThreshold, droppedByCap, maxPerDoc, limit, filledPerDoc,
+                    enqueued, alreadyPending, alreadyResolved, rows, tierStats, tierDetail, notes, "", 0L);
+        }
+    }
 
     // ==================== L0：写入查重 ====================
 
@@ -315,11 +343,16 @@ public class SimilarityService {
         long pairs = 0;
         // 各作用域篇数 —— 回执要能自证「篇数 → 对数」的换算，否则读到 553 篇/51852 对只能靠猜
         List<String> scopeSizes = new ArrayList<>();
+        LocalDateTime oldestBuild = null;
         List<Row> above = new ArrayList<>();
         for (ScopeIndex idx : scopes) {
             docs += idx.sketches().size();
             skippedShort += idx.skippedShort();
             skippedSuperseded += idx.skippedSuperseded();
+            if (idx.builtAt() != null
+                    && (oldestBuild == null || idx.builtAt().isBefore(oldestBuild))) {
+                oldestBuild = idx.builtAt();
+            }
             int n = idx.sketches().size();
             scopeSizes.add(idx.label() + " " + n + " 篇→" + ((long) n * (n - 1) / 2) + " 对");
             List<SimilarityScorer.Sketch> list = idx.sketches();
@@ -337,11 +370,16 @@ public class SimilarityService {
                     //    后一对的「独有 N 行 / 覆盖 X%」立刻过期，回执却把 4 对并列呈现。
                     //    → 把「母档 / 子页 / 子页独有行」一并带出去，渲染层才能按母档分组给出执行顺序。
                     long[] sides = mergeSides(s, a.id(), b.id());
+                    // 独有行样例：只在①层（正文有重合）才有意义，其它层给空串（省回执篇幅）
+                    String[] samples = s.kind() == SimilarityScorer.Kind.DUPLICATE
+                            ? SimilarityScorer.uniqueLineSamples(a, b, 3)
+                            : new String[]{"", ""};
                     above.add(new Row(a.id(), a.title(), b.id(), b.title(), s.total(), s.reason(), null,
                             s.kind(), s.sharedLines(), s.lineCoverage(), s.diagnosis(),
                             sides == null ? null : sides[0],
                             sides == null ? null : sides[1],
-                            sides == null ? 0 : (int) sides[2]));
+                            sides == null ? 0 : (int) sides[2],
+                            samples[0], samples[1]));
                 }
             }
         }
@@ -392,11 +430,20 @@ public class SimilarityService {
         for (TierDetail d : sel.detail().values()) dropped += d.droppedPerDoc() + d.droppedByLimit();
 
         int enqueued = 0, pending = 0, resolved = 0;
+        // ⚠️ 2026-10-26 12:0x 阁主：①层里 #63↔#67（候选 #17）、#159↔#160（候选 #25）**早判过了**，
+        //    这次照样排前排、照样写「判 distinct」，他就得再判一遍。
+        //    → 每对先查已有候选行（dryRun 也查），判过就在行尾标出来。
+        Map<String, ReviewCandidate> existing = Map.of();
+        try {
+            existing = candidateService.pairMap();
+        } catch (Exception e) {
+            log.warn("SimilarityService.scan: 读候选队列失败（不影响扫描）: {}", e.toString());
+        }
         List<Row> rowsOut = new ArrayList<>();
         for (Row r : selected) {
             String state;
             if (dryRun) {
-                state = "未入队（dryRun）";
+                state = describePrev(existing.get(ReviewCandidateService.pairKey(r.docA(), r.docB())));
             } else {
                 try {
                     ReviewCandidateService.EnqueueResult er = candidateService.enqueue(r.docA(), r.docB(),
@@ -421,7 +468,8 @@ public class SimilarityService {
             }
             rowsOut.add(new Row(r.docA(), r.titleA(), r.docB(), r.titleB(), r.score(), r.reason(), state,
                     r.kind(), r.sharedLines(), r.coverage(), r.advice(),
-                    r.motherId(), r.kidId(), r.kidLines()));
+                    r.motherId(), r.kidId(), r.kidLines(),
+                    r.aOnlySample(), r.bOnlySample()));
         }
 
         notes.add("只比较同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内）：跨项目实测全是假阳性"
@@ -444,8 +492,18 @@ public class SimilarityService {
             //    把「可能的因」当成「已经发生的因」。实际差额常常全部来自③层抽样上限，
             //    per-doc 一次都没挤掉，范围行却并列报「per-doc 限流」。
             //    现在范围行**只报差额数字**，归因留给层头（那里是按真实计数拼的），不在这里猜。
+            //
+            // ⚠️ 2026-10-26 12:0x 阁主：`limit=22 空了 10 格` 与 `另有 11 对未展示` 并排出现时，
+            //    人的第一反应必然是「为什么不用空位补上」。真正的原因是③层抽样上限（调大 limit 也没用），
+            //    但这句话离得远。→ **差额后面紧跟着说明「空位不是名额不够」**，就近解释，不让人跨段拼。
+            int sampleDropped = 0;
+            for (TierDetail d : sel.detail().values()) sampleDropped += d.droppedBySample();
+            String why = (sampleDropped > 0)
+                    ? "——空位不是名额不够：进度类抽样上限 " + sampleCap
+                      + " 条是硬闸（调大 limit 也不放开），多出的 " + sampleDropped + " 对属该类，补位补不进来"
+                    : "";
             capNote = (maxRows > selected.size())
-                    ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size()) + " 格没被用满）"
+                    ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size()) + " 格没被用满" + why + "）"
                     : "（limit=" + maxRows + "，已用满；其余超阈值的对见分层）";
         }
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"
@@ -460,9 +518,12 @@ public class SimilarityService {
             notes.add("各作用域篇数（篇数差 1 对 = 该作用域少比较 1 对；作用域内**两两全比、无任何预筛**）："
                     + String.join("、", scopeSizes));
         }
+        long indexAgeSec = (oldestBuild == null) ? 0
+                : Math.max(0L, java.time.Duration.between(oldestBuild, LocalDateTime.now()).getSeconds());
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
                 above.size(), dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
-                rowsOut, tierStats, sel.detail(), notes);
+                rowsOut, tierStats, sel.detail(), notes,
+                oldestBuild == null ? "" : oldestBuild.format(HHMMSS), indexAgeSec);
     }
 
     /**
@@ -483,18 +544,29 @@ public class SimilarityService {
                              int droppedBySample, int droppedRedundant,
                              java.util.List<String> droppedSamples,
                              /** 被略去的同族交叉对（形如「#65↔#66」）—— 一行字备查，不占名额 */
-                             java.util.List<String> omittedSamples) {
+                             java.util.List<String> omittedSamples,
+                             /** ③层抽样时因「与已抽中的是同话题」而跳过的条数（2026-10-26 12:0x） */
+                             int droppedSameTopic) {
 
         public TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
                           int droppedBySample, int droppedRedundant,
                           java.util.List<String> droppedSamples) {
             this(above, shown, droppedPerDoc, droppedByLimit, droppedBySample, droppedRedundant,
-                    droppedSamples, java.util.List.of());
+                    droppedSamples, java.util.List.of(), 0);
+        }
+
+        public TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
+                          int droppedBySample, int droppedRedundant,
+                          java.util.List<String> droppedSamples,
+                          java.util.List<String> omittedSamples) {
+            this(above, shown, droppedPerDoc, droppedByLimit, droppedBySample, droppedRedundant,
+                    droppedSamples, omittedSamples, 0);
         }
 
         /** 这一层有没有「没展示出来」的对 */
         public boolean hasDrop() {
-            return droppedPerDoc > 0 || droppedByLimit > 0 || droppedBySample > 0 || droppedRedundant > 0;
+            return droppedPerDoc > 0 || droppedByLimit > 0 || droppedBySample > 0
+                    || droppedRedundant > 0 || droppedSameTopic > 0;
         }
     }
 
@@ -541,7 +613,7 @@ public class SimilarityService {
 
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
-            c.computeIfAbsent(k, x -> new int[6])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample [5]=redundant
+            c.computeIfAbsent(k, x -> new int[7])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample [5]=redundant [6]=sameTopic
         }
 
         // ⚠️ 2026-10-26 02:51 越哥实测：上一版把 per-doc 豁免扩散到了②层，结果 6 个名额被一个家族占满 ——
@@ -634,6 +706,13 @@ public class SimilarityService {
         }
 
         // 第三段：最后才给③层（进度/日志）—— 受 progressSample 与剩余名额双重约束
+        //
+        // ⚠️ 2026-10-26 12:0x 阁主：「③层 5 个名额被同一个话题占满」——
+        //    #470/#477/#478/#464/#471/#479 全是 list_recent_memories 的同族记录，
+        //    按分数抽 5 条 = 只抽到 1 个话题（等于这一层白占 5 个位）。
+        //    → 抽样时**按话题去重**：同一话题只留分数最高的那条，腾出的名额让给别的话题。
+        //    去重口径见 SimilarityScorer.topicTokens()（拉丁标识符 ≥6 字 / 中文 3-gram）。
+        java.util.Set<String> seenTopics = new java.util.LinkedHashSet<>();
         for (Row r : progressRows) {
             int[] cnt = c.get(SimilarityScorer.Kind.PROGRESS);
             // ⚠️ 2026-10-26 11:1x 实测发现的因果顺序错误：原来**先判名额满没满、再判抽样上限**，
@@ -648,6 +727,16 @@ public class SimilarityService {
                 cnt[3]++;
                 continue;
             }
+            java.util.Set<String> tk = SimilarityScorer.topicTokens(r.titleA());
+            tk.addAll(SimilarityScorer.topicTokens(r.titleB()));
+            boolean sameTopic = false;
+            for (String t : tk) {
+                if (seenTopics.contains(t)) { sameTopic = true; break; }
+            }
+            if (sameTopic) {
+                cnt[6]++;
+                continue;
+            }
             int ca = perDocCount.getOrDefault(r.docA(), 0);
             int cb = perDocCount.getOrDefault(r.docB(), 0);
             if (ca >= perDoc || cb >= perDoc) {
@@ -658,6 +747,7 @@ public class SimilarityService {
             }
             perDocCount.put(r.docA(), ca + 1);
             perDocCount.put(r.docB(), cb + 1);
+            seenTopics.addAll(tk);
             selected.add(r);
             cnt[1]++;
         }
@@ -685,7 +775,8 @@ public class SimilarityService {
             detail.put(e.getKey(), new TierDetail(v[0], shownNow.getOrDefault(e.getKey(), 0),
                     stillDropped.getOrDefault(e.getKey(), 0), v[3], v[4], v[5],
                     samples.getOrDefault(e.getKey(), java.util.List.of()),
-                    omitted.getOrDefault(e.getKey(), java.util.List.of())));
+                    omitted.getOrDefault(e.getKey(), java.util.List.of()),
+                    v[6]));
         }
         return new Selection(java.util.List.copyOf(selected), detail, filled);
     }
@@ -792,6 +883,25 @@ public class SimilarityService {
                     + " 对按设计不比**）";
         }
         return "（全组合 " + allCombos + " 对，全部同作用域，一对没漏）";
+    }
+
+    /**
+     * dryRun 时的行尾状态：把「这对你判过没有」直接写在行上（2026-10-26 12:0x 阁主）。
+     *
+     * <p>他的原话：`#63↔#67` 是候选 #17、`#159↔#160` 是候选 #25，**都已经判定过**，
+     * 这次仍然排在前排、带一句「判 distinct」，于是他会**再判一遍**。
+     * 加三个词即可解决 —— 但必须带候选号与判定时间，否则「判过」无法核对。
+     */
+    static String describePrev(ReviewCandidate prev) {
+        if (prev == null) return "未入队（dryRun）";
+        if (ReviewCandidate.PENDING.equals(prev.getStatus())) {
+            return "已在队列 #" + prev.getId() + "（待判断）";
+        }
+        String when = prev.getResolvedAt() == null ? ""
+                : " · " + prev.getResolvedAt().format(java.time.format.DateTimeFormatter
+                        .ofPattern("MM-dd HH:mm"));
+        return "**已判 " + prev.getStatus() + "**（候选 #" + prev.getId() + when
+                + "）—— 本次只是重新扫出，**不必再判**";
     }
 
     /** 作用域索引（带 3 分钟缓存） */    public ScopeIndex indexOf(Long projectId) {

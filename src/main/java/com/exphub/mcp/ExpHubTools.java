@@ -1778,9 +1778,10 @@ public class ExpHubTools {
 
     @Tool(name = "set_flags", description = "给经验打**机器可读标记**（待复核 / 疑似重复 / 已被取代 / 可能失效 / 质量存疑）。整理记忆、去重、标注可疑结论时用这个，**不要用 update_experience 改 tags 来打标记**。关键差别：本工具不递增版本号、不写版本快照、不动更新时间，所以反复打标记不会让版本表膨胀。flags 传空字符串 = 清空所有标记（清空时说明与署名也一并清掉）。检索和详情会回显标记，其他 AI 看到标记就知道这条结论存疑。")
     public String setFlags(
-            @ToolParam(description = "经验ID") Long id,
+            @ToolParam(description = "经验ID。单个用这个；批量用 ids（两者可只传一个，同传会合并去重）", required = false) Long id,
             @ToolParam(description = "标记，逗号分隔。规范值：needs_review(待复核) / duplicate(疑似重复) / superseded(已被取代) / stale(可能失效) / low_quality(质量存疑)。也认中文：待复核、重复、取代、过期/失效、存疑/低质。传空字符串表示清空全部标记。不在白名单里的词会被忽略并在返回里列出") String flags,
             @ToolParam(description = "可选。标记说明：为什么打这个标记、复核了什么、和哪条重复（如「与 ID:377 结论重复，以 377 为准」）。这是给人和后续 AI 看的关键信息，建议写", required = false) String note,
+            @ToolParam(description = "可选。**批量**：多个 ID，逗号分隔（如 \"470,477,478\"）。20 条打同一个标记不必调 20 次", required = false) String ids,
             @ToolParam(description = "可选。署名（谁打的标记）。不传=用当前 API Key 绑定的助手名。同一 Key 被多个助手共用时建议传", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——操作人署名（正式名，建议统一用这个）。与 `authorName` 等价，两者都传时以本参数为准", required = false) String updatedName) {
 
@@ -1789,9 +1790,22 @@ public class ExpHubTools {
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
-            Doc existing = docService.getById(id);
-            if (existing == null) {
-                return "❌ 未找到ID为" + id + "的经验";
+            // 2026-10-26 12:0x 阁主第 7 条：给 20 条打同一标记要调 20 次 → 支持 ids 列表
+            List<Long> targets = new ArrayList<>();
+            if (id != null) targets.add(id);
+            if (ids != null && !ids.isBlank()) {
+                for (String t : ids.split("[,，\\s]+")) {
+                    if (t.isBlank()) continue;
+                    try {
+                        Long v = Long.parseLong(t.trim());
+                        if (!targets.contains(v)) targets.add(v);
+                    } catch (NumberFormatException nfe) {
+                        return "❌ ids 里有非数字项：「" + t + "」。格式：逗号分隔的 ID，如 470,477,478";
+                    }
+                }
+            }
+            if (targets.isEmpty()) {
+                return "❌ 没给要改的经验：单个传 id，批量传 ids（逗号分隔）";
             }
 
             List<String> parsed = DocService.parseFlags(flags);
@@ -1802,7 +1816,16 @@ public class ExpHubTools {
             // 与 mark_superseded / mark_for_deletion 统一走同一行。
             String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
 
-            Doc updated = docService.setFlags(id, parsed, note, by);
+            if (targets.size() > 1) {
+                return setFlagsBatch(targets, parsed, rejected, note, by);
+            }
+            Long id1 = targets.get(0);
+            Doc existing = docService.getById(id1);
+            if (existing == null) {
+                return "❌ 未找到ID为" + id1 + "的经验";
+            }
+
+            Doc updated = docService.setFlags(id1, parsed, note, by);
 
             StringBuilder sb = new StringBuilder();
             if (parsed.isEmpty()) {
@@ -1810,7 +1833,7 @@ public class ExpHubTools {
             } else {
                 sb.append("✅ 已设置标记\n\n");
             }
-            sb.append("**ID**: ").append(id).append("\n");
+            sb.append("**ID**: ").append(id1).append("\n");
             sb.append("**标题**: ").append(updated.getTitle()).append("\n");
             if (!parsed.isEmpty()) {
                 List<String> human = new ArrayList<>();
@@ -1840,6 +1863,56 @@ public class ExpHubTools {
             callLogService.incrementFailCalls();
             return "设置标记失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * 批量打标记（2026-10-26 12:0x 阁主第 7 条：给 20 条打标记不该调 20 次）。
+     *
+     * <p>逐条回报：成功写「✅ vN（未变）」，不存在的写「❌ 未找到」。**一条失败不影响其它条** ——
+     * 批量接口最容易犯的错是「部分失败却回一句成功」。
+     */
+    private String setFlagsBatch(List<Long> targets, List<String> parsed, List<String> rejected,
+                                 String note, String by) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(parsed.isEmpty() ? "✅ 已批量清空标记" : "✅ 已批量设置标记");
+        sb.append("（").append(targets.size()).append(" 条）\n");
+        if (!parsed.isEmpty()) {
+            List<String> human = new ArrayList<>();
+            for (String f : parsed) human.add(DocService.flagLabel(f) + "(" + f + ")");
+            sb.append("**标记**: ").append(String.join("、", human)).append("\n");
+            if (note != null && !note.trim().isEmpty()) {
+                sb.append("**说明**: ").append(note.trim()).append("\n");
+            }
+            sb.append("**署名**: ").append(by).append("\n");
+        }
+        sb.append("\n");
+        int ok = 0, missing = 0;
+        for (Long t : targets) {
+            try {
+                Doc d = docService.getById(t);
+                if (d == null) {
+                    sb.append("- #").append(t).append(" ❌ 未找到\n");
+                    missing++;
+                    continue;
+                }
+                Doc u = docService.setFlags(t, parsed, note, by);
+                sb.append("- #").append(t).append(" ✅ v").append(u.getVersion())
+                  .append("（未变）「").append(abbreviate(u.getTitle(), 28)).append("」\n");
+                ok++;
+            } catch (Exception e) {
+                sb.append("- #").append(t).append(" ❌ 失败：").append(e.getClass().getSimpleName()).append("\n");
+                missing++;
+            }
+        }
+        sb.append("\n**结果**: 成功 ").append(ok).append(" 条");
+        if (missing > 0) sb.append("｜失败/不存在 ").append(missing).append(" 条");
+        sb.append("\n");
+        if (!rejected.isEmpty()) {
+            sb.append("\n⚠️ 以下词不在白名单、已忽略：").append(String.join("、", rejected))
+              .append("\n可用值：needs_review / duplicate / superseded / stale / low_quality\n");
+        }
+        sb.append("\n说明：标记不改变正文、不产生历史版本；不需要时再传空串即可清空。");
+        return sb.toString();
     }
 
     /** 截断显示用（patch 报错信息里回显片段，太长会把返回撑爆） */
@@ -2112,13 +2185,28 @@ public class ExpHubTools {
             // ⚠️ 2026-10-26 11:5x 阁主：「项目 #8 扫出 1 篇，队列里却有 2 条」——
             //    两个数各自都对，差值来自**候选行不随文档删除失效**：行还在，它引用的文档没了。
             //    以前只有逐行写「已不存在」，头行不给总数，读的人会以为「扫出 1 篇」和「2 条」矛盾。
-            int orphan = 0;
+            int orphanPending = 0, orphanJudged = 0;
             for (ReviewCandidate c : list) {
-                if (docMap.get(c.getDocA()) == null || docMap.get(c.getDocB()) == null) orphan++;
+                if (docMap.get(c.getDocA()) == null || docMap.get(c.getDocB()) == null) {
+                    if (ReviewCandidate.PENDING.equals(c.getStatus())) orphanPending++;
+                    else orphanJudged++;
+                }
             }
-            if (orphan > 0) {
-                sb.append("⚠️ 其中 **").append(orphan).append(" 条引用的文档已被删除**（候选行不会随文档删除消失，")
-                  .append("保留是为了复盘；这些行判不了任何东西，建议 resolve_candidate(..., action=skip) 收掉）\n");
+            if (orphanPending + orphanJudged > 0) {
+                sb.append("⚠️ 其中 **").append(orphanPending + orphanJudged)
+                  .append(" 条引用的文档已被删除**（候选行不会随文档删除消失，保留是为了复盘）");
+                if (orphanPending > 0) {
+                    sb.append("：待判断的 **").append(orphanPending)
+                      .append(" 条**判不了任何东西，可用 resolve_candidate(..., action=skip) 清空");
+                }
+                if (orphanJudged > 0) {
+                    // ⚠️ 2026-10-26 12:0x 阁主第 3 条：已判的悬空行**不许**建议 skip ——
+                    //    那等于用「忽略」改写「判为重复」。这里只说明判定保留。
+                    sb.append(orphanPending > 0 ? "；" : "：")
+                      .append("另有 **").append(orphanJudged)
+                      .append(" 条已判过**，判定保留、无需处理（悬空行只能清空，不能改判）");
+                }
+                sb.append("\n");
             }
             sb.append("\n");
             int i = 1;
@@ -2188,6 +2276,30 @@ public class ExpHubTools {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
             String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+            // ⚠️ 2026-10-26 12:0x 阁主第 3 条：**「忽略」不许能改写「判为重复」**。
+            //    背景：他删掉两条临时样本后，候选 #26 成了悬空行（引用的文档已删），
+            //    而头行建议「用 skip 收掉」；但 #26 已经是 DUPLICATE 终态 ——
+            //    skip 若覆盖它，等于用「忽略」改写了「判为重复」这个结论。
+            //    规则：**悬空行只能清空（PENDING → SKIPPED），不能改判**。
+            ReviewCandidate pre = reviewCandidateService.get(candidateId);
+            if (pre != null) {
+                boolean aGone = docService.getById(pre.getDocA()) == null;
+                boolean bGone = docService.getById(pre.getDocB()) == null;
+                if (aGone || bGone) {
+                    boolean isSkip = "skip".equalsIgnoreCase(action == null ? "" : action.trim());
+                    boolean isPending = ReviewCandidate.PENDING.equals(pre.getStatus());
+                    if (!(isSkip && isPending)) {
+                        String gone = (aGone ? "#" + pre.getDocA() : "") + (aGone && bGone ? "、" : "")
+                                + (bGone ? "#" + pre.getDocB() : "");
+                        return "❌ 候选 #" + candidateId + " 引用的文档已删除（" + gone
+                                + "），这是一条**悬空行**。\n\n"
+                                + "**悬空行只能清空，不能改判**：" + (isPending
+                                    ? "它还在待判断，要清掉请传 action=skip（只会标 SKIPPED，不动任何文档）。"
+                                    : "它已经是 **" + pre.getStatus() + "** 终态，判定保留、无需处理 —— "
+                                      + "`skip` 不会覆盖已有结论，正是为了防止「忽略」改写成「判为重复」。");
+                    }
+                }
+            }
             ReviewCandidateService.ResolveResult r =
                     reviewCandidateService.resolve(candidateId, action, note, by);
             if (!r.ok()) {
@@ -2376,6 +2488,16 @@ public class ExpHubTools {
             sb.append("**范围**: ").append(r.summary()).append("\n");
             // 2026-10-26：原来 operator 只传给 service，回执不显示 —— 谁扫的说不清
             sb.append("**操作人**: ").append(dry ? operator + "（dryRun 不入队）" : operator).append("\n");
+            // ⚠️ 2026-10-26 12:0x 阁主：**没有时间戳的计数，分不清「数据没变」还是「缓存过期」**。
+            //    他今天为此做了两次错误判断 —— 索引有 3 分钟 TTL，而回执从来不说这个数是什么时候的。
+            //    规则：凡是来自索引的计数，必须把索引生成时刻与 TTL 一起印出来。
+            if (r.indexBuiltAt() != null && !r.indexBuiltAt().isBlank()) {
+                sb.append("**数据时间**: 索引生成于 ").append(r.indexBuiltAt())
+                  .append("（距今 ").append(r.indexAgeSeconds()).append(" 秒；索引 TTL ")
+                  .append(SimilarityService.INDEX_TTL_SECONDS)
+                  .append(" 秒 —— 刚改过文档时，这里最多可能差 ")
+                  .append(SimilarityService.INDEX_TTL_SECONDS).append(" 秒）\n");
+            }
             sb.append("**阈值**: ").append(SimilarityScorer.Score.fmt(r.threshold()))
               .append("｜**比较对数**: ").append(r.pairsCompared())
               .append("｜**超阈值**: ").append(r.aboveThreshold());
@@ -2556,6 +2678,15 @@ public class ExpHubTools {
                                 sb.append("｜另有 ").append(d.droppedBySample())
                                   .append(" 条进度类默认抽样省略（要全看传 progressSample=0）");
                             }
+                            // ⚠️ 2026-10-26 12:0x 阁主：③层 5 个名额被同一个话题占满
+                            //    （#470/#477/#478/#464/#471/#479 全是 list_recent_memories 的同族记录）。
+                            //    抽样已改成**按话题去重**，这里必须把跳过的条数写出来 —— 否则
+                            //    「全库 16 对、只展示 4 条」又会被读成「名额不够」。
+                            if (d.droppedSameTopic() > 0) {
+                                sb.append("｜另有 ").append(d.droppedSameTopic())
+                                  .append(" 条因**与已抽中的是同话题**跳过（同一话题只留分数最高的那条，")
+                                  .append("腾出的名额让给别的话题）");
+                            }
                             if (d.droppedByLimit() > 0) {
                                 sb.append("｜另有 ").append(d.droppedByLimit()).append(" 对被 limit 截断");
                             }
@@ -2577,6 +2708,14 @@ public class ExpHubTools {
                       .append("」 ↔ #").append(row.docB()).append("「").append(abbreviate(row.titleB(), 34)).append("」");
                     if (row.queueState() != null) sb.append("　→ ").append(row.queueState());
                     sb.append("\n   ").append(kindLabel(row.kind(), row.sharedLines(), row.coverage(), row.advice())).append("\n");
+                    // 独有行样例（2026-10-26 12:0x 阁主）：只写「独有 8 行」等于逼他读两篇全文。
+                    // 给前 3 行片段，他就能先判断「是多了一段环境说明」还是「真写了别的东西」。
+                    if (row.aOnlySample() != null && !row.aOnlySample().isBlank()) {
+                        sb.append("　　A 侧独有行样例（前 3 行）：").append(row.aOnlySample()).append("\n");
+                    }
+                    if (row.bOnlySample() != null && !row.bOnlySample().isBlank()) {
+                        sb.append("　　B 侧独有行样例（前 3 行）：").append(row.bOnlySample()).append("\n");
+                    }
                     sb.append("   ").append(row.reason()).append("\n");
                 }
             }
@@ -3301,7 +3440,13 @@ public class ExpHubTools {
 
             StringBuilder sb = new StringBuilder();
             sb.append("项目「").append(proj.getName()).append("」共 ").append(list.size())
-              .append(" 条专属经验，本次返回第 ").append(from + 1).append("-").append(to).append(" 条：\n\n");
+              .append(" 条专属经验，本次返回第 ").append(from + 1).append("-").append(to).append(" 条：\n");
+            // 2026-10-26 12:0x 阁主：所有计数型回执都要带数据时间。
+            // 本工具**直读主表、没有索引缓存** —— 所以这里的数字不会过期，这一点也要写出来，
+            // 否则他没法区分「这个数是实时的」和「这个数可能是 3 分钟前的」。
+            sb.append("**数据时间**: 直读主表 ")
+              .append(java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")))
+              .append("（无索引缓存，不存在 TTL 偏差）\n\n");
             for (Doc d : page) {
                 sb.append("- 【ID:").append(d.getId()).append("】").append(d.getTitle())
                   .append(" [").append(getTemplateTypeLabel(d.getTemplateType())).append("]\n");

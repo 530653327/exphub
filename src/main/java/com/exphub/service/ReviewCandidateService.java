@@ -249,6 +249,33 @@ public class ReviewCandidateService {
                 .last("LIMIT " + size));
     }
 
+    /** 取一条候选（回执要按它对判悬空/已判） */
+    public ReviewCandidate get(Long id) {
+        return id == null ? null : candidateMapper.selectById(id);
+    }
+
+    /** 一对文档的稳定键（扫描回执要按「对」查历史判定，A/B 顺序不能影响命中） */
+    public static String pairKey(Long a, Long b) {
+        if (a == null || b == null) return "-";
+        long x = Math.min(a, b), y = Math.max(a, b);
+        return x + "-" + y;
+    }
+
+    /**
+     * 全部候选对（键 = {@link #pairKey}）。
+     *
+     * <p>2026-10-26 12:0x 阁主：扫描清单里判过的对没有任何标记，他会重复判一遍。
+     * 候选表量级是几十~几百条，一次全取比逐对查省事，也不会有 N+1。
+     */
+    public java.util.Map<String, ReviewCandidate> pairMap() {
+        java.util.Map<String, ReviewCandidate> m = new java.util.LinkedHashMap<>();
+        for (ReviewCandidate c : candidateMapper.selectList(new QueryWrapper<ReviewCandidate>()
+                .orderByAsc("id").last("LIMIT 2000"))) {
+            m.put(pairKey(c.getDocA(), c.getDocB()), c);
+        }
+        return m;
+    }
+
     /** 待判断数量（后台角标用） */
     public long pendingCount() {
         return candidateMapper.selectCount(new QueryWrapper<ReviewCandidate>()

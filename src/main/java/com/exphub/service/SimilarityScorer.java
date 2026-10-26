@@ -967,8 +967,63 @@ public final class SimilarityScorer {
         return templateType != null && PROGRESS_TEMPLATE_TYPES.contains(templateType.trim().toLowerCase());
     }
 
-    /** 统计一组文档的行频次（作用域内） */
-    public static Map<String, Integer> lineDf(Collection<Sketch> sketches) {
+    /**
+     * 两侧「独有行」的样例片段（每侧最多 {@code n} 行、每行截断 60 字）。
+     *
+     * <p><b>为什么必须有（2026-10-26 12:0x 阁主）</b>：回执只写「两侧独有 8 行」，
+     * 要判断那 8 行是「子页多了一段环境说明」还是「真的写了别的东西」，唯一办法是读两篇全文；
+     * 两篇都上千字，读完就占满上下文。**给出前 3 行片段，读的人就能从「必须读全文」变成「先看片段再决定」。**
+     *
+     * <p>口径必须与 {@link #score} 完全一致：同样用「去模板后的行」，
+     * 否则片段里会出现共享行，让人以为独有行数算错了。返回 {@code [a侧样例, b侧样例]}。
+     */
+    public static String[] uniqueLineSamples(Sketch a, Sketch b, int n) {
+        if (a == null || b == null || !(a.lineModeReliable() && b.lineModeReliable())) {
+            return new String[]{"", ""};
+        }
+        java.util.Set<String> ca = a.distinctLines().isEmpty() ? a.lines() : a.distinctLines();
+        java.util.Set<String> cb = b.distinctLines().isEmpty() ? b.lines() : b.distinctLines();
+        return new String[]{sampleOf(ca, cb, n), sampleOf(cb, ca, n)};
+    }
+
+    private static String sampleOf(java.util.Set<String> mine, java.util.Set<String> other, int n) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String ln : mine) {
+            if (other.contains(ln)) continue;
+            String s = ln == null ? "" : ln.trim();
+            if (s.isEmpty()) continue;
+            out.add(s.length() > 60 ? s.substring(0, 60) + "…" : s);
+            if (out.size() >= n) break;
+        }
+        return String.join(" ｜ ", out);
+    }
+
+    /**
+     * 标题的「话题 token」——用于③层抽样时按话题去重（2026-10-26 12:0x 阁主）。
+     *
+     * <p>他抓到的现象：③层 5 个名额被 `#470/#477/#478/#464/#471/#479` 占满，
+     * 而这 6 条全是 `list_recent_memories` 的同族记录 —— 5 个名额只抽到 1 个话题。
+     *
+     * <p>token 规则（宁可粗、不可漏）：拉丁词取长度 ≥ 6（`list_recent_memories` 这类工具名/标识符），
+     * 中文按非中文字符切段后取所有 3-gram（中文没有空格，3 字足够稳定地代表一个话题）。
+     */
+    public static java.util.Set<String> topicTokens(String title) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (title == null || title.isBlank()) return out;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("[A-Za-z][A-Za-z0-9_]{5,}|[\\u4e00-\\u9fa5]{3,}").matcher(title);
+        while (m.find()) {
+            String s = m.group();
+            if (s.charAt(0) < 0x4e00) {
+                out.add(s.toLowerCase(java.util.Locale.ROOT));
+            } else {
+                for (int i = 0; i + 3 <= s.length(); i++) out.add(s.substring(i, i + 3));
+            }
+        }
+        return out;
+    }
+
+    /** 统计一组文档的行频次（作用域内） */    public static Map<String, Integer> lineDf(Collection<Sketch> sketches) {
         Map<String, Integer> df = new LinkedHashMap<>();
         for (Sketch s : sketches) {
             for (String ln : s.lines()) {
