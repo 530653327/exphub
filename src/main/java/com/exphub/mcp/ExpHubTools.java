@@ -671,11 +671,13 @@ public class ExpHubTools {
 
         if (version > cov.maxVersion()) {
             // 事实可判：比「库里存在的最高版本号」还大 —— 这个号还没产生（或记错了）
-            sb.append("\n> 已存最高版本号是 **v").append(cov.maxVersion())
-              .append("**，你要的 v").append(version).append(" 比它还大 —— ")
-              .append("**这个版本号还没产生**（或版本号记错了）。当前正文是 v")
-              .append(doc.getVersion()).append("，先用 get_experience_detail(id=")
-              .append(id).append(") 看当前内容。");
+            // ⚠️ 2026-10-26 08:5x 阁主指出：原来写「已存最高版本号是 v20」+「当前正文是 v21」，
+            //    两个数字看着矛盾 —— v21 也是版本号，只是它不在快照表（快照存的是「上一次」的正文）。
+            sb.append("\n> **已存快照最高 v").append(cov.maxVersion())
+              .append("；当前正文是 v").append(doc.getVersion())
+              .append("（它不在快照表里，那不是缺失）**。你要的 v").append(version)
+              .append(" 比已存快照还大 —— **这个版本号还没产生**（或版本号记错了），")
+              .append("先用 get_experience_detail(id=").append(id).append(") 看当前内容。");
             return sb.toString();
         }
 
@@ -2412,6 +2414,12 @@ public class ExpHubTools {
                                     sb.append("：").append(String.join("、", d.droppedSamples()));
                                 }
                             }
+                            if (d.droppedRedundant() > 0) {
+                                sb.append("｜另有 ").append(d.droppedRedundant())
+                                  .append(" 条是**①层家族的内部交叉对，已略去**")
+                                  .append("（这几份与母档的关系已在①层逐对给过结论，")
+                                  .append("这里再列一遍只会和①层的「清掉这一份」打架）");
+                            }
                             if (d.droppedBySample() > 0) {
                                 sb.append("｜另有 ").append(d.droppedBySample())
                                   .append(" 条进度类默认抽样省略（要全看传 progressSample=0）");
@@ -2434,7 +2442,7 @@ public class ExpHubTools {
             }
             sb.append("\n---\n");
             sb.append("· **分层优先于 limit**：清单按「层先、分数后」排，截断只可能发生在最后一层；")
-              .append("①层（最该先判、对数最少）**不受「单篇最多 N 条候选」的限流约束** —— ")
+              .append("①层（对数最少的那层）**不受「单篇最多 N 条候选」的限流约束** —— ")
               .append("否则一篇母文档命中多个子页的族会被砍到只剩 2 条，看起来像「分层没生效」")
               .append("（2026-10-26 02:1x 越哥实测：①层统计 6 对、清单只有 4 条，根因就是这个）\n");
             sb.append("· **分数只反映「三路信号加权相似度」，不承担排序职责**：先按「正文有没有重合」分层，")

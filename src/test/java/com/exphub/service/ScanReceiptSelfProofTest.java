@@ -74,6 +74,21 @@ class ScanReceiptSelfProofTest {
                 "旧写法（展示数 < limit 就渲染差额）会让 0 差额也印出来，已废弃");
     }
 
+    /**
+     * 底部还有一条「最该先判」的残留（2026-10-26 08:5x，第三次被报）。
+     *
+     * <p>组头早就改成「别预设动作」，回执末尾却仍写
+     * 「①层（**最该先判**、对数最少）不受限流约束」—— 组头不预设、尾巴预设，等于换个位置说同一句话。
+     */
+    @Test
+    void bottomLineMustNotPresetActionEither() throws IOException {
+        String src = read();
+        assertFalse(src.contains("最该先判"),
+                "「最该先判」是动作预设，组头删了、尾巴也不许留（第三次被报）");
+        assertTrue(src.contains("对数最少的那层"),
+                "要描述它「为什么特殊」，而不是命令人「先判它」");
+    }
+
     @Test
     void groupHeaderMustNotPresetAction() throws IOException {
         String src = read();

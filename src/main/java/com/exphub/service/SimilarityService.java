@@ -438,10 +438,13 @@ public class SimilarityService {
      * 写进回执 —— 缺了就让读的人看见缺了，而不是从「统计 6、清单 4」里自己猜。
      */
     public record TierDetail(int above, int shown, int droppedPerDoc, int droppedByLimit,
-                             int droppedBySample, java.util.List<String> droppedSamples) {
+                             int droppedBySample, int droppedRedundant,
+                             java.util.List<String> droppedSamples) {
 
         /** 这一层有没有「没展示出来」的对 */
-        public boolean hasDrop() { return droppedPerDoc > 0 || droppedByLimit > 0 || droppedBySample > 0; }
+        public boolean hasDrop() {
+            return droppedPerDoc > 0 || droppedByLimit > 0 || droppedBySample > 0 || droppedRedundant > 0;
+        }
     }
 
     /**
@@ -487,7 +490,7 @@ public class SimilarityService {
 
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
-            c.computeIfAbsent(k, x -> new int[5])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample
+            c.computeIfAbsent(k, x -> new int[6])[0]++;   // [0]=above [1]=shown [2]=perDoc [3]=limit [4]=sample [5]=redundant
         }
 
         // ⚠️ 2026-10-26 02:51 越哥实测：上一版把 per-doc 豁免扩散到了②层，结果 6 个名额被一个家族占满 ——
@@ -505,10 +508,35 @@ public class SimilarityService {
         // 这样顺序规则只有一条：**能判的永远先于不用判的**。
         java.util.List<Row> progressRows = new java.util.ArrayList<>();
 
+        // ⚠️ 2026-10-26 08:5x 阁主实测两件事，同源一个病：
+        //   ① **跨层冲突**：①层 4 对 merge 各自说「清掉这一份」（#65/#66/#67/#68 各被点名清一次），
+        //      而②层 #65↔#66/#65↔#67/#65↔#68/#66↔#67/#66↔#68/#67↔#68 六条全给 distinct
+        //      「谁也别并、谁也别清」——**同一个 #66，一边要清它、一边说谁也别清它**。
+        //   ② **补位把上一轮的修法抵消了**：上一版把 per-doc 豁免收回①层，本意是让②层不再砍家族交叉对，
+        //      结果补位机制又按原顺序把它们补回来 —— ②层 15 条里 6 条（40%）是这些对，结论全 distinct、纯占位。
+        //   → 一并解决：**①层家族内部的交叉对不再展示**。判据是「两侧都出现在①层的某一对里」——
+        //     这几份的关系在①层已逐对判过，②层这一对没有新信息，留着只会与①层的「清掉这一份」打架。
+        //   ⚠️ 只在**两侧都在①层家族内**时跳过；①层家族成员与家族外的对（如 #67↔#68 之外的普通对）照常展示。
+        java.util.Set<Long> judgedDocs = new java.util.HashSet<>();
+        for (Row r : sortedAbove) {
+            if (r.kind() == SimilarityScorer.Kind.DUPLICATE) {
+                judgedDocs.add(r.docA());
+                judgedDocs.add(r.docB());
+            }
+        }
+        java.util.List<Row> redundant = new java.util.ArrayList<>();
+
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
             if (k == SimilarityScorer.Kind.PROGRESS) {
                 progressRows.add(r);   // 攒着，等可判层都坐下了再说
+                continue;
+            }
+            // ①层家族内部交叉对：①层已逐对判过，这里跳过（补位也不许把它捞回来）
+            if (k != SimilarityScorer.Kind.DUPLICATE
+                    && judgedDocs.contains(r.docA()) && judgedDocs.contains(r.docB())) {
+                c.get(k)[5]++;
+                redundant.add(r);
                 continue;
             }
             int[] cnt = c.get(k);
@@ -538,6 +566,12 @@ public class SimilarityService {
         int filled = 0;
         for (Row r : perDocDropped) {
             if (selected.size() >= maxRows) break;
+            // 双保险：同族交叉对即使进了候选池也不许补回（它的关系在①层已判过）
+            if (judgedDocs.contains(r.docA()) && judgedDocs.contains(r.docB())) {
+                c.get(r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind())[5]++;
+                redundant.add(r);
+                continue;
+            }
             selected.add(r);
             filled++;
         }
@@ -588,7 +622,7 @@ public class SimilarityService {
         for (var e : c.entrySet()) {
             int[] v = e.getValue();
             detail.put(e.getKey(), new TierDetail(v[0], shownNow.getOrDefault(e.getKey(), 0),
-                    stillDropped.getOrDefault(e.getKey(), 0), v[3], v[4],
+                    stillDropped.getOrDefault(e.getKey(), 0), v[3], v[4], v[5],
                     samples.getOrDefault(e.getKey(), java.util.List.of())));
         }
         return new Selection(java.util.List.copyOf(selected), detail, filled);

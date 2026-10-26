@@ -178,6 +178,46 @@ class SelectionLimitTest {
         assertEquals(5, p.droppedByLimit(), "5 条全部记「被 limit 截断」，如实报");
     }
 
+    /**
+     * ①层家族的内部交叉对不再展示（2026-10-26 08:5x 阁主实测，两件事同一个病）。
+     *
+     * <p>① 跨层冲突：①层 4 对 merge 各自说「清掉这一份」（#65/#66/#67/#68 各被点名一次），
+     * ②层那 6 条 `#65↔#66 …` 却全给 distinct「谁也别清」——同一个 #66 两边说法相反。
+     * <p>② 补位把上一轮修法抵消：per-doc 豁免收回①层后，补位又把这 6 条补回②层（占 40% 名额、纯占位）。
+     */
+    @Test
+    void familyCrossPairsAreOmittedNotRefilled() {
+        List<SimilarityService.Row> all = new ArrayList<>();
+        // ①层：#63 与四个子页逐对给过结论（4 对 merge）
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 65, 0.54));
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 66, 0.54));
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 67, 0.54));
+        all.add(row(SimilarityScorer.Kind.DUPLICATE, 63, 68, 0.53));
+        // ②层：子页之间两两比较（纯占位，且与①层的「清掉这一份」打架）
+        all.add(row(SimilarityScorer.Kind.SERIES, 65, 66, 0.50));
+        all.add(row(SimilarityScorer.Kind.SERIES, 65, 67, 0.50));
+        all.add(row(SimilarityScorer.Kind.SERIES, 65, 68, 0.50));
+        all.add(row(SimilarityScorer.Kind.SERIES, 66, 67, 0.50));
+        all.add(row(SimilarityScorer.Kind.SERIES, 66, 68, 0.50));
+        all.add(row(SimilarityScorer.Kind.SERIES, 67, 68, 0.50));
+        // ②层：家族成员 vs 家族外 —— 这个有信息量，必须留下
+        all.add(row(SimilarityScorer.Kind.SERIES, 65, 100, 0.49));
+        all.sort(SimilarityService.Row.order());
+
+        SimilarityService.Selection sel = SimilarityService.select(all, 50, 2);
+        SimilarityService.TierDetail ser = sel.detail().get(SimilarityScorer.Kind.SERIES);
+
+        assertEquals(1, ser.shown(), "②层只该留下「家族成员 ↔ 家族外」那一条");
+        assertEquals(6, ser.droppedRedundant(), "6 条家族内部交叉对要如实计数并说明，不能悄悄消失");
+        assertTrue(ser.hasDrop(), "略去也是「没展示」，不能装作没有");
+        assertTrue(sel.rows().stream().anyMatch(r -> r.docB() == 100L),
+                "家族外的对不许被一起丢掉：" + sel.rows());
+        assertTrue(sel.rows().stream().noneMatch(
+                        r -> r.kind() == SimilarityScorer.Kind.SERIES
+                                && r.docA() != 63 && r.docB() != 100L),
+                "②层不该再出现子页之间的交叉对：" + sel.rows());
+    }
+
     @Test
     void lowerTierDropsAreReportedWithSamples() {
         List<SimilarityService.Row> all = sorted();
