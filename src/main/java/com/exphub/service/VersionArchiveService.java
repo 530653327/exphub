@@ -7,16 +7,21 @@ import com.exphub.entity.DocVersionArchive;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.DocVersionArchiveMapper;
 import com.exphub.mapper.DocVersionMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 版本快照归档：把 {@code doc_versions} 里超出保留窗口的历史版本搬到 {@code doc_versions_archive}。
@@ -39,7 +44,6 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class VersionArchiveService {
 
     /** 默认保留最近 10 版：够回看近期改动，又不会让主表继续膨胀 */
@@ -52,9 +56,38 @@ public class VersionArchiveService {
     private final DocVersionMapper versionMapper;
     private final DocVersionArchiveMapper archiveMapper;
     private final DocMapper docMapper;
+    /**
+     * 每篇文档一个独立事务。
+     *
+     * <p><b>为什么不整方法一个大事务</b>（2026-10-27 白虎，修 #714）：
+     * 原写法 {@code @Transactional} 包住整个循环，一次搬 70 条、每条正文上千字，事务持续十几秒。
+     * 客户端先超时、用户看到 {@code request timed out} 就重试，**第二个请求与第一个并发跑**，
+     * 两边读到同一批主表行、各插一份归档 → {@code doc_versions_archive} 出现成对重复
+     * （#714 事故：654 / 668 / 674 各两份，另 #608 有一条同源残留，共 71 行冗余）。
+     *
+     * <p>改成每篇独立事务后：已完成的那篇已提交（超时也能用 list_archived_versions 查到），
+     * 未完成的回滚干净；配合写入幂等，重试是安全的。
+     */
+    private final TransactionTemplate txTemplate;
 
-    /** 单篇文档的归档结果 */
-    public record DocArchiveResult(Long docId, String title, int keptBefore, int archived, int keptAfter) {}
+    public VersionArchiveService(DocVersionMapper versionMapper,
+                                 DocVersionArchiveMapper archiveMapper,
+                                 DocMapper docMapper,
+                                 PlatformTransactionManager txManager) {
+        this.versionMapper = versionMapper;
+        this.archiveMapper = archiveMapper;
+        this.docMapper = docMapper;
+        this.txTemplate = new TransactionTemplate(txManager);
+    }
+
+    /**
+     * 单篇文档的归档结果。
+     *
+     * <p>{@code versions} 是本篇实际搬走的版本号（升序）。#714 要求「返回逐篇结果，让客户端能核对
+     * 而不是只看总数」—— 总数对不上时，只有版本号清单能说清是哪几版。
+     */
+    public record DocArchiveResult(Long docId, String title, int keptBefore, int archived, int keptAfter,
+                                   List<Integer> versions, int skipped) {}
 
     /** 整体归档结果 */
     public record ArchiveResult(boolean dryRun,
@@ -65,7 +98,12 @@ public class VersionArchiveService {
                                 long archivedBytes,
                                 int remainingRows,
                                 List<DocArchiveResult> details,
-                                List<String> notes) {}
+                                List<String> notes,
+                                String batchId,
+                                int skippedRows) {}
+
+    /** 批次号时间格式：精确到秒，够人肉对照日志 */
+    private static final DateTimeFormatter BATCH_FMT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     /**
      * 执行归档。
@@ -75,10 +113,12 @@ public class VersionArchiveService {
      * @param dryRun     true = 只算不写（默认行为由调用方决定）
      * @param operator   操作人，写入 archive.archived_by
      */
-    @Transactional
     public ArchiveResult archive(Long docId, Integer keepRecent, boolean dryRun, String operator) {
         int keep = normalizeKeep(keepRecent);
         List<String> notes = new ArrayList<>();
+        // 批次号：超时后客户端拿不到回执，但归档行的 archive_reason 与服务端日志里都有它 ——
+        // 事后能答「这批到底搬完没有、是谁触发的」，而不是只能看到一句 request timed out（#714 第 2 项）
+        String batchId = "AR" + LocalDateTime.now().format(BATCH_FMT);
 
         // 找出「版本数超过保留窗口」的文档。只按数量筛，不按内容 —— 归档与内容无关
         QueryWrapper<DocVersion> probe = new QueryWrapper<>();
@@ -89,11 +129,12 @@ public class VersionArchiveService {
         if (over.isEmpty()) {
             notes.add("没有文档的版本数超过 " + keep + " 版，无需归档。");
             return new ArchiveResult(dryRun, keep, 0, 0, 0, 0,
-                    countVersions(null), List.of(), notes);
+                    countVersions(null), List.of(), notes, batchId, 0);
         }
 
         List<DocArchiveResult> details = new ArrayList<>();
         int archivedTotal = 0;
+        int skippedTotal = 0;
         long bytesTotal = 0;
         int docsTouched = 0;
 
@@ -106,82 +147,140 @@ public class VersionArchiveService {
                     new QueryWrapper<DocVersion>().eq("doc_id", id).orderByDesc("version"));
             if (all.size() <= keep) continue;
 
-            List<DocVersion> toArchive = all.subList(keep, all.size());
+            // 待归档清单按版本号升序：回执要给人核对「搬的是哪几版」，升序才好扫
+            List<DocVersion> toArchive = new ArrayList<>(all.subList(keep, all.size()));
+            toArchive.sort(java.util.Comparator.comparing(DocVersion::getVersion));
+            List<Integer> versions = new ArrayList<>(toArchive.size());
+            for (DocVersion v : toArchive) versions.add(v.getVersion());
+
             Doc doc = docMapper.selectById(id);
             String title = doc == null ? null : doc.getTitle();
 
+            long bytes = 0;
+            for (DocVersion v : toArchive) bytes += v.getContent() == null ? 0 : v.getContent().length();
+
             if (dryRun) {
-                int bytes = 0;
-                for (DocVersion v : toArchive) {
-                    bytes += v.getContent() == null ? 0 : v.getContent().length();
-                }
-                details.add(new DocArchiveResult(id, title, cnt, toArchive.size(), keep));
+                details.add(new DocArchiveResult(id, title, cnt, toArchive.size(), keep, versions, 0));
                 archivedTotal += toArchive.size();
                 bytesTotal += bytes;
                 if (!toArchive.isEmpty()) docsTouched++;
                 continue;
             }
 
-            // ⚠️ 顺序不能反：先插归档表，成功后再删主表。
-            // 反序 = 「主表已删、归档没写成」→ 数据永久丢失，而归档的全部意义就是「可回查」
-            List<DocVersionArchive> archives = new ArrayList<>(toArchive.size());
-            for (DocVersion v : toArchive) {
-                DocVersionArchive a = new DocVersionArchive();
-                a.setDocId(v.getDocId());
-                a.setDocTitle(title);
-                a.setVersion(v.getVersion());
-                a.setContent(v.getContent());
-                a.setAliases(v.getAliases());
-                a.setSummary(v.getSummary());
-                a.setUpdatedBy(v.getUpdatedBy());
-                a.setUpdatedName(v.getUpdatedName());
-                a.setChangeType(v.getChangeType());
-                // 注意：搬原时间，不是 now()。归档时间单独放 archivedAt
-                a.setCreatedAt(v.getCreatedAt());
-                a.setArchivedAt(LocalDateTime.now());
-                a.setArchivedBy(operator);
-                a.setArchiveReason("保留最近 " + keep + " 版，超出部分归档");
-                archives.add(a);
-            }
-            int inserted = insertAll(archives);
-            if (inserted != toArchive.size()) {
-                // 插入数不符时不删主表 —— 宁可这次白做，也不能少一行
-                notes.add("#" + id + " 归档插入 " + inserted + " / 期望 " + toArchive.size()
-                        + " 行，为安全起见**未删除主表任何行**");
-                continue;
-            }
-
-            // 归档确认写入后，才删主表对应行
-            List<Long> ids = new ArrayList<>(toArchive.size());
-            for (DocVersion v : toArchive) ids.add(v.getId());
-            int deleted = versionMapper.deleteBatchIds(ids);
-            if (deleted != ids.size()) {
-                notes.add("#" + id + " 主表删除 " + deleted + " / 期望 " + ids.size()
-                        + " 行（归档已写入，数据不丢，但需人工核对残留）");
-            }
-
-            long bytes = 0;
-            for (DocVersion v : toArchive) bytes += v.getContent() == null ? 0 : v.getContent().length();
-            details.add(new DocArchiveResult(id, title, cnt, toArchive.size(), keep));
-            archivedTotal += toArchive.size();
+            final Long fid = id;
+            final String ftitle = title;
+            final int fcnt = cnt;
+            final List<DocVersion> fbatch = toArchive;
+            DocArchiveResult dr = txTemplate.execute(status -> doArchiveOne(
+                    status, fid, ftitle, fcnt, keep, fbatch, operator, batchId, notes));
+            if (dr == null) continue;            // 该篇失败或已回滚，原因已进 notes
+            details.add(dr);
+            archivedTotal += dr.archived();
+            skippedTotal += dr.skipped();
             bytesTotal += bytes;
             docsTouched++;
         }
 
         int remaining = countVersions(docId);
-        log.info("VersionArchiveService.archive: dryRun={} keep={} archived={} docs={} by={}",
-                dryRun, keep, archivedTotal, docsTouched, operator);
+        log.info("VersionArchiveService.archive: batch={} dryRun={} keep={} archived={} skipped={} docs={} by={}",
+                batchId, dryRun, keep, archivedTotal, skippedTotal, docsTouched, operator);
         return new ArchiveResult(dryRun, keep, over.size(), docsTouched, archivedTotal, bytesTotal,
-                remaining, details, notes);
+                remaining, details, notes, batchId, skippedTotal);
     }
 
-    /** 分批插入，避免单条 SQL 太大 */
-    private int insertAll(List<DocVersionArchive> list) {
-        int n = 0;
-        for (DocVersionArchive a : list) {
-            n += archiveMapper.insert(a);
+    /**
+     * 单篇归档：先写归档、再删主表，两步在同一事务内（由调用方传入的 {@link TransactionStatus} 控制）。
+     *
+     * <p><b>幂等两道防线</b>（#714 事故根因是「客户端超时后重试，两个请求并发搬同一批」）：
+     * <ol>
+     *   <li>写前查：该篇这些版本号里哪些已在 {@code doc_versions_archive}，跳过不插</li>
+     *   <li>唯一索引 {@code uk_doc_version(doc_id, version)}：并发下被 DB 原子挡住，
+     *       捕获 {@link DuplicateKeyException} 视为「另一个请求已搬过」</li>
+     * </ol>
+     * 只靠第 1 道挡不住并发（两边都查不到），只靠第 2 道会有大量异常开销。
+     *
+     * @return 成功返回结果；失败/需回滚返回 null（原因写入 notes）
+     */
+    private DocArchiveResult doArchiveOne(TransactionStatus status, Long id, String title, int cnt, int keep,
+                                          List<DocVersion> toArchive, String operator, String batchId,
+                                          List<String> notes) {
+        if (toArchive.isEmpty()) return new DocArchiveResult(id, title, cnt, 0, keep, List.of(), 0);
+
+        List<Integer> wants = new ArrayList<>(toArchive.size());
+        for (DocVersion v : toArchive) wants.add(v.getVersion());
+        QueryWrapper<DocVersionArchive> qw = new QueryWrapper<>();
+        qw.select("version").eq("doc_id", id).in("version", wants);
+        Set<Integer> existing = new HashSet<>();
+        for (DocVersionArchive a : archiveMapper.selectList(qw)) {
+            if (a.getVersion() != null) existing.add(a.getVersion());
         }
-        return n;
+
+        int inserted = 0;
+        int conflicted = 0;
+        List<Integer> moved = new ArrayList<>();
+        try {
+            for (DocVersion v : toArchive) {
+                if (existing.contains(v.getVersion())) continue;
+                try {
+                    archiveMapper.insert(buildArchive(v, title, operator, keep, batchId));
+                    inserted++;
+                    moved.add(v.getVersion());
+                } catch (DuplicateKeyException dup) {
+                    // 唯一索引挡住的并发写入 —— 另一个请求（超时后的重试）已经搬过这一版
+                    conflicted++;
+                }
+            }
+        } catch (RuntimeException e) {
+            status.setRollbackOnly();
+            log.error("VersionArchiveService: 归档写入失败 batch={} doc={}", batchId, id, e);
+            notes.add("#" + id + " 归档写入异常（" + e.getClass().getSimpleName()
+                    + "），**本篇已回滚，主表一行未删**");
+            return null;
+        }
+
+        int covered = existing.size() + inserted + conflicted;
+        if (covered < toArchive.size()) {
+            // 覆盖不全时绝不删主表 —— 宁可这次白做，也不能少一行
+            status.setRollbackOnly();
+            notes.add("#" + id + " 只覆盖 " + covered + " / " + toArchive.size()
+                    + " 版，**本篇已回滚，主表一行未删**");
+            return null;
+        }
+
+        // 归档确认写入后，才删主表对应行
+        List<Long> ids = new ArrayList<>(toArchive.size());
+        for (DocVersion v : toArchive) ids.add(v.getId());
+        int deleted = versionMapper.deleteBatchIds(ids);
+        if (deleted != ids.size()) {
+            notes.add("#" + id + " 主表删除 " + deleted + " / 期望 " + ids.size()
+                    + " 行（归档已写入，数据不丢，但需人工核对残留）");
+        }
+
+        int skipped = toArchive.size() - inserted;
+        if (skipped > 0) {
+            notes.add("#" + id + " 有 " + skipped + " 版**已在冷存档**（重试或并发命中），未重复写入");
+        }
+        return new DocArchiveResult(id, title, cnt, inserted, keep, moved.isEmpty() ? wants : moved, skipped);
+    }
+
+    /** 组装一条归档行（原时间搬原值，归档时间单独记） */
+    private DocVersionArchive buildArchive(DocVersion v, String title, String operator, int keep, String batchId) {
+        DocVersionArchive a = new DocVersionArchive();
+        a.setDocId(v.getDocId());
+        a.setDocTitle(title);
+        a.setVersion(v.getVersion());
+        a.setContent(v.getContent());
+        a.setAliases(v.getAliases());
+        a.setSummary(v.getSummary());
+        a.setUpdatedBy(v.getUpdatedBy());
+        a.setUpdatedName(v.getUpdatedName());
+        a.setChangeType(v.getChangeType());
+        // 注意：搬原时间，不是 now()。归档时间单独放 archivedAt
+        a.setCreatedAt(v.getCreatedAt());
+        a.setArchivedAt(LocalDateTime.now());
+        a.setArchivedBy(operator);
+        a.setArchiveReason("保留最近 " + keep + " 版，超出部分归档｜batch=" + batchId);
+        return a;
     }
 
     /** 主表当前行数（只算某篇或全库） */
@@ -237,8 +336,15 @@ public class VersionArchiveService {
      * 还用这个理由说服用户放心搬，但 MCP 层面**一个字都取不回来**。
      * 而且返回的是「该版本不存在」——读的人会以为数据丢了，比「没有入口」更糟。
      *
-     * <p>注意同一 doc_id + version 可能有**多条**（主表本身存在重复行，见 #608），
-     * 所以返回 List 而不是单条：取回时要如实呈现「这个版本号有 N 条记录」，不能只给一条。
+     * <p>注意同一 doc_id + version 可能有**多条** —— 但重复发生在**归档表**，不是主表。
+     *
+     * <p><b>2026-10-27 白虎实测更正（#714 遗留分歧）</b>：这条注释原来写「主表本身存在重复行，见 #608」，
+     * 是错的。实测 {@code SELECT doc_id,version FROM doc_versions GROUP BY doc_id,version HAVING COUNT(*)>1}
+     * 返回 **0 组** —— 主表从来没有重复版本行；{@code doc_versions_archive} 侧才是重复现场
+     * （#608 有 1 条同源残留、#714 事故 70 条）。
+     * 所以「同一版本号 N 条」只可能来自归档表，写入侧已加幂等 + 唯一索引兜住新的重复。
+     *
+     * <p>因此返回 List 而不是单条：取回时要如实呈现「这个版本号有 N 条记录」，不能只给一条。
      */
     public List<DocVersionArchive> findArchived(Long docId, Integer version) {
         if (docId == null || version == null) return List.of();

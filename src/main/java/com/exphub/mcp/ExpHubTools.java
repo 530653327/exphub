@@ -4141,6 +4141,10 @@ public class ExpHubTools {
             StringBuilder sb = new StringBuilder();
             sb.append(dry ? "🔍 归档预演（dryRun：**没有搬任何数据**）\n\n" : "🗂 归档已执行\n\n");
             sb.append("**保留窗口**: 每篇最近 ").append(r.keepRecent()).append(" 版（按 version 倒序）\n");
+            // 批次号：客户端超时后拿不到回执，但每条归档行的 archive_reason 里都有它 ——
+            // 这是「这次到底搬完没有」唯一能从服务端查回来的抓手（#714 第 2 项）
+            sb.append("**批次号**: `").append(r.batchId())
+              .append("`（已写进每条归档行的 archive_reason，超时后用它核对）\n");
             sb.append("**操作人**: ").append(operator);
             if (dry) sb.append("（dryRun 不写入）");
             sb.append("\n");
@@ -4151,17 +4155,23 @@ public class ExpHubTools {
                 sb.append("📭 没有需要归档的文档。\n");
             } else {
                 sb.append("| 文档 | 标题 | 原版本数 | ").append(dry ? "将归档" : "已归档")
-                  .append(" | 归档后剩 |\n|---|---|---|---|---|\n");
+                  .append(" | 归档版本 | 归档后剩 |\n|---|---|---|---|---|---|\n");
                 int i = 0;
                 for (VersionArchiveService.DocArchiveResult d : r.details()) {
-                    if (i++ >= 30) { sb.append("| … | 还有 ").append(r.details().size() - 30).append(" 篇 | | | |\n"); break; }
+                    if (i++ >= 30) { sb.append("| … | 还有 ").append(r.details().size() - 30).append(" 篇 | | | | |\n"); break; }
                     sb.append("| #").append(d.docId()).append(" | ")
                       .append(abbreviate(d.title() == null ? "(无标题)" : d.title(), 30)).append(" | ")
                       .append(d.keptBefore()).append(" | ").append(d.archived()).append(" | ")
+                      .append(archiveVersionsCell(d.versions())).append(" | ")
                       .append(d.keptAfter()).append(" |\n");
                 }
                 sb.append("\n**合计**: ").append(dry ? "将归档 " : "已归档 ")
-                  .append(r.archivedRows()).append(" 条，约 ")
+                  .append(r.archivedRows()).append(" 条");
+                if (r.skippedRows() > 0) {
+                    sb.append("（另有 ").append(r.skippedRows())
+                      .append(" 条**已在冷存档**、本次未重复写入）");
+                }
+                sb.append("，约 ")
                   .append(String.format(java.util.Locale.ROOT, "%.2f", r.archivedBytes() / 1024.0 / 1024.0))
                   .append(" MB｜主表现有 ").append(r.remainingRows()).append(" 条\n");
             }
@@ -4172,6 +4182,11 @@ public class ExpHubTools {
                 sb.append("\n✅ 归档完成。搬运的行都在 `doc_versions_archive` 里，可原样取回：\n")
                   .append("· 看某篇被搬走了哪几版 → `list_archived_versions(id=文档ID)`\n")
                   .append("· 当前正文一个字都没动（本工具只碰历史副本）\n");
+                // #714 教训：客户端超时后直接重试，两个请求并发搬同一批 → 归档表成对重复。
+                // 现在写入幂等 + 唯一索引兜住了，但「先核对再重试」仍然更省事
+                sb.append("\n⚠️ **若客户端报 request timed out，不要直接重试**：\n")
+                  .append("· 先 `list_archived_versions(id=文档ID)` 看归档时间是否已是刚才那一刻 —— 超时不等于没执行\n")
+                  .append("· 重试现在是安全的（同 (doc_id, version) 不会重复写入），但先核对能省一次全库扫描\n");
             }
             for (String n : r.notes()) sb.append("· ").append(n).append("\n");
             return sb.toString();
@@ -4180,6 +4195,22 @@ public class ExpHubTools {
             callLogService.incrementFailCalls();
             return "归档失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /** 归档版本号压成一格：连续区间写 v60–v84（25 版），零散的列前 8 个（#714 第 3 项：逐篇结果要能核对） */
+    static String archiveVersionsCell(java.util.List<Integer> vs) {
+        if (vs == null || vs.isEmpty()) return "-";
+        if (vs.size() == 1) return "v" + vs.get(0);
+        int first = vs.get(0);
+        int last = vs.get(vs.size() - 1);
+        if ((last - first + 1) == vs.size()) return "v" + first + "–v" + last + "（" + vs.size() + " 版）";
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < vs.size() && i < 8; i++) {
+            if (i > 0) b.append("、");
+            b.append("v").append(vs.get(i));
+        }
+        if (vs.size() > 8) b.append(" 等 ").append(vs.size()).append(" 版");
+        return b.toString();
     }
 
     @Tool(name = "list_archived_versions",
