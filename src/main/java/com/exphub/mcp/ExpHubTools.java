@@ -3172,6 +3172,18 @@ public class ExpHubTools {
                 sb.append("\n处理：list_review_candidates 看队列 → resolve_candidate 判 duplicate / superseded / distinct / skip。\n");
             }
             return sb.toString();
+        } catch (LinkageError le) {
+            // ⚠️ 2026-10-27 白虎：NoClassDefFoundError / ExceptionInInitializerError 都属 Error，
+            //    不会被 catch(Exception) 捕到 —— 因此 #712 有「日志里查不到 FAILED、回执只有裸类名」两个现象。
+            //    这里单独兜住 LinkageError 族，把 Caused by 落进 app.log，回执也带首层原因。
+            //    LinkageError 不做重试：类加载失败是确定性的，重试只会重复报错。
+            log.error("ExpHubTools.scanSimilarDocs: LINKAGE FAILED", le);
+            callLogService.incrementFailCalls();
+            Throwable root = le;
+            while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+            return "扫描失败（类加载/链接错误）: " + le.getClass().getName() + " - " + le.getMessage()
+                    + (root == le ? "" : "｜首层原因: " + root.getClass().getName() + " - " + root.getMessage())
+                    + "｜完整堆栈已落 app.log（关键字 LINKAGE FAILED）";
         } catch (Exception e) {
             log.error("ExpHubTools.scanSimilarDocs: FAILED", e);
             callLogService.incrementFailCalls();
