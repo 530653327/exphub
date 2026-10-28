@@ -39,18 +39,46 @@ export JAVA_HOME=/usr/local/java17
 export PATH=$JAVA_HOME/bin:$PATH
 mvn clean package -DskipTests -q
 
-# 2.5 数据库迁移（2026-10-25 新增，幂等脚本，可重复执行）
+# 2.5 数据库迁移（2026-10-25 新增；2026-10-28 改为「按版本表执行」）
 # 为什么放在重启前：新代码会 select 新增列，DDL 没跑就会报 Unknown column，服务起不来
+#
+# ⚠️ 2026-10-28 白虎：原来是「每次部署 for 循环全量重跑所有 migration」。
+#    幂等脚本重跑本身不算错，但**只要有人写一句无条件 DDL（比如 DROP INDEX），
+#    它就会在每次部署时把线上刚修好的东西再静默破坏一次** —— 20261026c 已经这么坑过一次
+#    （唯一索引被删，写入幂等的第二道防线无声失效）。
+#    机制不改，下一个写 migration 的人会原样再踩一遍，所以在这里加版本表：
+#    同一文件 + 同一 md5 只执行一次；文件内容改了才重跑。
 echo "[2.5/5] 执行数据库迁移..."
 DB_NAME="${EXPHUB_DB_NAME:-exphub}"
 if command -v mysql >/dev/null 2>&1; then
+    MYSQL="mysql -u$EXPHUB_DB_USERNAME -p$EXPHUB_DB_PASSWORD $DB_NAME --default-character-set=utf8mb4"
+    $MYSQL -e "CREATE TABLE IF NOT EXISTS schema_migrations (
+        filename   VARCHAR(200) NOT NULL COMMENT '文件名(basename)',
+        checksum   CHAR(32)     NOT NULL COMMENT '文件md5，变了才重跑',
+        applied_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (filename)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已执行的migration，避免每次部署全量重跑'" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "  ⚠️  建 schema_migrations 失败（权限不足？），退化为全量重跑"
+    fi
     for f in sql/migrations/migration_2026*.sql; do
         [ -f "$f" ] || continue
-        if mysql -u"$EXPHUB_DB_USERNAME" -p"$EXPHUB_DB_PASSWORD" "$DB_NAME" \
-                 --default-character-set=utf8mb4 < "$f" >/tmp/exphub_mig.log 2>&1; then
-            echo "  ✅ $(basename "$f")"
+        base=$(basename "$f")
+        sum=$(md5sum "$f" | cut -c1-32)
+        applied=$($MYSQL -N -e "SELECT checksum FROM schema_migrations WHERE filename='$base'" 2>/dev/null | tr -d '[:space:]')
+        if [ "$applied" = "$sum" ]; then
+            continue
+        fi
+        if $MYSQL < "$f" >/tmp/exphub_mig.log 2>&1; then
+            if [ -n "$applied" ]; then
+                $MYSQL -e "UPDATE schema_migrations SET checksum='$sum', applied_at=NOW() WHERE filename='$base'" >/dev/null 2>&1
+                echo "  ✅ $base（内容有改动，已重跑）"
+            else
+                $MYSQL -e "INSERT INTO schema_migrations(filename,checksum) VALUES('$base','$sum')" >/dev/null 2>&1
+                echo "  ✅ $base"
+            fi
         else
-            echo "  ⚠️  $(basename "$f") 执行有报错（若是幂等脚本可忽略重复列提示）"
+            echo "  ⚠️  $base 执行有报错（若是幂等脚本可忽略重复列提示）"
             tail -5 /tmp/exphub_mig.log
         fi
     done

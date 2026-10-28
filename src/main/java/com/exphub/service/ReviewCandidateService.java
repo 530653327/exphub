@@ -314,7 +314,7 @@ public class ReviewCandidateService {
                 addFlag(a, "duplicate", reason, who);
                 addFlag(b, "duplicate", reason, who);
                 c.setStatus(ReviewCandidate.DUPLICATE);
-                c.setNote(truncate("判为重复（两条互指），未合并正文", 500));
+                c.setNote(mergeNote("判为重复（两条互指），未合并正文", c.getNote()));
                 return finish(c, who, "✅ 已判定重复：两条都打了 duplicate 标记并互指，**未合并、未删除**，原文各自保留");
             }
             case "superseded", "supersedes", "取代" -> {
@@ -332,17 +332,17 @@ public class ReviewCandidateService {
                     return new ResolveResult(false, "标取代失败：" + r.message(), c);
                 }
                 c.setStatus(ReviewCandidate.SUPERSEDED);
-                c.setNote(truncate("#" + oldId + " 已被 #" + newId + " 取代", 500));
+                c.setNote(mergeNote("#" + oldId + " 已被 #" + newId + " 取代", c.getNote()));
                 return finish(c, who, "✅ 已标取代：#" + oldId + " → #" + newId + "（只写指针，旧条原文保留）");
             }
             case "distinct", "不同" -> {
                 c.setStatus(ReviewCandidate.DISTINCT);
-                c.setNote(truncate(note == null || note.trim().isEmpty() ? "判为不同" : note.trim(), 500));
+                c.setNote(mergeNote(note == null || note.trim().isEmpty() ? "判为不同" : note.trim(), c.getNote()));
                 return finish(c, who, "✅ 已判为不同，未改动任何数据；此后这一对不再重新入队");
             }
             case "skip", "忽略" -> {
                 c.setStatus(ReviewCandidate.SKIPPED);
-                c.setNote(truncate(note == null || note.trim().isEmpty() ? "本次忽略" : note.trim(), 500));
+                c.setNote(mergeNote(note == null || note.trim().isEmpty() ? "本次忽略" : note.trim(), c.getNote()));
                 return finish(c, who, "✅ 已忽略，未改动任何数据；下次相似度再算到它仍会提出来");
             }
             default -> {
@@ -350,6 +350,29 @@ public class ReviewCandidateService {
                         + "。可用：duplicate / superseded / distinct / skip", c);
             }
         }
+    }
+
+    /**
+     * 合并判定说明：保留「撤回」留下的历史，而不是用新说明把它覆盖掉。
+     *
+     * <p><b>2026-10-28 白虎（reopen 的配套）</b>：{@link #reopen} 把原判定人 / 时间 / 依据
+     * 都拼进了 {@code note}，但原来的 resolve 各分支都是 {@code setNote(新说明)} ——
+     * 于是「撤回 → 重新判定」这个往返一做完，**原判定的全部审计信息就被最后一句话抹掉了**。
+     * 那样 reopen 只算半个可逆：状态回来了，谁判的、凭什么判的却没了。
+     *
+     * <p>规则：旧 note 里带「撤回：」才拼（说明这是往返）；否则维持原行为，不做无意义堆叠。
+     * 旧 note 放在**后面且不被截断**，新说明超长时截新说明。
+     */
+    static String mergeNote(String newNote, String oldNote) {
+        String n = newNote == null ? "" : newNote.trim();
+        if (oldNote == null || oldNote.isBlank() || !oldNote.contains("撤回：")) {
+            return n.length() > 500 ? n.substring(0, 500) : n;
+        }
+        String o = oldNote.trim().length() > 380 ? oldNote.trim().substring(0, 380) + "…" : oldNote.trim();
+        int room = 500 - o.length() - 8;
+        if (room < 20) room = 20;
+        String head = n.length() > room ? n.substring(0, room) + "…" : n;
+        return (head.isEmpty() ? "" : head + "｜") + "前次：" + o;
     }
 
     private ResolveResult finish(ReviewCandidate c, String by, String msg) {
