@@ -31,7 +31,20 @@ fi
 # 1. 拉取最新代码
 echo "[1/5] 拉取最新代码..."
 git fetch --all
+SELF_SUM_BEFORE=$(md5sum "$0" | cut -d' ' -f1)
 git reset --hard origin/master
+SELF_SUM_AFTER=$(md5sum "$0" | cut -d' ' -f1)
+
+# ⚠️ 自重入（2026-10-29 实测踩到）：bash 是按需读取脚本文件的，[1/5] 的 reset 会把
+# deploy.sh 换成新 inode，但**当前 bash 仍从旧文件继续读** —— 于是「改了这个脚本的
+# 那次部署」跑的是旧逻辑，本次改动要到下一次部署才生效。
+# 2026-10-28 加版本表那次就是这样：第一次部署输出「7 个迁移全跑」，但 schema_migrations
+# 根本没建（旧脚本没有建表逻辑），跑第二次才生效，很容易误判成「改动没写对」。
+if [ "$SELF_SUM_BEFORE" != "$SELF_SUM_AFTER" ] && [ -z "$EXPHUB_SELF_REEXEC" ]; then
+    echo "  ↻ deploy.sh 本次有更新 → 用新版本重新执行（否则仍跑旧逻辑）"
+    export EXPHUB_SELF_REEXEC=1
+    exec bash "$0" "$@"
+fi
 
 # 2. 编译打包
 echo "[2/5] 编译打包..."
