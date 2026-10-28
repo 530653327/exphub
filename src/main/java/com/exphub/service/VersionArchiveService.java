@@ -250,10 +250,21 @@ public class VersionArchiveService {
         // 归档确认写入后，才删主表对应行
         List<Long> ids = new ArrayList<>(toArchive.size());
         for (DocVersion v : toArchive) ids.add(v.getId());
-        int deleted = versionMapper.deleteBatchIds(ids);
-        if (deleted != ids.size()) {
-            notes.add("#" + id + " 主表删除 " + deleted + " / 期望 " + ids.size()
-                    + " 行（归档已写入，数据不丢，但需人工核对残留）");
+        // ⚠️ 2026-10-28 白虎（P0-1）：**不要信 deleteBatchIds 的返回值**。
+        //    实测 #677 归档：回执照写「主表删除 0 / 期望 2 行」，而库里主表确实从 12 条降到 10 条，
+        //    导读也自证「主表 10 + 冷存档 2 = 12」—— 数据全对，是**回执在撒谎**。
+        //    危害与 #714 那次重复副本同源：执行者只要相信「没删」就会再跑一遍，于是又写一份归档。
+        //    改成事务内回读：删前、删后各数一次主表真实行数，差值才是「这次真的少了多少」。
+        //    （同事务内可见自己的删除，所以回读准确；transactionTemplate 提交/回滚都在这之后。）
+        int before = countVersions(id);
+        int rawReturn = versionMapper.deleteBatchIds(ids);
+        int after = countVersions(id);
+        int removed = before - after;
+        if (removed != ids.size()) {
+            notes.add("#" + id + " 主表实删 " + removed + " / 期望 " + ids.size()
+                    + " 行（删前 " + before + " → 删后 " + after
+                    + (rawReturn != removed ? "；deleteBatchIds 返回 " + rawReturn + " 与回读不符，**以回读为准**" : "")
+                    + "）—— 归档已写入，数据不丢，需人工核对残留");
         }
 
         int skipped = toArchive.size() - inserted;
@@ -484,6 +495,66 @@ public class VersionArchiveService {
             b.append(" 存了多份副本");
             return b.toString();
         }
+    }
+
+    /** 从 archive_reason 里抠 batch=xxx（老数据没有这个后缀，抠不到就跳过） */
+    private static final java.util.regex.Pattern BATCH_RE =
+            java.util.regex.Pattern.compile("batch=([A-Za-z0-9\\-]+)");
+
+    /** 一个归档批次的小结 */
+    public record BatchRow(String batchId, int rows, int docs, String firstAt, String lastAt) {}
+
+    /** 从归档行里解析批次号，解析不到返回 null */
+    static String batchOf(DocVersionArchive a) {
+        if (a == null || a.getArchiveReason() == null) return null;
+        java.util.regex.Matcher m = BATCH_RE.matcher(a.getArchiveReason());
+        return m.find() ? m.group(1) : null;
+    }
+
+    /**
+     * 最近若干个归档批次（按批次号倒序，批次号自带时间所以等价于按时间倒序）。
+     *
+     * <p><b>为什么需要</b>（越哥 2026-10-28 提的 P0-3）：归档超时后，客户端手上只有一个
+     * {@code request timed out}，想知道「这批到底搬完没有」原先只能逐篇
+     * {@code list_archived_versions} 翻 —— 全库几十篇时根本做不到。
+     * 现在每次归档写 {@code batch=AR<时间>} 进 archive_reason，可以按批次一把查回。
+     *
+     * <p>数据量级是几百行，直接全取到内存聚合；不值得为它加 GROUP BY 的 SQL
+     * （archive_reason 里抠子串在 SQL 侧反而更难读）。
+     */
+    public List<BatchRow> listBatches(int limit) {
+        int cap = Math.max(1, Math.min(limit, 100));
+        List<DocVersionArchive> all = archiveMapper.selectList(new QueryWrapper<DocVersionArchive>()
+                .select("id", "doc_id", "version", "archived_at", "archive_reason")
+                .orderByDesc("id"));
+        Map<String, int[]> count = new LinkedHashMap<>();                 // batch -> {rows}
+        Map<String, Set<Long>> docs = new LinkedHashMap<>();              // batch -> distinct doc
+        Map<String, String[]> span = new LinkedHashMap<>();               // batch -> {min, max}
+        for (DocVersionArchive a : all) {
+            String b = batchOf(a);
+            if (b == null) continue;
+            count.computeIfAbsent(b, k -> new int[1])[0]++;
+            docs.computeIfAbsent(b, k -> new HashSet<>()).add(a.getDocId());
+            String at = a.getArchivedAt() == null ? "" : a.getArchivedAt().toString().replace('T', ' ');
+            String[] s = span.computeIfAbsent(b, k -> new String[]{"", ""});
+            if (s[0].isEmpty() || (!at.isEmpty() && at.compareTo(s[0]) < 0)) s[0] = at;
+            if (s[1].isEmpty() || at.compareTo(s[1]) > 0) s[1] = at;
+        }
+        return count.entrySet().stream()
+                .sorted((x, y) -> y.getKey().compareTo(x.getKey()))
+                .limit(cap)
+                .map(e -> new BatchRow(e.getKey(), e.getValue()[0],
+                        docs.getOrDefault(e.getKey(), Set.of()).size(),
+                        span.get(e.getKey())[0], span.get(e.getKey())[1]))
+                .toList();
+    }
+
+    /** 某批次搬走的全部归档行（按文档、版本排序） */
+    public List<DocVersionArchive> listByBatch(String batchId) {
+        if (batchId == null || batchId.isBlank()) return List.of();
+        return archiveMapper.selectList(new QueryWrapper<DocVersionArchive>()
+                .like("archive_reason", "batch=" + batchId.trim())
+                .orderByAsc("doc_id").orderByAsc("version"));
     }
 
     /** 该文档有没有任何归档记录（用于区分「从未归档」与「版本号本身不存在」） */

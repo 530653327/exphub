@@ -1,6 +1,7 @@
 package com.exphub.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.exphub.entity.Doc;
 import com.exphub.entity.ReviewCandidate;
 import com.exphub.mapper.DocMapper;
@@ -356,6 +357,60 @@ public class ReviewCandidateService {
         c.setResolvedAt(LocalDateTime.now());
         candidateMapper.updateById(c);
         return new ResolveResult(true, msg, c);
+    }
+
+    /**
+     * 撤回一次已判的候选：状态回 {@code PENDING}，让它重新参与扫描与入队。
+     *
+     * <p><b>为什么必须有这个动作</b>（越哥 2026-10-28 提的 P0-2）：
+     * {@code distinct} 的语义是「这一对**永久**不再入队」。判错一次，将来真重复了也不会再被扫出来，
+     * 而且除了候选表里那一行，没有任何地方记着「曾经判过」。整个整理链路里
+     * **这是唯一的不可逆动作**（合并、删除都有撤销手段），却没有撤销入口 —— 只能靠 SQL 改库。
+     *
+     * <p>两条设计取舍：
+     * <ul>
+     *   <li><b>原判定不擦掉</b>：历史判定人 / 时间 / 说明全部拼进 {@code note}，审计线索不能因为撤回就消失</li>
+     *   <li><b>只回退候选状态</b>：判定时顺手打在文档上的 {@code duplicate} 标记、{@code superseded} 指针
+     *       <b>不在这里撤销</b>。它们是两个独立动作，混在一起做等于「撤回候选」顺手改正文 ——
+     *       回执里必须写明这一点，否则调用方会以为全清了</li>
+     * </ul>
+     */
+    public ResolveResult reopen(Long candidateId, String note, String by) {
+        ReviewCandidate c = candidateMapper.selectById(candidateId);
+        if (c == null) {
+            return new ResolveResult(false, "未找到候选 #" + candidateId, null);
+        }
+        if (ReviewCandidate.PENDING.equals(c.getStatus())) {
+            return new ResolveResult(false, "该候选本来就是 PENDING（待判断），无需撤回", c);
+        }
+        String prev = c.getStatus();
+        String who = (by == null || by.trim().isEmpty()) ? "unknown" : by.trim();
+
+        StringBuilder his = new StringBuilder("撤回：").append(prev).append(" → PENDING");
+        if (note != null && !note.trim().isEmpty()) his.append("｜原因：").append(note.trim());
+        if (c.getResolvedBy() != null) his.append("｜原判定人：").append(c.getResolvedBy());
+        if (c.getResolvedAt() != null) {
+            his.append("｜原判定时间：").append(c.getResolvedAt().toString().replace('T', ' '));
+        }
+        if (c.getNote() != null && !c.getNote().trim().isEmpty()) his.append("｜原判定说明：").append(c.getNote());
+
+        // ⚠️ MyBatis-Plus 默认忽略 null 字段，setResolvedBy(null) 不会写库 ——
+        //    想让 resolved_by / resolved_at 真的变回 NULL 必须走 UpdateWrapper.set。
+        candidateMapper.update(null, new UpdateWrapper<ReviewCandidate>()
+                .eq("id", candidateId)
+                .set("status", ReviewCandidate.PENDING)
+                .set("note", truncate(his.toString(), 500))
+                .set("resolved_by", null)
+                .set("resolved_at", null));
+
+        ReviewCandidate after = candidateMapper.selectById(candidateId);
+        return new ResolveResult(true,
+                "✅ 已撤回：候选 #" + candidateId + " 由 " + prev + " 恢复为 PENDING（待判断）。"
+                        + "下一轮 scan 会重新考虑这一对。\n"
+                        + "⚠️ 只回退了**候选状态**：当初判定时写在文档上的标记（duplicate 标记 / 取代指针）**没有撤销**。"
+                        + "要一并撤销请用 `set_flags` 或 `clear_superseded`。\n"
+                        + "📝 原判定（" + who + "）的说明已并入本候选的 note，没有丢。",
+                after);
     }
 
     /** 以创建时间判断谁是「旧的」；时间取不到或相等时按 ID 小的算旧 */

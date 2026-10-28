@@ -1199,7 +1199,7 @@ public class ExpHubTools {
             // ⚠️ 2026-10-25 修：原来这里只认 authorName，updatedName 是死参数 ——
             // 参数说明承诺「两者都传时以本参数为准」，实际传了 updatedName 署名照样丢，
             // 后台待删队列显示的还是 Key 绑定的名字（白泽 23:41 查源码 + 阁主实测发现）。
-            String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+            String by = resolveAuthor(updatedName, authorName, assistant);
             Doc marked = docService.markForDeletion(id, reason, by);
 
             StringBuilder sb = new StringBuilder();
@@ -1717,6 +1717,21 @@ public class ExpHubTools {
         return "unknown";
     }
 
+    /**
+     * 双参数署名：{@code updatedName} 优先，其次 {@code authorName}，最后助手名。
+     *
+     * <p><b>2026-10-28 白虎（P2-7）</b>：原先各处写的是
+     * {@code resolveAuthor(updatedName != null ? updatedName : authorName, assistant)} ——
+     * 判的是 {@code != null} 而不是「非空白」，所以传空串 {@code ""} 时会把 authorName 顶掉，
+     * 最后落到助手名上，看起来就像「updatedName 是死参数、两个都得传」。
+     * 统一收口到这里，省得下次又有一处只判 null。
+     */
+    static String resolveAuthor(String updatedName, String authorName, AiAssistant assistant) {
+        if (updatedName != null && !updatedName.trim().isEmpty()) return updatedName.trim();
+        if (authorName != null && !authorName.trim().isEmpty()) return authorName.trim();
+        return resolveAuthor((String) null, assistant);
+    }
+
     /** 可被 clearFields 清空的字段白名单（title/content 不在内：清空它们没有合理语义） */
     static final java.util.Set<String> CLEARABLE_FIELDS = java.util.Set.of(
             "tags", "aliases", "summary", "relatedIds", "related_ids", "category");
@@ -2046,7 +2061,7 @@ public class ExpHubTools {
             // ⚠️ 2026-10-25 修：这里原来只认 authorName，updatedName 声明了却零使用，
             // 而参数说明写着「两者都传时以本参数为准」→ 传了 updatedName 署名就丢。
             // 与 mark_superseded / mark_for_deletion 统一走同一行。
-            String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+            String by = resolveAuthor(updatedName, authorName, assistant);
 
             if (targets.size() > 1) {
                 return setFlagsBatch(targets, parsed, rejected, note, by);
@@ -2386,7 +2401,7 @@ public class ExpHubTools {
             if (id == null || byId == null) {
                 return "❌ id 与 byId 都必填。id=被取代的旧条，byId=取代它的新条。";
             }
-            String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+            String by = resolveAuthor(updatedName, authorName, assistant);
             DocService.SupersedeResult r = docService.markSuperseded(id, byId, by);
             if (!r.ok()) {
                 return "❌ " + r.message() + "\n\n未做任何改动。";
@@ -2423,7 +2438,7 @@ public class ExpHubTools {
             AiAssistant assistant = getCaller();
             // ⚠️ 2026-10-25 修：`authorName` / `updatedName` 原来是两个死参数
             // （参数说明写「两者等价，仅写日志」，实际一行日志都没打）
-            String operator = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+            String operator = resolveAuthor(updatedName, authorName, assistant);
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
@@ -2654,6 +2669,104 @@ public class ExpHubTools {
     }
 
     /** 处理一条候选 */
+    @Tool(name = "reopen_candidate",
+          description = "【撤回已判候选】把一条已判（duplicate / distinct / superseded / skip）的候选改回 PENDING，"
+                  + "让它重新参与扫描与入队。⚠️ **只回退候选状态**，当初打在文档上的标记 / 取代指针不会撤销"
+                  + "（那两项用 set_flags、clear_superseded）。用于判错了想重来 —— "
+                  + "distinct 的语义是「永久不再入队」，没有这个工具就只能改库。")
+    public String reopenCandidate(
+            @ToolParam(description = "必填。候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
+            @ToolParam(description = "可选。撤回原因：为什么当初判错了。会与原判定说明一起并入 note，原判定不丢", required = false) String note,
+            @ToolParam(description = "可选。**谁改的**——操作人署名", required = false) String updatedName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            if (candidateId == null) {
+                return "❌ 必须传 candidateId（候选 #N 里的 N）。不知道 ID 就先 list_review_candidates(status=ALL)。";
+            }
+            String by = resolveAuthor(updatedName, assistant);
+            ReviewCandidateService.ResolveResult r = reviewCandidateService.reopen(candidateId, note, by);
+            if (!r.ok()) {
+                callLogService.incrementFailCalls();
+                return "❌ " + r.message();
+            }
+            // 守卫 DeadParamGuardTest 要求：算了 resolveAuthor 就必须在回执里说出来
+            // —— 一个 Key 多助手共用时，不写操作人就分不清是谁改的状态
+            return r.message() + "\n**操作人**: " + by;
+        } catch (Exception e) {
+            log.error("ExpHubTools.reopenCandidate: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "撤回失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "list_archive_batches",
+          description = "【按批次查归档】archive_old_versions 超时后，用它确认「这批到底搬完没有」。"
+                  + "不传 batchId = 列出最近各批次（批次号 / 条数 / 涉及文档数 / 时间范围）；"
+                  + "传 batchId = 列出该批次搬走的每一版。**只读**。批次号来自 archive_old_versions 回执。")
+    public String listArchiveBatches(
+            @ToolParam(description = "可选。批次号，形如 AR20261028-230401。不传 = 列出最近批次", required = false) String batchId,
+            @ToolParam(description = "可选。列出多少个批次，默认 10，上限 50", required = false) Integer limit) {
+        try {
+            if (batchId == null || batchId.trim().isEmpty()) {
+                int cap = (limit == null || limit < 1) ? 10 : Math.min(limit, 50);
+                java.util.List<VersionArchiveService.BatchRow> bs = versionArchiveService.listBatches(cap);
+                StringBuilder sb = new StringBuilder("📦 **最近归档批次**\n\n");
+                if (bs.isEmpty()) {
+                    sb.append("没有任何带批次号的归档记录 —— 2026-10-28 之后写入的归档行才带 `batch=` 后缀。\n");
+                    return sb.toString();
+                }
+                sb.append("| 批次号 | 归档条数 | 涉及文档 | 时间范围 |\n|---|---|---|---|\n");
+                for (VersionArchiveService.BatchRow b : bs) {
+                    sb.append("| `").append(b.batchId()).append("` | ").append(b.rows())
+                      .append(" | ").append(b.docs()).append(" 篇 | ")
+                      .append(b.firstAt()).append(" ~ ").append(b.lastAt()).append(" |\n");
+                }
+                sb.append("\n查某一批的明细：`list_archive_batches(batchId=\"AR...\")`\n");
+                return sb.toString();
+            }
+            java.util.List<DocVersionArchive> rows = versionArchiveService.listByBatch(batchId);
+            if (rows.isEmpty()) {
+                return "❌ 没找到批次 `" + batchId.trim() + "` 的归档记录。\n"
+                        + "两种可能：① 批次号写错（形如 `AR20261028-230401`）；"
+                        + "② 这批发生在 2026-10-28 之前 —— 那时 archive_reason 里还没有 batch 后缀，"
+                        + "只能用 `list_archived_versions(id=文档ID)` 按时间核对。";
+            }
+            java.util.Map<Long, java.util.List<DocVersionArchive>> byDoc = new java.util.LinkedHashMap<>();
+            for (DocVersionArchive a : rows) {
+                byDoc.computeIfAbsent(a.getDocId(), k -> new java.util.ArrayList<>()).add(a);
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("📦 批次 `").append(batchId.trim()).append("`：**").append(rows.size())
+              .append(" 条**，涉及 **").append(byDoc.size()).append(" 篇**\n\n");
+            sb.append("| 文档 | 标题 | 归档版本 | 归档时间 |\n|---|---|---|---|\n");
+            int i = 0;
+            for (java.util.Map.Entry<Long, java.util.List<DocVersionArchive>> e : byDoc.entrySet()) {
+                if (i++ >= 40) {
+                    sb.append("| … | 还有 ").append(byDoc.size() - 40).append(" 篇 | | |\n");
+                    break;
+                }
+                java.util.List<DocVersionArchive> list = e.getValue();
+                java.util.List<Integer> vs = new java.util.ArrayList<>(list.size());
+                for (DocVersionArchive a : list) vs.add(a.getVersion());
+                DocVersionArchive first = list.get(0);
+                sb.append("| #").append(e.getKey()).append(" | ")
+                  .append(abbreviate(first.getDocTitle() == null ? "(无标题)" : first.getDocTitle(), 30))
+                  .append(" | ").append(archiveVersionsCell(vs)).append(" | ")
+                  .append(first.getArchivedAt() == null ? "-" : first.getArchivedAt().toString().replace('T', ' '))
+                  .append(" |\n");
+            }
+            sb.append("\n✅ 这批**已落地**（能查出来就说明写进库了）。逐篇核对用 `list_archived_versions(id=...)`。\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listArchiveBatches: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "查询失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
     @Tool(name = "resolve_candidate", description = "处理一条整理候选：duplicate（只打标记）/ superseded（只写指针）/ distinct / skip。都不删任何内容。distinct 后不再重新入队。")
     public String resolveCandidate(
             @ToolParam(description = "候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
@@ -2666,7 +2779,7 @@ public class ExpHubTools {
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
-            String by = resolveAuthor(updatedName != null ? updatedName : authorName, assistant);
+            String by = resolveAuthor(updatedName, authorName, assistant);
             // ⚠️ 2026-10-26 12:0x 阁主第 3 条：**「忽略」不许能改写「判为重复」**。
             //    背景：他删掉两条临时样本后，候选 #26 成了悬空行（引用的文档已删），
             //    而头行建议「用 skip 收掉」；但 #26 已经是 DUPLICATE 终态 ——

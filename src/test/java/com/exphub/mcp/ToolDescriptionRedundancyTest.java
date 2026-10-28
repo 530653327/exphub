@@ -305,8 +305,10 @@ class ToolDescriptionRedundancyTest {
                 if (p.getAnnotation(ToolParam.class) != null) paramCount++;
             }
         }
-        assertEquals(41, toolCount, "工具数变了（41 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(158, paramCount, "参数数变了（158 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-10-28：41 → 43，新增 reopen_candidate（P0-2 撤回已判候选）
+        // 与 list_archive_batches（P0-3 按批次查归档）。参数 158 → 163。
+        assertEquals(43, toolCount, "工具数变了（43 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(163, paramCount, "参数数变了（163 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════
