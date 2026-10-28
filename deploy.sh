@@ -30,21 +30,31 @@ else
 fi
 
 # 1. 拉取最新代码
-echo "[1/5] 拉取最新代码..."
-git fetch --all
-SELF_SUM_BEFORE=$(md5sum "$0" | cut -d' ' -f1)
-git reset --hard origin/master
-SELF_SUM_AFTER=$(md5sum "$0" | cut -d' ' -f1)
+#
+# ⚠️ 2026-10-29 结构修正（阁主验收意见）：根因是这个脚本**自己就在要被 reset 的仓库里**。
+# 自重入（下面那段）是把补丁做对了，但补丁不该是常态机制 ——
+# 现在推荐用仓库外入口：/opt/deploy/exphub-run.sh，它先 git 同步、再带着 EXPHUB_SKIP_PULL=1
+# 调本脚本。入口文件不在仓库里，永远不会被 reset 替换，也就没有 inode 问题。
+# 直接 `bash deploy.sh` 仍然可用（兼容旧习惯），此时靠自重入兜底。
+if [ "${EXPHUB_SKIP_PULL:-0}" = "1" ]; then
+    echo "[1/5] 跳过拉取（外部入口已 git 同步：$(git log -1 --format='%h %s')）"
+else
+    echo "[1/5] 拉取最新代码..."
+    git fetch --all
+    SELF_SUM_BEFORE=$(md5sum "$0" | cut -d' ' -f1)
+    git reset --hard origin/master
+    SELF_SUM_AFTER=$(md5sum "$0" | cut -d' ' -f1)
 
-# ⚠️ 自重入（2026-10-29 实测踩到）：bash 是按需读取脚本文件的，[1/5] 的 reset 会把
-# deploy.sh 换成新 inode，但**当前 bash 仍从旧文件继续读** —— 于是「改了这个脚本的
-# 那次部署」跑的是旧逻辑，本次改动要到下一次部署才生效。
-# 2026-10-28 加版本表那次就是这样：第一次部署输出「7 个迁移全跑」，但 schema_migrations
-# 根本没建（旧脚本没有建表逻辑），跑第二次才生效，很容易误判成「改动没写对」。
-if [ "$SELF_SUM_BEFORE" != "$SELF_SUM_AFTER" ] && [ -z "$EXPHUB_SELF_REEXEC" ]; then
-    echo "  ↻ deploy.sh 本次有更新 → 用新版本重新执行（否则仍跑旧逻辑）"
-    export EXPHUB_SELF_REEXEC=1
-    exec bash "$0" "$@"
+    # ⚠️ 自重入（2026-10-29 实测踩到）：bash 是按需读取脚本文件的，[1/5] 的 reset 会把
+    # deploy.sh 换成新 inode，但**当前 bash 仍从旧文件继续读** —— 于是「改了这个脚本的
+    # 那次部署」跑的是旧逻辑，本次改动要到下一次部署才生效。
+    # 2026-10-28 加版本表那次就是这样：第一次部署输出「7 个迁移全跑」，但 schema_migrations
+    # 根本没建（旧脚本没有建表逻辑），跑第二次才生效，很容易误判成「改动没写对」。
+    if [ "$SELF_SUM_BEFORE" != "$SELF_SUM_AFTER" ] && [ -z "$EXPHUB_SELF_REEXEC" ]; then
+        echo "  ↻ deploy.sh 本次有更新 → 用新版本重新执行（否则仍跑旧逻辑）"
+        export EXPHUB_SELF_REEXEC=1
+        exec bash "$0" "$@"
+    fi
 fi
 
 # 2. 编译打包
@@ -110,6 +120,19 @@ if [ -f deploy/exphub.service ]; then
         echo "  ✅ systemd 单元已更新（deploy/exphub.service → /etc/systemd/system/）"
     else
         echo "  ✅ systemd 单元已是仓库版本"
+    fi
+fi
+
+# 2.7 安装/更新仓库外部署入口（2026-10-29）
+# 入口不能放在仓库里，否则 git reset --hard 会把它换成新 inode，本次部署仍读旧逻辑。
+# 这里每次从仓库模板覆盖安装一次，保证运维侧用的永远是仓库里的版本，不用手工同步。
+if [ -f deploy/exphub-run.sh ]; then
+    mkdir -p /opt/deploy
+    if cmp -s deploy/exphub-run.sh /opt/deploy/exphub-run.sh; then
+        echo "  ✅ 仓库外入口已是仓库版本（/opt/deploy/exphub-run.sh）"
+    else
+        install -m 755 deploy/exphub-run.sh /opt/deploy/exphub-run.sh
+        echo "  ✅ 仓库外入口已安装/更新（/opt/deploy/exphub-run.sh）"
     fi
 fi
 

@@ -2702,6 +2702,81 @@ public class ExpHubTools {
         }
     }
 
+    @Tool(name = "list_candidate_history",
+          description = "【查一条候选的判定流水】谁在什么时候判成什么、说了什么。**只读**。"
+                  + "2026-10-29 起判定历史不再挤在 note 里：note 只存「当前判定理由」，"
+                  + "每一次动作（duplicate/superseded/distinct/skip/reopen）都进独立的流水表，且不截断。"
+                  + "想知道「这条当初凭什么判」「某次撤回是否真发生过」「同一条判过几轮」，用它。")
+    public String listCandidateHistory(
+            @ToolParam(description = "必填。候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
+            @ToolParam(description = "可选。最多返回多少条，默认 50，上限 500", required = false) Integer limit) {
+        try {
+            if (candidateId == null) {
+                return "❌ 必须传 candidateId（候选 #N 里的 N）。不知道 ID 就先 list_review_candidates(status=ALL)。";
+            }
+            int cap = (limit == null || limit < 1) ? 50 : Math.min(limit, 500);
+            ReviewCandidate c = reviewCandidateService.get(candidateId);
+            java.util.List<com.exphub.entity.CandidateResolutionLog> rows =
+                    reviewCandidateService.history(candidateId, cap);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("📜 **候选 #").append(candidateId).append(" 判定流水**\n\n");
+            if (c != null) {
+                sb.append("**涉及文档**: #").append(c.getDocA()).append(" ↔ #").append(c.getDocB())
+                  .append("｜相似度 ").append(c.getScore() == null ? "-" : c.getScore().toPlainString())
+                  .append("\n**当前状态**: ").append(c.getStatus());
+                if (c.getResolvedBy() != null && !c.getResolvedBy().trim().isEmpty()) {
+                    sb.append("（").append(c.getResolvedBy()).append("）");
+                }
+                String cur = (c.getNote() == null || c.getNote().trim().isEmpty()) ? "(无，当前无判定理由)" : c.getNote();
+                sb.append("\n**当前理由**: ").append(abbreviate(cur, 300)).append("\n\n");
+            } else {
+                sb.append("⚠️ 候选表里没有 #").append(candidateId)
+                  .append("（可能已被清理），以下仅有流水记录。\n\n");
+            }
+
+            if (rows.isEmpty()) {
+                sb.append("📭 没有任何流水记录");
+                if (c != null && ReviewCandidate.PENDING.equals(c.getStatus())) sb.append("（它还在待判断）");
+                sb.append("。\n2026-10-29 之前做的判定没有流水，只能看候选表上的当时结果。\n");
+                return sb.toString();
+            }
+
+            sb.append("| 流水# | 时间 | 动作 | 状态变化 | 操作人 |\n|---|---|---|---|---|\n");
+            int shown = 0;
+            for (com.exphub.entity.CandidateResolutionLog l : rows) {
+                if (shown++ >= 60) {
+                    sb.append("| … | 还有 ").append(rows.size() - 60).append(" 条 | | | |\n");
+                    break;
+                }
+                sb.append("| ").append(l.getId())
+                  .append(" | ").append(l.getCreatedAt() == null ? "-"
+                          : l.getCreatedAt().toString().replace('T', ' '))
+                  .append(" | ").append(l.getAction())
+                  .append(" | ").append(l.getPrevStatus() == null ? "-" : l.getPrevStatus())
+                  .append(" → ").append(l.getNewStatus() == null ? "-" : l.getNewStatus())
+                  .append(" | ").append(l.getOperator()).append(" |\n");
+            }
+
+            // 说明正文单独列出：撤回那条会带着「撤回前的判定」全文，放表格里会撑爆
+            sb.append("\n**各次说明**\n");
+            for (com.exphub.entity.CandidateResolutionLog l : rows) {
+                if (l.getNote() == null || l.getNote().trim().isEmpty()) continue;
+                sb.append("\n- **#").append(l.getId()).append(" ").append(l.getAction()).append("**（")
+                  .append(l.getOperator()).append("）：").append(abbreviate(l.getNote().trim(), 400));
+            }
+            sb.append("\n");
+            if (rows.size() >= cap) {
+                sb.append("\n⚠️ 已到返回上限 ").append(cap).append(" 条，可能还有更早的记录，调大 limit 再看。\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.listCandidateHistory: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "查询判定流水失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
     @Tool(name = "list_archive_batches",
           description = "【按批次查归档】archive_old_versions 超时后，用它确认「这批到底搬完没有」。"
                   + "不传 batchId = 列出最近各批次（批次号 / 条数 / 涉及文档数 / 时间范围）；"
@@ -2815,7 +2890,9 @@ public class ExpHubTools {
                     : "";
             // 2026-10-26：by 已传给 service.resolve，但回执没说 —— 补上，与 clearSuperseded 对齐
             return r.message() + "\n\n**候选 #" + candidateId + " 状态** → " + r.candidate().getStatus()
-                    + "\n**操作人**: " + by + extra;
+                    + "\n**操作人**: " + by + extra
+                    + "\n**历史**: 本次动作已记入判定流水（note 只存当前理由）→ `list_candidate_history(candidateId="
+                    + candidateId + ")`";
         } catch (Exception e) {
             log.error("ExpHubTools.resolveCandidate: FAILED", e);
             callLogService.incrementFailCalls();

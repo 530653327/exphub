@@ -2,8 +2,10 @@ package com.exphub.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.exphub.entity.CandidateResolutionLog;
 import com.exphub.entity.Doc;
 import com.exphub.entity.ReviewCandidate;
+import com.exphub.mapper.CandidateResolutionLogMapper;
 import com.exphub.mapper.DocMapper;
 import com.exphub.mapper.ReviewCandidateMapper;
 import lombok.RequiredArgsConstructor;
@@ -38,17 +40,17 @@ public class ReviewCandidateService {
     private final ReviewCandidateMapper candidateMapper;
     private final DocMapper docMapper;
     private final DocService docService;
+    private final CandidateResolutionLogMapper resolutionLogMapper;
 
     /**
-     * note 的字符上限，必须与 {@code review_candidates.note} 列宽一致（2026-10-29 由 500 放宽到 2000）。
+     * 「当前判定理由」的字符上限，必须与 {@code review_candidates.note} 列宽一致（varchar(2000)）。
      *
-     * <p>为什么放宽：往返一次（reopen → resolve）要同时装下「新说明 + 完整原判定说明」，
-     * 500 装不下，原说明的结尾会被切掉 —— 而保留原判定正是 reopen 存在的理由。
+     * <p><b>2026-10-29 结构修正（阁主验收意见）</b>：原来这个 note 里还要拼「撤回历史」，
+     * 一次往返 +184 字，2000 字只够 8 次，第 9 次必截。根因不是列宽，是**拿标量字段装审计流**。
+     * 现在 note 只存当前理由（一判定一覆盖，长度天然有界），历史全部进
+     * {@code candidate_resolution_log}（{@link CandidateResolutionLog}），那边 TEXT 不截断、只追加。
      */
     static final int NOTE_MAX = 2000;
-
-    /** 往返时给旧 note 留的上限：低于 NOTE_MAX，保证新说明总有位置 */
-    static final int OLD_NOTE_MAX = 1200;
 
     /**
      * 得分归一化（包级静态便于单测）。
@@ -314,6 +316,8 @@ public class ReviewCandidateService {
         String act = action == null ? "" : action.trim().toLowerCase();
         String who = (by == null || by.trim().isEmpty()) ? "unknown" : by.trim();
         String reason = "候选 #" + candidateId + (note == null || note.trim().isEmpty() ? "" : "：" + note.trim());
+        String prev = c.getStatus();
+        String userNote = (note == null || note.trim().isEmpty()) ? null : note.trim();
 
         switch (act) {
             case "duplicate", "重复" -> {
@@ -325,7 +329,8 @@ public class ReviewCandidateService {
                 addFlag(a, "duplicate", reason, who);
                 addFlag(b, "duplicate", reason, who);
                 c.setStatus(ReviewCandidate.DUPLICATE);
-                c.setNote(mergeNote("判为重复（两条互指），未合并正文", c.getNote()));
+                c.setNote(truncate("判为重复（两条互指），未合并正文" + (userNote == null ? "" : "｜" + userNote), NOTE_MAX));
+                logAction(candidateId, CandidateResolutionLog.ACT_DUPLICATE, prev, ReviewCandidate.DUPLICATE, who, userNote);
                 return finish(c, who, "✅ 已判定重复：两条都打了 duplicate 标记并互指，**未合并、未删除**，原文各自保留");
             }
             case "superseded", "supersedes", "取代" -> {
@@ -343,17 +348,24 @@ public class ReviewCandidateService {
                     return new ResolveResult(false, "标取代失败：" + r.message(), c);
                 }
                 c.setStatus(ReviewCandidate.SUPERSEDED);
-                c.setNote(mergeNote("#" + oldId + " 已被 #" + newId + " 取代", c.getNote()));
+                String sTail = "#" + oldId + " 已被 #" + newId + " 取代";
+                c.setNote(truncate(sTail + (userNote == null ? "" : "｜" + userNote), NOTE_MAX));
+                logAction(candidateId, CandidateResolutionLog.ACT_SUPERSEDED, prev, ReviewCandidate.SUPERSEDED, who,
+                        sTail + (userNote == null ? "" : "｜" + userNote));
                 return finish(c, who, "✅ 已标取代：#" + oldId + " → #" + newId + "（只写指针，旧条原文保留）");
             }
             case "distinct", "不同" -> {
                 c.setStatus(ReviewCandidate.DISTINCT);
-                c.setNote(mergeNote(note == null || note.trim().isEmpty() ? "判为不同" : note.trim(), c.getNote()));
+                String dNote = userNote == null ? "判为不同" : userNote;
+                c.setNote(truncate(dNote, NOTE_MAX));
+                logAction(candidateId, CandidateResolutionLog.ACT_DISTINCT, prev, ReviewCandidate.DISTINCT, who, userNote);
                 return finish(c, who, "✅ 已判为不同，未改动任何数据；此后这一对不再重新入队");
             }
             case "skip", "忽略" -> {
                 c.setStatus(ReviewCandidate.SKIPPED);
-                c.setNote(mergeNote(note == null || note.trim().isEmpty() ? "本次忽略" : note.trim(), c.getNote()));
+                String kNote = userNote == null ? "本次忽略" : userNote;
+                c.setNote(truncate(kNote, NOTE_MAX));
+                logAction(candidateId, CandidateResolutionLog.ACT_SKIP, prev, ReviewCandidate.SKIPPED, who, userNote);
                 return finish(c, who, "✅ 已忽略，未改动任何数据；下次相似度再算到它仍会提出来");
             }
             default -> {
@@ -364,33 +376,49 @@ public class ReviewCandidateService {
     }
 
     /**
-     * 合并判定说明：保留「撤回」留下的历史，而不是用新说明把它覆盖掉。
-     *
-     * <p><b>2026-10-28 白虎（reopen 的配套）</b>：{@link #reopen} 把原判定人 / 时间 / 依据
-     * 都拼进了 {@code note}，但原来的 resolve 各分支都是 {@code setNote(新说明)} ——
-     * 于是「撤回 → 重新判定」这个往返一做完，**原判定的全部审计信息就被最后一句话抹掉了**。
-     * 那样 reopen 只算半个可逆：状态回来了，谁判的、凭什么判的却没了。
-     *
-     * <p>规则：旧 note 里带「撤回：」才拼（说明这是往返）；否则维持原行为，不做无意义堆叠。
-     * 旧 note 放在**后面**，且只在超过 {@link #OLD_NOTE_MAX} 时才截断。
-     *
-     * <p><b>2026-10-29 实测修正</b>：原实现上限 500、旧 note 只留 380，注释却写「不被截断」。
-     * 拿 #17 真跑一次往返，原判定说明的结尾（「…本条判 distinct 让系统以后别再问这一对。」）被切掉了 ——
-     * 一次往返就吃掉审计链的尾巴，正是这段代码要防的事。根因是 note 列本身只有 500 字符，
-     * 装不下「新说明 + 完整旧说明」。已将列放宽到 2000 并同步本常量。
+     * 写一行判定流水。**失败不阻断判定动作**（判定本身已经校验过、状态已经算好），
+     * 但必须把错误打到日志里 —— 审计缺失要能被发现，不能静默。
      */
-    static String mergeNote(String newNote, String oldNote) {
-        String n = newNote == null ? "" : newNote.trim();
-        if (oldNote == null || oldNote.isBlank() || !oldNote.contains("撤回：")) {
-            return n.length() > NOTE_MAX ? n.substring(0, NOTE_MAX) : n;
+    private void logAction(Long candidateId, String action, String prevStatus, String newStatus,
+                           String operator, String note) {
+        try {
+            CandidateResolutionLog l = new CandidateResolutionLog();
+            l.setCandidateId(candidateId);
+            l.setAction(action);
+            l.setPrevStatus(prevStatus);
+            l.setNewStatus(newStatus);
+            l.setOperator(operator);
+            l.setNote(note);
+            l.setCreatedAt(LocalDateTime.now());
+            resolutionLogMapper.insert(l);
+        } catch (Exception e) {
+            log.error("candidate_resolution_log 写入失败 candidate={} action={} operator={}",
+                    candidateId, action, operator, e);
         }
-        String o = oldNote.trim().length() > OLD_NOTE_MAX
-                ? oldNote.trim().substring(0, OLD_NOTE_MAX) + "…" : oldNote.trim();
-        int room = NOTE_MAX - o.length() - 8;
-        if (room < 100) room = 100;
-        String head = n.length() > room ? n.substring(0, room) + "…" : n;
-        return (head.isEmpty() ? "" : head + "｜") + "前次：" + o;
     }
+
+    /** 某条候选的全部判定流水（按时间正序，最多 limit 条） */
+    public List<CandidateResolutionLog> history(Long candidateId, int limit) {
+        if (candidateId == null) return List.of();
+        int cap = (limit < 1) ? 50 : Math.min(limit, 500);
+        return resolutionLogMapper.selectList(new QueryWrapper<CandidateResolutionLog>()
+                .eq("candidate_id", candidateId)
+                .orderByAsc("id")
+                .last("LIMIT " + cap));
+    }
+
+    /**
+     * <b>已删除</b>：{@code mergeNote(newNote, oldNote)} —— 把「撤回历史」拼进 note 的那个函数。
+     *
+     * <p>为什么删而不是修（2026-10-29 阁主验收意见）：它的存在前提就是错的 ——
+     * 用一个标量字段（{@code review_candidates.note}）去装一条无限增长的审计流。
+     * 无论把列宽改多大、预算调多少，往返次数够多就会截断；而截断发生时，
+     * 测试如果只跑一次往返，永远测不出来。
+     *
+     * <p>职责已经拆开：note = 当前判定理由（一覆盖，有界）；
+     * 流水 = {@code candidate_resolution_log}（只追加，TEXT 不截断）。
+     * 留着这个函数等于给下一个人留一条「可以再拼回去」的路，所以删掉。
+     */
 
     private ResolveResult finish(ReviewCandidate c, String by, String msg) {
         c.setResolvedBy(by);
@@ -409,7 +437,10 @@ public class ReviewCandidateService {
      *
      * <p>两条设计取舍：
      * <ul>
-     *   <li><b>原判定不擦掉</b>：历史判定人 / 时间 / 说明全部拼进 {@code note}，审计线索不能因为撤回就消失</li>
+     *   <li><b>原判定不擦掉</b>：撤回前把「原判定人 / 时间 / 说明」整段写进
+     *       {@code candidate_resolution_log}（TEXT 不限长），审计线索不能因为撤回就消失。
+     *       2026-10-29 之前是拼进 {@code note}，那是错的：note 是「当前判定理由」，
+     *       不是流水账，拼进去一次往返就多 184 字，列宽再大也会被撑爆。</li>
      *   <li><b>只回退候选状态</b>：判定时顺手打在文档上的 {@code duplicate} 标记、{@code superseded} 指针
      *       <b>不在这里撤销</b>。它们是两个独立动作，混在一起做等于「撤回候选」顺手改正文 ——
      *       回执里必须写明这一点，否则调用方会以为全清了</li>
@@ -430,20 +461,26 @@ public class ReviewCandidateService {
         String prevBy = (c.getResolvedBy() == null || c.getResolvedBy().trim().isEmpty())
                 ? "未记录" : c.getResolvedBy().trim();
 
-        StringBuilder his = new StringBuilder("撤回：").append(prev).append(" → PENDING");
-        if (note != null && !note.trim().isEmpty()) his.append("｜原因：").append(note.trim());
-        if (c.getResolvedBy() != null) his.append("｜原判定人：").append(c.getResolvedBy());
+        // 撤回前把这一版判定完整存档到流水（这里不截断：TEXT 列，审计链要能原样回看）
+        StringBuilder snap = new StringBuilder("撤回前的判定：").append(prev);
+        snap.append("｜判定人：").append(prevBy);
         if (c.getResolvedAt() != null) {
-            his.append("｜原判定时间：").append(c.getResolvedAt().toString().replace('T', ' '));
+            snap.append("｜判定时间：").append(c.getResolvedAt().toString().replace('T', ' '));
         }
-        if (c.getNote() != null && !c.getNote().trim().isEmpty()) his.append("｜原判定说明：").append(c.getNote());
+        if (c.getNote() != null && !c.getNote().trim().isEmpty()) {
+            snap.append("｜判定说明：").append(c.getNote());
+        }
+        if (note != null && !note.trim().isEmpty()) {
+            snap.insert(0, "撤回原因：" + note.trim() + "\n");
+        }
+        logAction(candidateId, CandidateResolutionLog.ACT_REOPEN, prev, ReviewCandidate.PENDING, who, snap.toString());
 
         // ⚠️ MyBatis-Plus 默认忽略 null 字段，setResolvedBy(null) 不会写库 ——
-        //    想让 resolved_by / resolved_at 真的变回 NULL 必须走 UpdateWrapper.set。
+        //    想让 resolved_by / resolved_at / note 真的变回 NULL 必须走 UpdateWrapper.set。
         candidateMapper.update(null, new UpdateWrapper<ReviewCandidate>()
                 .eq("id", candidateId)
                 .set("status", ReviewCandidate.PENDING)
-                .set("note", truncate(his.toString(), NOTE_MAX))
+                .set("note", null)
                 .set("resolved_by", null)
                 .set("resolved_at", null));
 
@@ -453,8 +490,8 @@ public class ReviewCandidateService {
                         + "下一轮 scan 会重新考虑这一对。\n"
                         + "⚠️ 只回退了**候选状态**：当初判定时写在文档上的标记（duplicate 标记 / 取代指针）**没有撤销**。"
                         + "要一并撤销请用 `set_flags` 或 `clear_superseded`。\n"
-                        + "📝 原判定（" + prevBy + "）的说明已并入本候选的 note，没有丢。"
-                        + "本次撤回由 " + who + " 发起。",
+                        + "📝 原判定（" + prevBy + "）的说明已完整存入判定流水，note 字段已清空（它只存当前判定理由）。"
+                        + "本次撤回由 " + who + " 发起，完整历史用 `list_candidate_history(candidateId=" + candidateId + ")` 查。",
                 after);
     }
 
