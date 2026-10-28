@@ -40,6 +40,17 @@ public class ReviewCandidateService {
     private final DocService docService;
 
     /**
+     * note 的字符上限，必须与 {@code review_candidates.note} 列宽一致（2026-10-29 由 500 放宽到 2000）。
+     *
+     * <p>为什么放宽：往返一次（reopen → resolve）要同时装下「新说明 + 完整原判定说明」，
+     * 500 装不下，原说明的结尾会被切掉 —— 而保留原判定正是 reopen 存在的理由。
+     */
+    static final int NOTE_MAX = 2000;
+
+    /** 往返时给旧 note 留的上限：低于 NOTE_MAX，保证新说明总有位置 */
+    static final int OLD_NOTE_MAX = 1200;
+
+    /**
      * 得分归一化（包级静态便于单测）。
      *
      * <p>线上实测发现的坑：调用方传 `score=0` 时库里落 `0.0000`，
@@ -361,16 +372,22 @@ public class ReviewCandidateService {
      * 那样 reopen 只算半个可逆：状态回来了，谁判的、凭什么判的却没了。
      *
      * <p>规则：旧 note 里带「撤回：」才拼（说明这是往返）；否则维持原行为，不做无意义堆叠。
-     * 旧 note 放在**后面且不被截断**，新说明超长时截新说明。
+     * 旧 note 放在**后面**，且只在超过 {@link #OLD_NOTE_MAX} 时才截断。
+     *
+     * <p><b>2026-10-29 实测修正</b>：原实现上限 500、旧 note 只留 380，注释却写「不被截断」。
+     * 拿 #17 真跑一次往返，原判定说明的结尾（「…本条判 distinct 让系统以后别再问这一对。」）被切掉了 ——
+     * 一次往返就吃掉审计链的尾巴，正是这段代码要防的事。根因是 note 列本身只有 500 字符，
+     * 装不下「新说明 + 完整旧说明」。已将列放宽到 2000 并同步本常量。
      */
     static String mergeNote(String newNote, String oldNote) {
         String n = newNote == null ? "" : newNote.trim();
         if (oldNote == null || oldNote.isBlank() || !oldNote.contains("撤回：")) {
-            return n.length() > 500 ? n.substring(0, 500) : n;
+            return n.length() > NOTE_MAX ? n.substring(0, NOTE_MAX) : n;
         }
-        String o = oldNote.trim().length() > 380 ? oldNote.trim().substring(0, 380) + "…" : oldNote.trim();
-        int room = 500 - o.length() - 8;
-        if (room < 20) room = 20;
+        String o = oldNote.trim().length() > OLD_NOTE_MAX
+                ? oldNote.trim().substring(0, OLD_NOTE_MAX) + "…" : oldNote.trim();
+        int room = NOTE_MAX - o.length() - 8;
+        if (room < 100) room = 100;
         String head = n.length() > room ? n.substring(0, room) + "…" : n;
         return (head.isEmpty() ? "" : head + "｜") + "前次：" + o;
     }
@@ -408,6 +425,10 @@ public class ReviewCandidateService {
         }
         String prev = c.getStatus();
         String who = (by == null || by.trim().isEmpty()) ? "unknown" : by.trim();
+        // 原判定人要在 update 清空之前捕获：回执里那句「原判定（X）」说的是**当初判的人**，
+        // 不是这次撤回的人。2026-10-29 实测 #17（原判定人=阁主）曾被写成「原判定（烛龙）」，属误导。
+        String prevBy = (c.getResolvedBy() == null || c.getResolvedBy().trim().isEmpty())
+                ? "未记录" : c.getResolvedBy().trim();
 
         StringBuilder his = new StringBuilder("撤回：").append(prev).append(" → PENDING");
         if (note != null && !note.trim().isEmpty()) his.append("｜原因：").append(note.trim());
@@ -422,7 +443,7 @@ public class ReviewCandidateService {
         candidateMapper.update(null, new UpdateWrapper<ReviewCandidate>()
                 .eq("id", candidateId)
                 .set("status", ReviewCandidate.PENDING)
-                .set("note", truncate(his.toString(), 500))
+                .set("note", truncate(his.toString(), NOTE_MAX))
                 .set("resolved_by", null)
                 .set("resolved_at", null));
 
@@ -432,7 +453,8 @@ public class ReviewCandidateService {
                         + "下一轮 scan 会重新考虑这一对。\n"
                         + "⚠️ 只回退了**候选状态**：当初判定时写在文档上的标记（duplicate 标记 / 取代指针）**没有撤销**。"
                         + "要一并撤销请用 `set_flags` 或 `clear_superseded`。\n"
-                        + "📝 原判定（" + who + "）的说明已并入本候选的 note，没有丢。",
+                        + "📝 原判定（" + prevBy + "）的说明已并入本候选的 note，没有丢。"
+                        + "本次撤回由 " + who + " 发起。",
                 after);
     }
 
