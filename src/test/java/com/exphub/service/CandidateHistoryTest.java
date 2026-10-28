@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -201,5 +202,43 @@ class CandidateHistoryTest {
                 "当前说明应被截到上限：" + row.getNote().length());
         // 历史里的原说明仍然完整
         assertTrue(logs.get(0).getNote().contains(ORIGINAL_NOTE), "历史不能被当前说明的截断波及");
+    }
+
+    /**
+     * 列宽边界（2026-10-29 阁主指出的漏测）。
+     *
+     * <p>线上 {@code sql_mode} 含 {@code STRICT_TRANS_TABLES}，超长不是静默截断而是
+     * {@code Data too long for column} 报错 —— 那一刻候选状态没写、流水已写，两边不一致。
+     * 所以必须证明**应用层**在写库之前就截到 2000 以内，而不是指望 DB 或某些宽松环境。
+     */
+    @Test
+    @DisplayName("列宽边界：2000 原样保留、2001 截到 2000、代理对不被切断")
+    void noteBoundaryAtColumnWidth() {
+        // 1) 恰好等于列宽：不截，一字不少
+        service.reopen(17L, "边界测试", "烛龙");
+        service.resolve(17L, "distinct", "中".repeat(2000), "烛龙");
+        assertEquals(2000, row.getNote().length(), "恰好 2000 字符应原样保留");
+
+        // 2) 超一字符：截到 2000
+        service.reopen(17L, "边界测试", "烛龙");
+        service.resolve(17L, "distinct", "中".repeat(2001), "烛龙");
+        assertEquals(2000, row.getNote().length(), "2001 字符应截到 2000");
+
+        // 3) 代理对正好压在边界上：1999 个 a + 一个 emoji（占 2 个 char）= 2001
+        service.reopen(17L, "边界测试", "烛龙");
+        String emojiTail = "a".repeat(1999) + "😀";
+        assertEquals(2001, emojiTail.length(), "样本长度前提");
+        service.resolve(17L, "distinct", emojiTail, "烛龙");
+        String got = row.getNote();
+        assertTrue(got.length() <= 2000, "不能超列宽：" + got.length());
+        assertFalse(Character.isHighSurrogate(got.charAt(got.length() - 1)),
+                "不能以半个 emoji（high surrogate）结尾 —— MySQL 会报 Incorrect string value");
+        for (int i = 0; i < got.length(); i++) {
+            char ch = got.charAt(i);
+            if (Character.isHighSurrogate(ch)) {
+                assertTrue(i + 1 < got.length() && Character.isLowSurrogate(got.charAt(i + 1)),
+                        "第 " + i + " 位是孤立 high surrogate，会写不进 utf8mb4");
+            }
+        }
     }
 }

@@ -3070,13 +3070,16 @@ public class ExpHubTools {
         return sb.toString();
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。")
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。⚠️ ③层（进度/日志类）**默认不入队**：它们是同一件事的分阶段记录，按设计不该判重，只打分、只展示；要它们入队传 enqueueProgress=true。")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。默认 0.50（0.45 更宽松 / 0.55 更严）。区间 [0.30,0.95]，**超区间直接拒绝并回显收到的值**", required = false) Double threshold,
             @ToolParam(description = "可选。最多返回/入队几条，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。单篇最多几条候选，默认 2（防模板族刷屏）。⚠️ ①层（疑似字面重复）豁免，②层及以下生效", required = false) Integer maxPerDoc,
             @ToolParam(description = "可选。进度/日志层最多展示几条，默认 5，传 0=不限", required = false) Integer progressSample,
+            @ToolParam(description = "可选。传 true 才让③层（进度/日志类）一起入队。"
+                    + "③层是同一件事的分阶段记录，按设计不该判重 —— 入队只会每轮多出几条必须用 distinct 清掉的候选，"
+                    + "而 distinct 是永久封口的不可逆动作。不传时③层只打分、只展示、不落队列", required = false) Boolean enqueueProgress,
             @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
             @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
@@ -3085,9 +3088,10 @@ public class ExpHubTools {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
             boolean dry = Boolean.TRUE.equals(dryRun);
+            boolean enqProgress = Boolean.TRUE.equals(enqueueProgress);
             String operator = resolveAuthor(updatedName, assistant);
             SimilarityService.ScanResult r = similarityService.scan(projectId, threshold, limit, maxPerDoc,
-                    progressSample, dry, operator);
+                    progressSample, dry, operator, enqProgress);
             if (!r.ok()) {
                 return "❌ " + r.summary();
             }
@@ -3144,8 +3148,23 @@ public class ExpHubTools {
                 sb.append("\n**按性质分层**（统计的是**全部超阈值对**，与下面展示几条无关）：")
                   .append("疑似字面重复 ").append(dup).append(" 对")
                   .append("｜同话题演进链 ").append(ser).append(" 对");
-                if (prog > 0) sb.append("｜进度/日志记录 ").append(prog).append(" 对（一般不用判）");
+                if (prog > 0) {
+                    sb.append("｜进度/日志记录 ").append(prog).append(" 对（一般不用判）");
+                }
                 if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
+
+                // 2026-10-29 越哥 P1-4：③层默认不入队，必须**单列一行**说清楚，
+                // 且 N 取全量（r.tierStats），不受 limit 影响 —— 否则改 limit 会让人以为③层入队数变了。
+                if (prog > 0) {
+                    sb.append("\n**③层进度类").append(enqProgress ? "已入队" : "未入队").append("**: ")
+                      .append(prog).append(" 对（全库统计，**不受 limit 影响**）");
+                    if (enqProgress) {
+                        sb.append(" —— 本次按 `enqueueProgress=true` 照旧入队，与旧行为一致\n");
+                    } else {
+                        sb.append(" —— ③层是同一件事的分阶段记录，按设计不该判重；")
+                          .append("默认只打分、只展示，**不落待判队列**（要恢复旧行为传 `enqueueProgress=true`）\n");
+                    }
+                }
 
                 // 本次只展示前 N 条：说清「分层统计」和「展示清单」是两个口径，
                 // 否则改 limit 会让人以为分层结论变了

@@ -1437,10 +1437,18 @@ public class DocService {
     }
 
     /** 列宽保护：delete_reason 是 varchar(500)，超长在 STRICT 模式下会直接抛错 */
+    /**
+     * 截到列宽以内。线上 sql_mode 含 STRICT_TRANS_TABLES，超长是报错不是静默截断，
+     * 所以必须在应用层保证长度；同时别把代理对（emoji）切成半个，否则 utf8mb4 写入报
+     * {@code Incorrect string value}。2026-10-29 与 ReviewCandidateService.truncate 同步修正。
+     */
     private static String truncateForColumn(String s, int max) {
         if (s == null) return null;
         String t = s.trim();
-        return t.length() > max ? t.substring(0, max) : t;
+        if (t.length() <= max) return t;
+        int end = max;
+        if (end > 0 && Character.isHighSurrogate(t.charAt(end - 1))) end--;
+        return t.substring(0, end);
     }
 
     /**

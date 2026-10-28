@@ -520,8 +520,22 @@ public class ReviewCandidateService {
         docService.setFlags(doc.getId(), flags, truncate(merged, 500), by);
     }
 
+    /**
+     * 应用层显式截断 —— **不指望数据库**（2026-10-29 阁主指出的漏测）。
+     *
+     * <p>线上 {@code sql_mode} 含 {@code STRICT_TRANS_TABLES}：超长不是静默截断，而是整条 update 报
+     * {@code Data too long for column}。那一刻候选状态没写进去、判定流水却已经写了 → 两边不一致。
+     * 所以「应用层必须自己截到列宽以内」是正确性要求，不是优化。
+     *
+     * <p>另一个坑：{@code substring(0, max)} 会**切断代理对**（emoji 等增补平面字符占 2 个 char），
+     * 留下半个 high surrogate，写 utf8mb4 时同样报 {@code Incorrect string value}。
+     * 这里退一格保证不切半个字符。
+     */
     private String truncate(String s, int max) {
         if (s == null) return null;
-        return s.length() > max ? s.substring(0, max) : s;
+        if (s.length() <= max) return s;
+        int end = max;
+        if (end > 0 && Character.isHighSurrogate(s.charAt(end - 1))) end--;
+        return s.substring(0, end);
     }
 }

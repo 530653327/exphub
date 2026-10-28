@@ -126,6 +126,10 @@ fi
 # 2.7 安装/更新仓库外部署入口（2026-10-29）
 # 入口不能放在仓库里，否则 git reset --hard 会把它换成新 inode，本次部署仍读旧逻辑。
 # 这里每次从仓库模板覆盖安装一次，保证运维侧用的永远是仓库里的版本，不用手工同步。
+#
+# ⚠️ 自举风险（阁主指出）：入口不在版本控制里，靠本脚本分发 —— 入口坏了只能靠本脚本修，
+#    而本脚本又要靠入口调到。所以入口必须**锁死在 20 行以内、只做 git 同步 + 调内层**，
+#    并且每次都把它的 md5 记进 deploy.log，被改动至少看得见。
 if [ -f deploy/exphub-run.sh ]; then
     mkdir -p /opt/deploy
     if cmp -s deploy/exphub-run.sh /opt/deploy/exphub-run.sh; then
@@ -134,6 +138,16 @@ if [ -f deploy/exphub-run.sh ]; then
         install -m 755 deploy/exphub-run.sh /opt/deploy/exphub-run.sh
         echo "  ✅ 仓库外入口已安装/更新（/opt/deploy/exphub-run.sh）"
     fi
+    ENTRY_MD5=$(md5sum /opt/deploy/exphub-run.sh | cut -d' ' -f1)
+    INNER_MD5=$(md5sum deploy.sh | cut -d' ' -f1)
+    ENTRY_LINES=$(wc -l < /opt/deploy/exphub-run.sh | tr -d ' ')
+    echo "     入口 md5=${ENTRY_MD5}（${ENTRY_LINES} 行）｜内层 deploy.sh md5=${INNER_MD5}"
+    if [ "$ENTRY_LINES" -gt 20 ]; then
+        echo "  ⚠️  入口脚本 ${ENTRY_LINES} 行，超过约定上限 20 行 —— 它不在版本控制内，越复杂越难救"
+    fi
+    printf '%s entry=%s(%s行) deploy=%s commit=%s\n' \
+        "$(date '+%F %T')" "$ENTRY_MD5" "$ENTRY_LINES" "$INNER_MD5" "$(git log -1 --format=%h)" \
+        >> /usr/local/exphub/deploy.log
 fi
 
 # 3. 重启应用（systemd 托管）

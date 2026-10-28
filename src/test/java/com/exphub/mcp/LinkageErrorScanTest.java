@@ -43,10 +43,10 @@ class LinkageErrorScanTest {
     @Test
     @DisplayName("LinkageError 不被吞：回执带引导语与类名，且计入失败调用")
     void linkageErrorIsReportedNotSwallowed() {
-        when(similarityService.scan(any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(similarityService.scan(any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
                 .thenThrow(new NoClassDefFoundError("com/exphub/service/SimilarityScorer$Shape"));
 
-        String out = tools.scanSimilarDocs(null, null, 5, null, null, true, null);
+        String out = tools.scanSimilarDocs(null, null, 5, null, null, null, true, null);
 
         assertTrue(out.contains("类加载/链接错误"),
                 "回执必须点明是类加载/链接错误，否则读的人会当成参数问题继续调参：" + out);
@@ -62,10 +62,10 @@ class LinkageErrorScanTest {
     @Test
     @DisplayName("ExceptionInInitializerError 同样进 LinkageError 分支（它是类初始化失败的信号）")
     void initializerErrorAlsoCovered() {
-        when(similarityService.scan(any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(similarityService.scan(any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
                 .thenThrow(new ExceptionInInitializerError(new IllegalStateException("boom")));
 
-        String out = tools.scanSimilarDocs(null, null, 5, null, null, true, null);
+        String out = tools.scanSimilarDocs(null, null, 5, null, null, null, true, null);
 
         assertTrue(out.contains("类加载/链接错误"), out);
         verify(callLogService).incrementFailCalls();
@@ -74,10 +74,10 @@ class LinkageErrorScanTest {
     @Test
     @DisplayName("普通 Exception 仍走原分支，不被 LinkageError 分支抢走")
     void plainExceptionKeepsOldBranch() {
-        when(similarityService.scan(any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(similarityService.scan(any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
                 .thenThrow(new IllegalStateException("db down"));
 
-        String out = tools.scanSimilarDocs(null, null, 5, null, null, true, null);
+        String out = tools.scanSimilarDocs(null, null, 5, null, null, null, true, null);
 
         assertTrue(out.startsWith("扫描失败: java.lang.IllegalStateException"), out);
         assertFalse(out.contains("类加载/链接错误"), out);

@@ -294,7 +294,7 @@ public class SimilarityService {
      */
     public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
                            boolean dryRun, String operator) {
-        return scan(projectId, threshold, limit, maxPerDoc, null, dryRun, operator);
+        return scan(projectId, threshold, limit, maxPerDoc, null, dryRun, operator, false);
     }
 
     /**
@@ -303,6 +303,22 @@ public class SimilarityService {
      */
     public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
                            Integer progressSample, boolean dryRun, String operator) {
+        return scan(projectId, threshold, limit, maxPerDoc, progressSample, dryRun, operator, false);
+    }
+
+    /**
+     * ③层（进度/日志类）**默认不入队**（2026-10-29 越哥 P1-4）。
+     *
+     * <p>为什么：③层按设计「根本不该判重」—— 它们是同一件事的分阶段记录，判重没有意义。
+     * 但它们原来照样被 enqueue，于是每轮扫描都往待判队列里塞几条进度类，人只能逐条判
+     * {@code distinct} 清掉；而 {@code distinct} 是整条链路唯一不可逆的动作（永久不再入队）。
+     * <b>每轮白干五次，还顺手把分阶段记录永久封口。</b>
+     *
+     * <p>所以默认 {@code enqueueProgress=false}：③层**照常打分、照常展示**（人还能看到这一层有什么），
+     * 只是不落队列。要恢复旧行为传 {@code true}。
+     */
+    public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
+                           Integer progressSample, boolean dryRun, String operator, boolean enqueueProgress) {
         // ⚠️ 2026-10-25 阁主验收教训：原来这里是 `if (th < 0.30) th = 0.30` 静默兜底。
         // 上游把 0.5 截成整数 0 之后，静默兜底把它变成 0.30 —— 用户看到「阈值: 0.30」，
         // 只会得出「阈值参数根本没生效」的结论，**永远查不到是链路丢了小数**。
@@ -444,12 +460,16 @@ public class SimilarityService {
         int dropped = 0;
         for (TierDetail d : sel.detail().values()) dropped += d.droppedPerDoc() + d.droppedByLimit();
 
-        int enqueued = 0, pending = 0, resolved = 0;
+        int enqueued = 0, pending = 0, resolved = 0, progressNotEnqueued = 0;
         List<Row> rowsOut = new ArrayList<>();
         for (Row r : selected) {
             String state;
             if (dryRun) {
                 state = describePrev(existing.get(ReviewCandidateService.pairKey(r.docA(), r.docB())));
+            } else if (!shouldEnqueue(r, enqueueProgress)) {
+                // ③层默认不落队列：照常展示（人在清单里能看到），但不往待判队列里塞
+                progressNotEnqueued++;
+                state = "③层进度类：未入队（enqueueProgress=" + enqueueProgress + "，只统计）";
             } else {
                 try {
                     ReviewCandidateService.EnqueueResult er = candidateService.enqueue(r.docA(), r.docB(),
@@ -526,6 +546,13 @@ public class SimilarityService {
         }
         long indexAgeSec = (oldestBuild == null) ? 0
                 : Math.max(0L, java.time.Duration.between(oldestBuild, LocalDateTime.now()).getSeconds());
+        // P1-4：③层默认不入队。把「这次跳过了几条」写进服务端日志 ——
+        // 回执里的数取自全量 tierStats，这里记的是实际被拦下的（= 展示出来的③层条数），
+        // 两个数不一样很正常（其余③层压根没被选中），但排查时都需要。
+        if (!dryRun && progressNotEnqueued > 0) {
+            log.info("SimilarityService.scan: ③层未入队 {} 对（enqueueProgress=false），operator={}",
+                    progressNotEnqueued, operator);
+        }
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
                 above.size(), dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
                 rowsOut, tierStats, sel.detail(), notes,
@@ -618,6 +645,17 @@ public class SimilarityService {
      */
     static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc) {
         return select(sortedAbove, maxRows, perDoc, DEFAULT_PROGRESS_SAMPLE);
+    }
+
+    /**
+     * 这一行该不该入队（2026-10-29 越哥 P1-4）。
+     *
+     * <p>① ②层永远入队（行为零变化）；③层（{@link SimilarityScorer.Kind#PROGRESS}）默认不入队。
+     * 抽成纯函数，是为了能单测「①②层行为零变化」这条验收标准 —— 它不该靠人工回放去证明。
+     */
+    static boolean shouldEnqueue(Row r, boolean enqueueProgress) {
+        if (enqueueProgress) return true;
+        return r == null || r.kind() != SimilarityScorer.Kind.PROGRESS;
     }
 
     static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc, int progressSample) {
