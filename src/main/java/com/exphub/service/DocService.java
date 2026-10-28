@@ -54,6 +54,7 @@ public class DocService {
 
     @Transactional
     public Doc create(Doc doc) {
+        clampColumns(doc);
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         log.info("DocService.create: assistant from ThreadLocal={}, title={}, tags={}, aliases={}", 
             assistant != null ? assistant.getAssistantId() : "NULL",
@@ -726,6 +727,7 @@ public class DocService {
      */
     @Transactional
     public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride) {
+        clampColumns(newDoc);
         Doc old = docMapper.selectById(id);
         if (old == null) {
             return null;
@@ -1437,6 +1439,31 @@ public class DocService {
     }
 
     /** 列宽保护：delete_reason 是 varchar(500)，超长在 STRICT 模式下会直接抛错 */
+    /**
+     * 把「窄列字段」统一截到列宽以内 —— <b>应用层负责，不指望数据库</b>。
+     *
+     * <p><b>2026-10-29 实测触发</b>：给 #714 写一条 500+ 字的 summary，`update_experience` 直接报
+     * {@code Data truncation: Data too long for column 'summary'} —— 因为线上 sql_mode 含
+     * {@code STRICT_TRANS_TABLES}，超长不是静默截断而是整条 update 失败。
+     * 那次是「更新摘要」本身失败，用户看到的是「更新失败」，而真正原因是摘要多了十几个字。
+     *
+     * <p>修法选择在 {@code create} / {@code update} 的入口集中处理：调用方（MCP 工具、后台页面、
+     * 项目服务）都能省掉自己截，也不会出现「某个入口忘了截」的不一致。
+     *
+     * <p>各处列宽取自 {@code information_schema}（2026-10-29 核对）：
+     * title 200｜summary 500｜tags 500｜aliases 500｜category 50｜chapter_title 200｜author_name 100。
+     */
+    static void clampColumns(Doc doc) {
+        if (doc == null) return;
+        doc.setTitle(truncateForColumn(doc.getTitle(), 200));
+        doc.setSummary(truncateForColumn(doc.getSummary(), 500));
+        doc.setTags(truncateForColumn(doc.getTags(), 500));
+        doc.setAliases(truncateForColumn(doc.getAliases(), 500));
+        doc.setCategory(truncateForColumn(doc.getCategory(), 50));
+        doc.setChapterTitle(truncateForColumn(doc.getChapterTitle(), 200));
+        doc.setAuthorName(truncateForColumn(doc.getAuthorName(), 100));
+    }
+
     /**
      * 截到列宽以内。线上 sql_mode 含 STRICT_TRANS_TABLES，超长是报错不是静默截断，
      * 所以必须在应用层保证长度；同时别把代理对（emoji）切成半个，否则 utf8mb4 写入报
