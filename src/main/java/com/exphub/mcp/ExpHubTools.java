@@ -773,12 +773,12 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局，项目经验不会出现。0 结果会给出相近经验与排查建议。")
+    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局：项目经验不会进排序，仅在末尾提示「项目内还有 N 条」的标题+摘要。0 结果会给出相近经验与排查建议。")
     public String searchExperience(
             @ToolParam(description = "场景描述，空格分隔多个关键词") String query,
             @ToolParam(description = "可选。模板类型过滤：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal", required = false) String templateType,
             @ToolParam(description = "可选。默认只搜 ACTIVE；要已完成/过期传 COMPLETED,DEPRECATED,BROKEN，ALL=全部", required = false) String includeStatus,
-            @ToolParam(description = "可选。项目名或别名。不传只搜全局（项目经验不出现）", required = false) String projectName,
+            @ToolParam(description = "可选。项目名或别名。不传只搜全局（项目命中仅在末尾提示标题+摘要）", required = false) String projectName,
             @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。偏移量，默认 0（翻页照抄上页提示的 offset 值）", required = false) Integer offset,
             @ToolParam(description = "可选。true=精简（只 ID/标题/类型/摘要）；false=完整", required = false) Boolean brief) {
@@ -841,35 +841,32 @@ public class ExpHubTools {
             long matchedTotal = result.getTotal();
             java.util.List<Doc> docs = new ArrayList<>(result.getRecords());
 
-            // E5：全局搜索时若查询词里含项目名/别名，自动 OR 召回该项目的专属经验。
-            // 背景：项目经验默认隔离不进全局索引，导致搜「拆解宝」前 10 条全是「回金算」的内容，
-            // 而拆解宝自己 24 条经验一条都召回不到 —— 数据在库里，只是没进索引。
-            //
-            // ⚠️ 2026-10-24 忆阁复测：第一版把项目结果 append 到末尾，等于「召回了但排在后面」，
-            // 实际使用时仍要手填 projectName。这次改为**项目域结果前置并分组显示**：
-            // 查询词里明确写了项目名，说明用户就是在找该项目的东西，它就应该是第一等公民。
+            // L0-1b（2026-10-30，越哥拍板「B 隔离＋末尾提示」）：全局结果**只排全局**。
+            // 历史包袱：E5 时期（2026-10-24）为了让「查询词里写了项目名」的项目经验能被看到，
+            // 把项目域命中**前置混排**进主列表 —— 代价是全局排序被项目文档污染，
+            // 并且和 project_id IS NULL 的硬隔离自相矛盾（隔离了又混进来）。
+            // 现在的分工：主排序逐字不动、一条项目文档都不掺；项目侧命中单独算一份，
+            // 追加在**全部全局结果之后**（见 renderProjectSegment），只给标题+摘要。
             Project autoProject = null;
-            java.util.List<Doc> projDocsHit = java.util.List.of();
+            long projectTotal = 0;
+            java.util.List<Doc> projectTop = java.util.List.of();
             if (projectId == null) {
                 autoProject = detectProjectInQuery(query);
                 if (autoProject != null) {
                     try {
-                        var projResult = docService.search(query, templateType, statusFilter, autoProject.getId(), 1, poolSize);
-                        Set<Long> projIds = new LinkedHashSet<>();
-                        for (Doc d : projResult.getRecords()) projIds.add(d.getId());
-                        if (!projIds.isEmpty()) {
-                            // 项目域命中的排前面，全局里与项目重复的去掉
-                            projDocsHit = new ArrayList<>(projResult.getRecords());
-                            java.util.List<Doc> rest = new ArrayList<>();
-                            for (Doc d : docs) {
-                                if (!projIds.contains(d.getId())) rest.add(d);
-                            }
-                            java.util.List<Doc> merged = new ArrayList<>(projDocsHit);
-                            merged.addAll(rest);
-                            docs = merged;
+                        // 固定取 5 条：项目段不参与主排序、也不吃全局分页的 offset/limit
+                        var projResult = docService.search(query, templateType, statusFilter,
+                                autoProject.getId(), 1, PROJECT_SEGMENT_MAX);
+                        // total 语义不变：这里拿到的是**项目侧**命中总数，只用于提示里的 N，
+                        // 绝不并进回执顶部的「匹配 N 条」（那是全局命中总数）。
+                        projectTotal = projResult.getTotal();
+                        projectTop = projResult.getRecords() == null
+                                ? java.util.List.of() : new ArrayList<>(projResult.getRecords());
+                        if (projectTop.size() > PROJECT_SEGMENT_MAX) {
+                            projectTop = new ArrayList<>(projectTop.subList(0, PROJECT_SEGMENT_MAX));
                         }
                     } catch (Exception e) {
-                        log.debug("searchExperience: 项目域补充召回失败 project={}, {}", autoProject.getName(), e.getMessage());
+                        log.debug("searchExperience: 项目侧命中探测失败 project={}, {}", autoProject.getName(), e.getMessage());
                     }
                 }
             }
@@ -907,11 +904,14 @@ public class ExpHubTools {
                 sb.append("2. 换用同义词/英文缩写（如：部署 ↔ 上线、连不上 ↔ 连接失败/超时）\n");
                 sb.append("3. includeStatus=COMPLETED,DEPRECATED,BROKEN 可查历史或已归档经验\n");
                 sb.append("4. 确认确实没有可用经验后，再 create_experience 沉淀\n");
+                // 全局 0 条、项目里有 → 这正是「搜不到就以为没记过、于是重复记一遍」的场景，
+                // 提示比什么都重要（L0-1b）。
+                sb.append(renderProjectSegment(detected, projectTotal, projectTop));
                 return sb.toString();
             }
 
-            // M18-b：内存分页。项目域合并后的顺序已固定为「项目内命中在前 + 全局在后」，
-            // 所以直接对合并结果切片即可，翻页不会串位。
+            // M18-b：内存分页。docs 现在只含全局命中（项目段已移出主列表），
+            // 切片只切全局，翻页不会串位。
             int poolTotal = docs.size();
             int[] bounds = searchPageBounds(poolTotal, effOffset, effLimit);
             int fromIdx = bounds[0], toIdx = bounds[1];
@@ -936,27 +936,7 @@ public class ExpHubTools {
             // 埋在每条后面会被当成噪音，读者已经在按过期结论规划了。
             sb.append(staleVerifyLine(pageDocs, java.time.LocalDate.now()));
 
-            if (projDocsHit.isEmpty()) {
-                sb.append(renderDocs(pageDocs, briefMode));
-            } else {
-                // 分组显示：项目内命中在前、全局相关在后，AI 一眼能看出哪些属于该项目
-                Set<Long> projIdsInPage = new LinkedHashSet<>();
-                for (Doc d : projDocsHit) projIdsInPage.add(d.getId());
-                java.util.List<Doc> pageProj = new ArrayList<>();
-                java.util.List<Doc> pageRest = new ArrayList<>();
-                for (Doc d : pageDocs) {
-                    if (projIdsInPage.contains(d.getId())) pageProj.add(d); else pageRest.add(d);
-                }
-                if (!pageProj.isEmpty()) {
-                    sb.append("【项目「").append(detected.getName()).append("」内命中 ")
-                      .append(pageProj.size()).append(" 条】\n\n");
-                    sb.append(renderDocs(pageProj, briefMode));
-                }
-                if (!pageRest.isEmpty()) {
-                    sb.append("\n【全局相关 ").append(pageRest.size()).append(" 条】\n\n");
-                    sb.append(renderDocs(pageRest, briefMode));
-                }
-            }
+            sb.append(renderDocs(pageDocs, briefMode));
 
             // 翻页提示：不提示的话调用方以为「只有这些」，这正是原来隐式 25 条上限的根源
             sb.append("\n---\n");
@@ -968,11 +948,8 @@ public class ExpHubTools {
                 sb.append("📄 以上为全部结果（本次返回第 ").append(fromIdx + 1).append("-").append(toIdx)
                   .append(" 条，共 ").append(effTotal).append(" 条）。\n");
             }
-            if (detected != null) {
-                sb.append("---\n💡 查询词含项目「").append(detected.getName()).append("」（")
-                  .append(detected.getProjectCode()).append("），项目内结果已优先展示。")
-                  .append("只想看项目内资料时传 projectName=").append(detected.getProjectCode()).append("。\n");
-            }
+            // 项目侧命中：全部全局结果之后单独一段（末尾提示），不吃 offset/limit，只给标题+摘要。
+            sb.append(renderProjectSegment(detected, projectTotal, projectTop));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.searchExperience: FAILED", e);
@@ -986,6 +963,42 @@ public class ExpHubTools {
      * 列表里本该是「扫一眼挑目标」，压到 60 字足够判断相关性。
      */
     private static final int SUMMARY_PREVIEW_CHARS = 60;
+
+    /** 全局搜索末尾「项目内还有 N 条」最多列几条（L0-1b）。只列标题+摘要，不列正文。 */
+    static final int PROJECT_SEGMENT_MAX = 5;
+
+    /**
+     * 全局搜索末尾的项目侧命中段（L0-1b，2026-10-30）。
+     *
+     * <p>为什么单独一段、而不是并进主列表：主排序只能是全局命中（{@code project_id IS NULL}），
+     * 一旦把项目文档掺进去，tag/score 口径就混了，用户看到的「相关度第一」其实是两个域拼出来的。
+     * 所以项目命中降级成**末尾提示**：告诉你「东西在那儿」，要看正文自己带 projectName 进去。
+     *
+     * <p>口径（写死，别顺手改）：
+     * <ul>
+     *   <li>N = 项目侧命中<b>总数</b>（不是这里列出来的 5 条）；</li>
+     *   <li>这段不受全局 offset/limit 影响 —— 翻到第几页都照常出现，否则翻页的人永远看不到；</li>
+     *   <li>每条只给标题 + 摘要（60 字），<b>不出正文</b>：不带 projectName 就拿不到项目正文，
+     *       隔离边界不能靠这一行提示破掉；</li>
+     *   <li>N=0 或没识别到项目 → 返回空串，回执与「没有项目命中」时逐字一致。</li>
+     * </ul>
+     */
+    static String renderProjectSegment(Project project, long projectTotal, java.util.List<Doc> top) {
+        if (project == null || projectTotal <= 0 || top == null || top.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("\n---\n");
+        sb.append("【项目「").append(project.getName()).append("」内还有 ").append(projectTotal)
+          .append(" 条，仅看项目请传 projectName】\n\n");
+        int i = 1;
+        for (Doc d : top) {
+            sb.append(i++).append(". 【ID:").append(d.getId()).append("】").append(d.getTitle())
+              .append(" —— ").append(previewSummary(d.getSummary())).append("\n");
+        }
+        sb.append("\n💡 以上仅标题+摘要，不返正文；要看内容请带 projectName=")
+          .append(project.getProjectCode()).append(" 重搜该项目。\n");
+        return sb.toString();
+    }
 
     /** 列表类工具的默认/最大条数（E6）：默认 10 条省 token，需要全量走 offset 翻页 */
     private static final int LIST_DEFAULT_SIZE = 10;

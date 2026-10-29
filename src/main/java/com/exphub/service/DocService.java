@@ -163,13 +163,18 @@ public class DocService {
                 log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
                 return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
             }
-            List<Doc> strictDocs = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, size);
-            // 严格命中能填满一页、且存在整词覆盖时，直接采用（精确查询走快路径）；
+            // 覆盖度探针固定看前 STRICT_DIRECT_MIN_HITS 条（与调用方 size 解耦），
+            // 展示仍按 size 切 —— 判定条件和返回条数是两件事，别混用。
+            int probeSize = Math.max(size, STRICT_DIRECT_MIN_HITS);
+            List<Doc> strictProbe = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, probeSize);
+            // 严格命中能填满门槛、且存在整词覆盖时，直接采用（精确查询走快路径）；
             // 若只命中零星几条（常见于“某文档恰好引用了整句 query”），继续走重排补全，
             // 避免用户只看到 1 条结果。
-            if (hasExactCoverage(strictDocs, terms) && strictTotal >= size) {
+            int coverageWindow = Math.min(STRICT_DIRECT_MIN_HITS, strictProbe.size());
+            if (hasExactCoverage(strictProbe.subList(0, coverageWindow), terms) && strictTotal >= STRICT_DIRECT_MIN_HITS) {
                 log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
-                return buildResultFromRecords(kw, strictDocs, strictTotal, page, size);
+                List<Doc> strictDocs = probeSize > size ? strictProbe.subList(0, Math.min(size, strictProbe.size())) : strictProbe;
+                return buildResultFromRecords(kw, new ArrayList<>(strictDocs), strictTotal, page, size);
             }
             log.info("search tier=strict-weak kw='{}' projectId={} hits={} → 放宽重排", kw, projectId, strictTotal);
         }
@@ -370,6 +375,19 @@ public class DocService {
 
     /** 候选池上限：先宽松召回，再在内存里按覆盖率/字段权重重排 */
     private static final int CANDIDATE_LIMIT = 200;
+
+    /**
+     * 严格命中「直接采用」的门槛（2026-10-30 L0-2 修数字漂移）。
+     *
+     * <p>这里原来写的是 {@code strictTotal >= size} —— size 是调用方传的 limit。
+     * 后果：同一个查询 {@code limit=5} 时够格走严格档、{@code limit=20} 时不够格掉到放宽档，
+     * 两档各自报自己的 total（严格档 = SQL count，放宽档 = 重排后的可信条数），
+     * 于是「同一查询两个总数」。tier 判定属于查询本身，不该由调用方一页要几条来决定。
+     *
+     * <p>固定成 20（= 历史默认页大小），默认 limit=20 的调用输出逐字不变；
+     * 低于 20 的 limit 不再改变档位，只改变切多少条。
+     */
+    static final int STRICT_DIRECT_MIN_HITS = 20;
     /** 查询词上限，避免长句导致召回/评分退化 */
     private static final int MAX_QUERY_TOKENS = 10;
 
