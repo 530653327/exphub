@@ -2314,7 +2314,7 @@ public class ExpHubTools {
     }
 
     /** 层名短称（一行清单用；组头那句长描述不适合挤进表格） */
-    static String tierShortName(SimilarityScorer.Kind k) {
+    public static String tierShortName(SimilarityScorer.Kind k) {
         if (k == null) return "其他";
         return switch (k) {
             case DUPLICATE -> "① 疑似字面重复";
@@ -2338,7 +2338,7 @@ public class ExpHubTools {
      * <p>所以这里遍历 {@code tierDetail} 而不是展示行，与「展示了几条」完全解耦；
      * 且**加总必须等于「超阈值 − 展示」**，对不上就把差额印出来 —— 不替读者凑数。
      */
-    static String tierLimitLine(String layerName, SimilarityService.TierDetail d, int maxPerDoc) {
+    public static String tierLimitLine(String layerName, SimilarityService.TierDetail d, int maxPerDoc) {
         if (d == null) return "";
         int shown = d.shown();
         int accounted = d.droppedJudged() + d.droppedPerDoc() + d.droppedBySample()
