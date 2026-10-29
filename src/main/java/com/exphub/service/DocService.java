@@ -788,6 +788,10 @@ public class DocService {
                 }
             }
             if (any) {
+                // 主路径 updateById 已经把 updated_at 写成确定值（fill=now，或调用方显式传的旧值）。
+                // 这条补充 UPDATE 若不写回，MySQL 的 ON UPDATE 会再刷一次，把「刻意保留的旧验证时间」
+                // 覆盖成执行时刻 —— #752 定下的「传旧值就不算重新确认」会在这里破功。
+                uw.setSql("updated_at = updated_at");
                 docMapper.update(null, uw);
             }
         }
@@ -1049,6 +1053,8 @@ public class DocService {
         if (old == null) {
             return null;
         }
+        // GUARD:ALLOW-ONUPDATE-REFRESH 归属变更是实质变更（换项目 = 换可见域），
+        // updated_at 本就该记成这次变更的时刻，所以刻意不写回，让 MySQL 的 ON UPDATE 去刷。
         docMapper.update(null, new UpdateWrapper<Doc>()
                 .eq("id", id)
                 .set("project_id", projectId));
@@ -1186,7 +1192,11 @@ public class DocService {
         uw.set("flag_marked_by", cleared ? null : markedBy);
         uw.set("flag_marked_at", cleared ? null : LocalDateTime.now());
         // 也不动 updated_at：打标记属元信息，若刷新会把老文档顶到
-        // list_recent_memories（按更新时间倒序）的最前面，干扰「最近记忆」的语义
+        // list_recent_memories（按更新时间倒序）的最前面，干扰「最近记忆」的语义。
+        // ⚠️ 光「不写」不够：docs.updated_at 带 ON UPDATE CURRENT_TIMESTAMP，
+        //    只 SET 别的列 MySQL 照样把它刷成执行时刻（2026-10-29 全库 652 篇就是这么中的）。
+        //    显式写回自身才算真的「不动」—— 显式赋值不触发 ON UPDATE，这是必要的空操作。
+        uw.setSql("updated_at = updated_at");
         docMapper.update(null, uw);
         return docMapper.selectById(id);
     }
@@ -1248,7 +1258,10 @@ public class DocService {
           .set("superseded_by", byId)
           // 留痕：谁标的时间何时。不写这两列 = 事后无法追责也无法确认是否误标
           .set("superseded_marked_by", by)
-          .set("superseded_marked_at", LocalDateTime.now());
+          .set("superseded_marked_at", LocalDateTime.now())
+          // 只写指针 = 元信息变更，不该把老文档顶到「最近记忆」最前。
+          // 显式写回：docs.updated_at 带 ON UPDATE CURRENT_TIMESTAMP，不写回就会被自动刷成执行时刻。
+          .setSql("updated_at = updated_at");
         docMapper.update(null, uw);
         callLogService.logUpdate(old);
         log.info("markSuperseded: doc={} supersededBy={} by={}", id, byId, by);
@@ -1274,7 +1287,10 @@ public class DocService {
         uw.eq("id", id)
           .set("superseded_by", null)
           .set("superseded_marked_by", null)
-          .set("superseded_marked_at", null);
+          .set("superseded_marked_at", null)
+          // 撤销取代同样是元信息变更，不该刷新「最近记忆」的排序时间。
+          // 显式写回：不写就会被 docs.updated_at 的 ON UPDATE 自动刷成执行时刻。
+          .setSql("updated_at = updated_at");
         docMapper.update(null, uw);
         log.info("clearSuperseded: doc={}", id);
         return docMapper.selectById(id);

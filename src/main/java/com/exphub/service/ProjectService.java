@@ -462,6 +462,8 @@ public class ProjectService {
         patch.setSummary(doc.getSummary());
         docService.update(docId, patch);
         // MyBatis-Plus 默认忽略 null 字段，必须用 UpdateWrapper 显式置空才能解除项目归属
+        // GUARD:ALLOW-ONUPDATE-REFRESH 本方法上一句 docService.update() 已经刷新过 updated_at，
+        // 这里只是把章节字段置空的补充 UPDATE，同一次操作内再刷一次不影响语义。
         docMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Doc>()
                 .eq("id", docId)
                 .set("project_id", null)
