@@ -141,7 +141,7 @@ class SearchProjectSegmentTest {
     }
 
     @Test
-    @DisplayName("守卫：total 口径不变 —— 顶部「匹配 N 条」只算全局")
+    @DisplayName("守卫：total 口径不变 —— 顶部「匹配 N 条」只算全局，项目数走 projectTotal 单独一条")
     void totalStillGlobalOnly() throws IOException {
         String src = Files.readString(Path.of("src/main/java/com/exphub/mcp/ExpHubTools.java"),
                 StandardCharsets.UTF_8);
@@ -150,8 +150,25 @@ class SearchProjectSegmentTest {
                 "effTotal 仍是全局命中数（matchedTotal 来自 docService.search 的全局结果）");
         assertFalse(body.contains("effTotal + projectTotal") || body.contains("effTotal = matchedTotal + projectTotal"),
                 "项目条数不许并进 total —— 那两个是不同域的数量，混装后「匹配 N 条」就不可解释了");
-        assertTrue(body.contains("projectTotal = projResult.getTotal();"),
-                "项目数只能来自项目域搜索自己的 total");
+        assertTrue(body.contains("projectTotal = docService.countProjectHits("),
+                "项目数必须走 countProjectHits（纯 DB 计数），不能用 search().getTotal()（重排后的条数，SQL 复现不出来）");
+        assertFalse(body.contains("projectTotal = projResult.getTotal()"),
+                "退回 getTotal() 会让提示里的 N 无法被一条 count(*) 对账");
+    }
+
+    @Test
+    @DisplayName("守卫：N 是纯 DB 计数 —— 不过覆盖率重排、不分页")
+    void projectCountIsPlainSqlCount() throws IOException {
+        String svc = Files.readString(Path.of("src/main/java/com/exphub/service/DocService.java"),
+                StandardCharsets.UTF_8);
+        String body = SourceScan.methodBody(svc,
+                "public long countProjectHits(String keyword, String templateType, String includeStatus, Long projectId)");
+        assertFalse(body.isEmpty(), "取不到 countProjectHits 方法体，守卫失效");
+        assertTrue(body.contains("docMapper.countByFulltext(terms.toOrQuery()"),
+                "必须是 countByFulltext（一条 SQL 计数），口径与搜索第 2 级召回一致");
+        assertFalse(body.contains("rankAndFilter"),
+                "过了重排就不是纯计数了 —— N 会随候选池浮动，别人拿 SQL 对不上");
+        assertTrue(body.contains("canAccessProject"), "项目域鉴权必须在：不许靠这个提示越权窥探别人的项目");
     }
 
     @Test

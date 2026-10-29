@@ -223,6 +223,37 @@ public class DocService {
     }
 
     /**
+     * 项目侧命中文档数（L0-1b 的「项目「X」内还有 N 条」用）。
+     *
+     * <p>口径：与搜索第 2 级<b>同一套宽松 OR 召回</b>（{@code buildSearchTerms} 展开后的 query），
+     * 只数「该项目内有多少篇文档提到了这组词」，<b>不过覆盖率重排</b>、不分页、不受候选池上限影响。
+     *
+     * <p>为什么不直接用 {@code search(...).getTotal()}：那个数是重排后「判定相关」的条数，
+     * 会随候选池、覆盖率门槛浮动，一条 {@code count(*)} 复现不出来。提示里的 N 是要被人拿 SQL
+     * 对账的，所以它必须就是一个纯 DB 计数。
+     *
+     * <p>注意它和「带 projectName 重搜」显示的条数不是一个口径：重搜还要过覆盖率门槛，
+     * 因此 N 一般 ≥ 重搜的「匹配 X 条」。宁可说多（东西确实在那儿），不能说少（会让人以为没记过）。
+     */
+    public long countProjectHits(String keyword, String templateType, String includeStatus, Long projectId) {
+        if (projectId == null) {
+            return 0;
+        }
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+        if (!canAccessProject(projectId, apiKey)) {
+            return 0;
+        }
+        String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
+        List<String> statusList = parseStatusList(includeStatus);
+        SearchTerms terms = buildSearchTerms(keyword);
+        if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
+            return 0;
+        }
+        return docMapper.countByFulltext(terms.toOrQuery(), apiKey, projectId, tt, statusList);
+    }
+
+    /**
      * 构建 FULLTEXT 搜索结果
      */
     private Page<Doc> buildFulltextResult(String originalKeyword, String ftQuery, String sortKeyword,

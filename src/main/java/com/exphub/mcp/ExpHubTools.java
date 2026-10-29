@@ -854,12 +854,12 @@ public class ExpHubTools {
                 autoProject = detectProjectInQuery(query);
                 if (autoProject != null) {
                     try {
-                        // 固定取 5 条：项目段不参与主排序、也不吃全局分页的 offset/limit
+                        // N：项目侧命中的**纯 DB 计数**（宽松 OR 召回口径），能被一条 count(*) 对账。
+                        // 不能用 search(...).getTotal()：那是覆盖率重排后的条数，随候选池浮动。
+                        projectTotal = docService.countProjectHits(query, templateType, statusFilter, autoProject.getId());
+                        // 展示取固定 5 条：项目段不参与主排序、也不吃全局分页的 offset/limit
                         var projResult = docService.search(query, templateType, statusFilter,
                                 autoProject.getId(), 1, PROJECT_SEGMENT_MAX);
-                        // total 语义不变：这里拿到的是**项目侧**命中总数，只用于提示里的 N，
-                        // 绝不并进回执顶部的「匹配 N 条」（那是全局命中总数）。
-                        projectTotal = projResult.getTotal();
                         projectTop = projResult.getRecords() == null
                                 ? java.util.List.of() : new ArrayList<>(projResult.getRecords());
                         if (projectTop.size() > PROJECT_SEGMENT_MAX) {
