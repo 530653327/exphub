@@ -14,7 +14,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.text.Normalizer;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 项目空间服务：项目 CRUD、AGENTS.md 分片维护、进度条目化
@@ -24,6 +29,12 @@ import java.util.List;
 public class ProjectService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
+
+    /**
+     * L0-1：别名项参与项目判定的最小长度（归一化后）。
+     * <p>api / ai 这类通用短词作为别名时会把整片项目域带进全局搜索，一律不参与判定。</p>
+     */
+    private static final int MIN_ALIAS_LEN = 3;
 
     @Autowired
     private ProjectMapper projectMapper;
@@ -153,7 +164,11 @@ public class ProjectService {
     }
 
     /**
-     * 按项目名称 / 别名 / 编码解析项目，返回候选列表（可能多个）
+     * 按项目名称 / 别名 / 编码解析项目，返回候选列表（可能多个）。
+     *
+     * <p>L0-1：别名不再走 {@code aliases LIKE '%q%'}——整串 LIKE 会让通用词作为某个别名的子串命中
+     * （{@code api} 命中别名 {@code xy-api}），把整个项目域带进全局搜索。现在按逗号切项、逐项精确比对。
+     * name / project_code 两条路径保持原样。</p>
      */
     public List<Project> resolveProject(String nameOrAlias) {
         QueryWrapper<Project> w = new QueryWrapper<>();
@@ -164,10 +179,95 @@ public class ProjectService {
         String q = nameOrAlias.trim();
         w.and(x -> x.eq("name", q)
                 .or().eq("project_code", q)
-                .or().like("name", q)
-                .or().like("aliases", q));
+                .or().like("name", q));
         w.eq("status", "ACTIVE");
-        return projectMapper.selectList(w);
+        List<Project> hits = new ArrayList<>(projectMapper.selectList(w));
+        for (Project p : hits) {
+            log.info("resolveProject: hit field={} project={}({}) item=\"{}\"",
+                    q.equals(p.getName()) ? "name"
+                            : q.equals(p.getProjectCode()) ? "project_code" : "name-like",
+                    p.getName(), p.getId(), q);
+        }
+        Set<Long> seen = hits.stream().map(Project::getId).collect(Collectors.toSet());
+        for (Project p : matchAlias(q, key)) {
+            if (seen.add(p.getId())) {
+                hits.add(p);
+            }
+        }
+        return hits;
+    }
+
+    /**
+     * 别名按项精确比对：逗号（含全角/顿号/分号）切项 → 归一 → 相等。
+     * 单个项目可能命中多项，这里按项目去重；长度不足 {@link #MIN_ALIAS_LEN} 的别名项直接不参与。
+     */
+    private List<Project> matchAlias(String q, String key) {
+        List<Project> out = new ArrayList<>();
+        String needle = normalizeAlias(q);
+        if (needle.length() < MIN_ALIAS_LEN) {
+            return out;
+        }
+        QueryWrapper<Project> w = new QueryWrapper<>();
+        if (key != null) {
+            w.eq("api_key", key);
+        }
+        w.eq("status", "ACTIVE");
+        for (Project p : projectMapper.selectList(w)) {
+            String item = matchedAliasItem(p.getAliases(), q);
+            if (item != null) {
+                // 用英文：服务器 nohup/systemd 下 LANG 未设置，中文日志会写成 '?'
+                log.info("resolveProject: hit field=aliases project={}({}) item=\"{}\"",
+                        p.getName(), p.getId(), item);
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 别名是否命中这个查询词。命中返回**别名项原文**（日志要能看出命中的是哪一项），不命中返回 null。
+     *
+     * <p>整串 LIKE 的坑：{@code api} 是 {@code xy-api} 的子串 → 一条通用词就能把整个项目域带进来。
+     * 这里按项切分后做**等值**比对，子串关系一律不算命中；长度不足 {@link #MIN_ALIAS_LEN} 的别名项不参与。</p>
+     */
+    static String matchedAliasItem(String aliases, String query) {
+        String needle = normalizeAlias(query);
+        if (needle.length() < MIN_ALIAS_LEN) {
+            return null;
+        }
+        for (String item : splitAliases(aliases)) {
+            String n = normalizeAlias(item);
+            if (n.length() < MIN_ALIAS_LEN) {
+                continue;
+            }
+            if (n.equals(needle)) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    /** 别名归一：全角转半角（NFKC）+ 去首尾空白 + 小写。 */
+    private static String normalizeAlias(String s) {
+        if (s == null) {
+            return "";
+        }
+        return Normalizer.normalize(s, Normalizer.Form.NFKC).trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** 别名拆项：半角/全角逗号、顿号、分号都当分隔符，逐项 trim 后丢弃空项。 */
+    private static List<String> splitAliases(String aliases) {
+        List<String> out = new ArrayList<>();
+        if (aliases == null || aliases.isEmpty()) {
+            return out;
+        }
+        for (String raw : aliases.split("[,，、;；]")) {
+            String item = raw.trim();
+            if (!item.isEmpty()) {
+                out.add(item);
+            }
+        }
+        return out;
     }
 
     // ==================== AGENTS.md 分片维护 ====================
