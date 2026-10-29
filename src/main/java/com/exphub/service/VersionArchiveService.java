@@ -87,7 +87,12 @@ public class VersionArchiveService {
      * 而不是只看总数」—— 总数对不上时，只有版本号清单能说清是哪几版。
      */
     public record DocArchiveResult(Long docId, String title, int keptBefore, int archived, int keptAfter,
-                                   List<Integer> versions, int skipped) {}
+                                   List<Integer> versions, int skipped,
+                                   // 主表实际减少的行数，**事务内回读得出**（不是 deleteBatchIds 的返回值）。
+                                   // #746：回执一度照抄 deleteBatchIds 的返回，结果写「主表删除 0 行」而库里已经删了 ——
+                                   // 执行者相信「没删」就会再跑一遍，而重试正是历史上造出 71 条重复副本的路径。
+                                   // dryRun 恒为 0（没写库，没什么可减少的）。
+                                   int removed) {}
 
     /** 整体归档结果 */
     public record ArchiveResult(boolean dryRun,
@@ -160,7 +165,7 @@ public class VersionArchiveService {
             for (DocVersion v : toArchive) bytes += v.getContent() == null ? 0 : v.getContent().length();
 
             if (dryRun) {
-                details.add(new DocArchiveResult(id, title, cnt, toArchive.size(), keep, versions, 0));
+                details.add(new DocArchiveResult(id, title, cnt, toArchive.size(), keep, versions, 0, 0));
                 archivedTotal += toArchive.size();
                 bytesTotal += bytes;
                 if (!toArchive.isEmpty()) docsTouched++;
@@ -204,7 +209,7 @@ public class VersionArchiveService {
     private DocArchiveResult doArchiveOne(TransactionStatus status, Long id, String title, int cnt, int keep,
                                           List<DocVersion> toArchive, String operator, String batchId,
                                           List<String> notes) {
-        if (toArchive.isEmpty()) return new DocArchiveResult(id, title, cnt, 0, keep, List.of(), 0);
+        if (toArchive.isEmpty()) return new DocArchiveResult(id, title, cnt, 0, keep, List.of(), 0, 0);
 
         List<Integer> wants = new ArrayList<>(toArchive.size());
         for (DocVersion v : toArchive) wants.add(v.getVersion());
@@ -257,21 +262,26 @@ public class VersionArchiveService {
         //    改成事务内回读：删前、删后各数一次主表真实行数，差值才是「这次真的少了多少」。
         //    （同事务内可见自己的删除，所以回读准确；transactionTemplate 提交/回滚都在这之后。）
         int before = countVersions(id);
-        int rawReturn = versionMapper.deleteBatchIds(ids);
+        // 返回值**故意不接**：它不可信（#746 实测 #677 删了 2 行却返回 0），
+        // 接下来它就会变成回执里一句「主表删除 0 行」，而执行者据此重试正是重复副本的来源。
+        versionMapper.deleteBatchIds(ids);
         int after = countVersions(id);
         int removed = before - after;
         if (removed != ids.size()) {
-            notes.add("#" + id + " 主表实删 " + removed + " / 期望 " + ids.size()
-                    + " 行（删前 " + before + " → 删后 " + after
-                    + (rawReturn != removed ? "；deleteBatchIds 返回 " + rawReturn + " 与回读不符，**以回读为准**" : "")
-                    + "）—— 归档已写入，数据不丢，需人工核对残留");
+            notes.add("#" + id + " 主表残留 " + (ids.size() - removed) + " 行未删（回读：删前 "
+                    + before + " → 删后 " + after + "，期望删 " + ids.size() + " 行）——"
+                    + "归档已写好，**数据没丢**；这几行下一次归档会再处理。"
+                    + "**不要为这行数字重试**：重试只会给归档表多添一份副本。");
         }
 
         int skipped = toArchive.size() - inserted;
         if (skipped > 0) {
             notes.add("#" + id + " 有 " + skipped + " 版**已在冷存档**（重试或并发命中），未重复写入");
         }
-        return new DocArchiveResult(id, title, cnt, inserted, keep, moved.isEmpty() ? wants : moved, skipped);
+        // keptAfter 用**删后回读值**而不是「保留窗口 keep」：预演时说「将剩 10 版」是估算，
+        // 执行后说「剩 10 版」就必须是库里真的 10 版 —— 两者用同一个数会让人分不清哪个是事实
+        return new DocArchiveResult(id, title, cnt, inserted, after,
+                moved.isEmpty() ? wants : moved, skipped, removed);
     }
 
     /** 组装一条归档行（原时间搬原值，归档时间单独记） */

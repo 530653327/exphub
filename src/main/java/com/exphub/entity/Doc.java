@@ -64,6 +64,12 @@ public class Doc {
     //   mark_superseded  → superseded_marked_by / superseded_marked_at  ← 本次补
     private String supersededMarkedBy;   // 标记取代关系的操作人
     private LocalDateTime supersededMarkedAt; // 标记取代关系的时间
+    // ===== 时效（2026-10-29）=====
+    // updated_at 回答「什么时候被改过」，last_verified_at 回答「结论最后一次被确认仍然成立」。
+    // 两者必须分开：改错字、修摘要都会刷新 updated_at，但它们不构成「重新验证」。
+    // 搜索回执的「超期 N 条」只认这一列 —— 没有它就只能拿 updated_at 凑，等于拿「谁最近动过」
+    // 冒充「谁最近确认过」。
+    private LocalDateTime lastVerifiedAt;
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

@@ -95,6 +95,9 @@ public class DocService {
         doc.setRating(new BigDecimal("5.00"));
         doc.setRatingCount(0);
         doc.setStatus("ACTIVE");
+        // 新建即视为一次验证（这条经验是刚被写下的结论）。
+        // 保留传入值只在「搬迁/导入历史文档」时有用，正常创建传 null → 填当前时间。
+        doc.setLastVerifiedAt(resolveVerifiedAt(doc.getLastVerifiedAt()));
         docMapper.insert(doc);
         
         // 记录操作日志
@@ -732,6 +735,10 @@ public class DocService {
         if (old == null) {
             return null;
         }
+        // 验证时间：**默认刷新**为现在（改内容通常意味着有人重新看过这条结论），
+        // 但允许调用方显式传旧值原样写回 —— 「只改一个错字」不该把 90 天前的验证时间刷成今天，
+        // 否则过期判定永远触发不了（#752：时效要能当判据，前提是它不能被顺手刷新）。
+        newDoc.setLastVerifiedAt(resolveVerifiedAt(newDoc.getLastVerifiedAt()));
         // A3：只有正文真的变了才存全文快照。
         // content 为 null（= 不传 = 不改）或与原值完全相同，都算「元数据变更」，
         // 这类快照只记一条事件（change_type=META、content=NULL），不再重复存 4KB 正文。
@@ -879,6 +886,15 @@ public class DocService {
     /** @param authorName 可选署名，记入版本快照的 updated_name（多助手共用一个 Key 时必须传） */
     @Transactional
     public Doc appendContent(Long id, String addition, String authorName) {
+        return appendContent(id, addition, authorName, null);
+    }
+
+    /**
+     * @param verifiedAt 验证时间：null = 本次算一次验证（填当前时间）；
+     *                   调用方传旧值 = 「这次只是追加流水/补一句，不算重新确认结论」
+     */
+    @Transactional
+    public Doc appendContent(Long id, String addition, String authorName, LocalDateTime verifiedAt) {
         Doc old = docMapper.selectById(id);
         if (old == null) {
             return null;
@@ -893,6 +909,9 @@ public class DocService {
         patch.setId(id);
         patch.setContent(merged);
         patch.setVersion(old.getVersion() + 1);
+        // ⚠️ 这条路径不走 update()，验证时间必须在这里也填 —— 漏一处就会出现
+        //    「append 过的文档永远不超期」，而滚动日志恰恰全靠 append 长大
+        patch.setLastVerifiedAt(resolveVerifiedAt(verifiedAt));
         docMapper.updateById(patch);
 
         Doc updated = docMapper.selectById(id);
@@ -911,6 +930,15 @@ public class DocService {
     /** @param authorName 可选署名，记入版本快照的 updated_name */
     @Transactional
     public Doc patchContent(Long id, String find, String replacement, String authorName) {
+        return patchContent(id, find, replacement, authorName, null);
+    }
+
+    /**
+     * @param verifiedAt 验证时间：null = 本次算一次验证；
+     *                   传旧值 = 「只改错字/润色，结论没重新确认过」——这个场景占了 patch 的大多数
+     */
+    @Transactional
+    public Doc patchContent(Long id, String find, String replacement, String authorName, LocalDateTime verifiedAt) {
         Doc old = docMapper.selectById(id);
         if (old == null) {
             return null;
@@ -923,11 +951,29 @@ public class DocService {
         patch.setId(id);
         patch.setContent(merged);
         patch.setVersion(old.getVersion() + 1);
+        patch.setLastVerifiedAt(resolveVerifiedAt(verifiedAt));
         docMapper.updateById(patch);
 
         Doc updated = docMapper.selectById(id);
         callLogService.logUpdate(updated);
         return updated;
+    }
+
+    /**
+     * 验证时间的单一口径（create / update / patch / append 四条写路径共用）。
+     *
+     * <p><b>为什么需要（#752）</b>：{@code updated_at} 只说明「这行被改过」，
+     * 改错字、改标签、改摘要都会刷新它，所以它无法回答「这条结论现在还算数吗」。
+     * 于是新增 {@code last_verified_at}，并把写入策略定成：
+     * <ul>
+     *   <li>不传 → 填当前时间（默认把这次写入视为一次验证）</li>
+     *   <li>传值 → 原样保留（调用方把旧值传回来，表示「本次只是编辑，不是重新确认」）</li>
+     * </ul>
+     * 只做「不传就填」而不管「能传旧值」是不够的：那样每次改错字都把验证时间刷成今天，
+     * 90 天过期判定永远不会触发，这一列也就退化成第二个 updated_at。
+     */
+    static LocalDateTime resolveVerifiedAt(LocalDateTime explicit) {
+        return explicit != null ? explicit : LocalDateTime.now();
     }
 
     /**

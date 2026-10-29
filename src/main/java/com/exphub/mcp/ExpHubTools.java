@@ -310,7 +310,10 @@ public class ExpHubTools {
             @ToolParam(description = "经验ID（必填）") Long id,
             @ToolParam(description = "完整的Markdown正文内容，将替换整个经验内容") String content,
             @ToolParam(description = "可选。**改文档作者**（作品归属），非操作人署名；只记「谁改的」用 updatedName", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——操作人署名（作品归属用 authorName）", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——操作人署名（作品归属用 authorName）", required = false) String updatedName,
+            @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
+                    + "**不传 = 本次导入视为一次验证，记当前时间**；只做格式/渲染痕迹整理时传原来的验证时间表示不刷新。",
+                    required = false) String verifiedAt) {
 
         try {
             log.info("ExpHubTools.importDocument: ENTRY - id={}, contentLength={}", id, content != null ? content.length() : 0);
@@ -319,6 +322,13 @@ public class ExpHubTools {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+
+            java.time.LocalDateTime verified;
+            try {
+                verified = parseVerifiedAtParam(verifiedAt);
+            } catch (IllegalArgumentException bad) {
+                return "❌ " + bad.getMessage() + "（未做任何改动）";
             }
 
             // 检查经验是否存在
@@ -332,6 +342,7 @@ public class ExpHubTools {
             // E11：导入前剥离渲染痕迹（历史导读/关联经验/文档结尾/终端残留）
             String cleaned = stripRenderArtifacts(content);
             updateDoc.setContent(cleaned);
+            updateDoc.setLastVerifiedAt(verified);
             if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
 
             Doc updated = docService.update(id, updateDoc, java.util.Set.of(), updatedName);
@@ -343,7 +354,8 @@ public class ExpHubTools {
               .append("\n**新版本**: v").append(updated != null ? updated.getVersion() : existing.getVersion() + 1)
               .append("\n**内容长度**: ").append(cleaned.length()).append(" 字")
               .append(stripped > 0 ? "（已剥离 " + stripped + " 字渲染痕迹：历史导读/关联经验/文档结尾等）" : "")
-              .append("\n\n文档已更新，当前版本保留了完整内容。");
+              .append("\n\n文档已更新，当前版本保留了完整内容。\n");
+            sb.append(verifiedLine(updated, verified != null));
             // D1 包 4 · L0 写入查重：整篇替换后内容可能已经和别的条目重合，顺手查一次
             if (updated != null) {
                 sb.append(similarityDigest(similarityService.checkOnCreate(updated)));
@@ -882,6 +894,11 @@ public class ExpHubTools {
                 sb.append("，本次返回第 ").append(fromIdx + 1).append("-").append(toIdx).append(" 条");
             }
             sb.append("：\n\n");
+
+            // #752 第 2 条：时效提示（只读计算，不改正文、不改排序、不隐藏）。
+            // 放顶部是因为「这条结论还作不作数」必须在读内容之前就知道；
+            // 埋在每条后面会被当成噪音，读者已经在按过期结论规划了。
+            sb.append(staleVerifyLine(pageDocs, java.time.LocalDate.now()));
 
             if (projDocsHit.isEmpty()) {
                 sb.append(renderDocs(pageDocs, briefMode));
@@ -1480,7 +1497,11 @@ public class ExpHubTools {
             @ToolParam(description = "可选。显式清空字段，逗号分隔：tags/aliases/summary/relatedIds/category（category 置「未分类」）。title、content 不可清空", required = false) String clearFields,
             @ToolParam(description = "可选。归属：项目ID=归入项目；0=移回全局", required = false) Long projectId,
             @ToolParam(description = "可选。模板类型：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal/project_progress/generic", required = false) String templateType,
-            @ToolParam(description = "可选。**谁改的**——写进快照的审计署名（与 authorName「文档作者」不同）", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——写进快照的审计署名（与 authorName「文档作者」不同）", required = false) String updatedName,
+            @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
+                    + "**不传 = 本次写入视为一次验证，记当前时间**；"
+                    + "只改错字/润色、结论没重新确认过时，传原来的验证时间（get_experience_detail 回执里有）表示不刷新。"
+                    + "格式不认识会直接报错，不会静默忽略。", required = false) String verifiedAt) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -1489,6 +1510,14 @@ public class ExpHubTools {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            
+            // 验证时间参数先解析：格式错要在任何写库动作之前拦下
+            java.time.LocalDateTime verified;
+            try {
+                verified = parseVerifiedAtParam(verifiedAt);
+            } catch (IllegalArgumentException bad) {
+                return "❌ " + bad.getMessage() + "（未做任何改动）";
             }
             
             // 检查经验是否存在
@@ -1589,6 +1618,7 @@ public class ExpHubTools {
                 }
             }
 
+            updateDoc.setLastVerifiedAt(verified);
             docService.update(id, updateDoc, clearSet, updatedName);
             if (changeScope) {
                 docService.updateProjectId(id, targetProjectId);
@@ -1613,6 +1643,7 @@ public class ExpHubTools {
                .append(afterUpdate != null && afterUpdate.getAuthorName() != null ? afterUpdate.getAuthorName() : "未知")
                .append(changedFields.contains("改文档作者") ? "（本条已改归属）" : "（未改动）")
                .append("\n");
+            res.append(verifiedLine(afterUpdate, verified != null));
             if (changedFields.contains("content")) {
                 int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
                 int stripped = content.length() - (cleanedContent == null ? content.length() : cleanedContent.length());
@@ -1671,7 +1702,10 @@ public class ExpHubTools {
             @ToolParam(description = "经验ID") Long id,
             @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）。建议以小标题开头，如「### 2026-10-25 补充：xxx」，便于日后区分批次") String text,
             @ToolParam(description = "可选。署名（记入版本快照）。不传=用 Key 绑定助手名。多助手共用同一 Key 时必传，否则所有改动记在同一人名下", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——与 authorName 等价，两者都传以本参数为准", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价，两者都传以本参数为准", required = false) String updatedName,
+            @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
+                    + "**不传 = 本次追加视为一次验证，记当前时间**；只补一句流水、结论没重新确认过时，"
+                    + "传原来的验证时间表示不刷新。", required = false) String verifiedAt) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -1681,6 +1715,12 @@ public class ExpHubTools {
             if (text == null || text.trim().isEmpty()) {
                 return "❌ 追加内容不能为空。请传入要追加的 Markdown 片段。";
             }
+            java.time.LocalDateTime verified;
+            try {
+                verified = parseVerifiedAtParam(verifiedAt);
+            } catch (IllegalArgumentException bad) {
+                return "❌ " + bad.getMessage() + "（未做任何改动）";
+            }
             Doc existing = docService.getById(id);
             if (existing == null) {
                 return "❌ 未找到ID为" + id + "的经验";
@@ -1688,7 +1728,9 @@ public class ExpHubTools {
 
             int oldVer = existing.getVersion();
             int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
-            Doc updated = docService.appendContent(id, text, updatedName != null && !updatedName.trim().isEmpty() ? updatedName.trim() : authorName);
+            Doc updated = docService.appendContent(id, text,
+                    updatedName != null && !updatedName.trim().isEmpty() ? updatedName.trim() : authorName,
+                    verified);
             int newLen = updated.getContent() == null ? 0 : updated.getContent().length();
 
             StringBuilder sb = new StringBuilder();
@@ -1698,6 +1740,7 @@ public class ExpHubTools {
             sb.append("**版本**: v").append(oldVer).append(" → v").append(updated.getVersion()).append("\n");
             sb.append("**正文字数**: ").append(oldLen).append(" → ").append(newLen)
               .append("（+").append(newLen - oldLen).append("）\n");
+            sb.append(verifiedLine(updated, verified != null));
             String addPreview = text.trim();
             if (addPreview.length() > 120) addPreview = addPreview.substring(0, 120) + "…";
             sb.append("**追加内容开头**:\n> ").append(addPreview.replace("\n", "\n> ")).append("\n\n");
@@ -1781,7 +1824,10 @@ public class ExpHubTools {
             @ToolParam(description = "必填。文档 ID") Long docId,
             @ToolParam(description = "必填。二级小节标题文本，不用带 ##（写成「## 最新一轮」也认）") String sectionHeading,
             @ToolParam(description = "必填。这一节的新正文（**不含标题行**，标题行原文自动保留）") String newContent,
-            @ToolParam(description = "可选。**谁改的**——操作人署名", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——操作人署名", required = false) String updatedName,
+            @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
+                    + "**不传 = 本次替换视为一次验证，记当前时间**；只是重排/修错字时传原来的验证时间表示不刷新。",
+                    required = false) String verifiedAt) {
         try {
             AiAssistant assistant = getCaller();
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
@@ -1789,6 +1835,12 @@ public class ExpHubTools {
             }
             if (docId == null) {
                 return "❌ 必须传 docId";
+            }
+            java.time.LocalDateTime verified;
+            try {
+                verified = parseVerifiedAtParam(verifiedAt);
+            } catch (IllegalArgumentException bad) {
+                return "❌ " + bad.getMessage() + "（未做任何改动）";
             }
             Doc existing = docService.getById(docId);
             if (existing == null) {
@@ -1812,6 +1864,7 @@ public class ExpHubTools {
             int oldLen = body.length();
             Doc patch = new Doc();
             patch.setContent(r.newContent());
+            patch.setLastVerifiedAt(verified);
             Doc updated = docService.update(docId, patch, java.util.Set.of(), by);
             if (updated == null) {
                 return "❌ 更新失败：文档可能已被删除（# " + docId + "）";
@@ -1830,7 +1883,8 @@ public class ExpHubTools {
             if (r.after() != null) sb.append("**区间后 40 字**: ").append(r.after()).append("\n");
             sb.append("\n**只改了这一节**，其余正文与你传的内容之外的部分一字未动；"
                     + "旧版本已存快照 v").append(oldVer).append("（要用 get_experience_history 才能看到）。\n");
-            sb.append("**操作人**: ").append(by);
+            sb.append("**操作人**: ").append(by).append("\n");
+            sb.append(verifiedLine(updated, verified != null));
             // 2026-10-29 P2-8：按节替换是最容易被用来「把一大段塞进长文」的入口，这里一并提示
             sb.append(longDocHint(r.newContent().length()));
             return sb.toString();
@@ -1847,7 +1901,11 @@ public class ExpHubTools {
             @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符。建议包含前后文让锚点唯一") String find,
             @ToolParam(description = "替换成的新内容。传空字符串表示删除这段") String replace,
             @ToolParam(description = "可选。署名（也记入版本快照）", required = false) String authorName,
-            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
+            @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName,
+            @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
+                    + "**不传 = 本次修改视为一次验证，记当前时间**；"
+                    + "**改错字/润色这类不重新确认结论的修改，请传原来的验证时间**（get_experience_detail 回执里有），"
+                    + "否则一次错字修复就会把 90 天前的验证刷成今天，过期判定从此失效。", required = false) String verifiedAt) {
 
         try {
             AiAssistant assistant = getCaller();
@@ -1860,6 +1918,12 @@ public class ExpHubTools {
             if (find.length() < PATCH_MIN_ANCHOR) {
                 return "❌ find 太短（" + find.length() + " 字符，最少 " + PATCH_MIN_ANCHOR
                         + "）。太短的锚点几乎必然命中多处，会改错地方。请带上前后文让它唯一。";
+            }
+            java.time.LocalDateTime verified;
+            try {
+                verified = parseVerifiedAtParam(verifiedAt);
+            } catch (IllegalArgumentException bad) {
+                return "❌ " + bad.getMessage() + "（未做任何改动）";
             }
             Doc existing = docService.getById(id);
             if (existing == null) {
@@ -1882,7 +1946,9 @@ public class ExpHubTools {
 
             int oldVer = existing.getVersion();
             int oldLen = body.length();
-            Doc updated = docService.patchContent(id, find, replace, updatedName != null && !updatedName.trim().isEmpty() ? updatedName.trim() : authorName);
+            Doc updated = docService.patchContent(id, find, replace,
+                    updatedName != null && !updatedName.trim().isEmpty() ? updatedName.trim() : authorName,
+                    verified);
             String newBody = updated.getContent() == null ? "" : updated.getContent();
 
             int pos = body.indexOf(find);
@@ -1896,7 +1962,8 @@ public class ExpHubTools {
               .append(newBody.length() - oldLen).append("）\n\n");
             sb.append("**原文**: `").append(abbreviate(find, 100)).append("`\n");
             sb.append("**改为**: `").append(replace == null || replace.isEmpty() ? "（已删除）" : abbreviate(replace, 100)).append("`\n\n");
-            sb.append("旧版本已存为快照 v").append(oldVer).append("。");
+            sb.append("旧版本已存为快照 v").append(oldVer).append("。\n");
+            sb.append(verifiedLine(updated, verified != null));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.patchExperience: FAILED", e);
@@ -2313,6 +2380,114 @@ public class ExpHubTools {
                 + "建议按主题拆章，或把可归档的施工日志挪进独立文档（只留一句「历史见 X」）。\n";
     }
 
+    /**
+     * 解析 {@code verifiedAt} 参数（#752）。
+     *
+     * <p>三态语义：
+     * <ul>
+     *   <li>{@code null}/空 → 返回 null，由服务层填当前时间（本次写入即一次验证）</li>
+     *   <li>合法日期 → 返回该时间（调用方把旧值传回来 = 本次不算重新验证）</li>
+     *   <li>格式不认识 → <b>抛异常</b>，由调用方转成明确报错</li>
+     * </ul>
+     *
+     * <p>为什么格式错必须抛而不是静默忽略：静默忽略会按「未传」处理 → 刷新成今天，
+     * 调用方以为自己保住了旧值，实际把有效期重置了 —— 这正是这一列要防的事，且完全无感。
+     */
+    static java.time.LocalDateTime parseVerifiedAtParam(String s) {
+        if (s == null || s.trim().isEmpty()) return null;
+        String t = s.trim().replace('T', ' ');
+        // 只带日期时按当天 00:00 记 —— 用户说的是「10 月 20 日验证过」，不是「10 月 20 日 23:59」
+        if (t.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            try {
+                return java.time.LocalDate.parse(t).atStartOfDay();
+            } catch (java.time.format.DateTimeParseException bad) {
+                throw new IllegalArgumentException("verifiedAt 不是有效日期：" + s);
+            }
+        }
+        for (String p : new String[]{"yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm"}) {
+            try {
+                return java.time.LocalDateTime.parse(t, java.time.format.DateTimeFormatter.ofPattern(p));
+            } catch (java.time.format.DateTimeParseException ignored) {
+                // 换下一个格式
+            }
+        }
+        throw new IllegalArgumentException("verifiedAt 格式不认识：「" + s
+                + "」。可用 " + java.time.LocalDate.now() + " 或 " + java.time.LocalDate.now() + " 15:30");
+    }
+
+    /**
+     * 写回执里的验证时间行（自证值：读库里真实结果，不复述入参）。
+     *
+     * <p>为什么必须回显：调用方传了旧值到底有没有生效，从别处看不出来 ——
+     * 只有把落库后的值印在回执上，「我传了旧值」才不是一句自述。
+     *
+     * @param explicit 本次是否显式传了 verifiedAt
+     */
+    static String verifiedLine(Doc after, boolean explicit) {
+        if (after == null) return "";
+        java.time.LocalDateTime v = after.getLastVerifiedAt();
+        if (v == null) {
+            return "**验证时间**: （未记录）"
+                    + (explicit ? "　⚠️ 本次传了值却没落库，请报缺陷" : "") + "\n";
+        }
+        String day = v.toLocalDate().toString();
+        long days = java.time.temporal.ChronoUnit.DAYS.between(v.toLocalDate(), java.time.LocalDate.now());
+        return "**验证时间**: " + day + "（" + (days <= 0 ? "今天" : days + " 天前") + "，"
+                + (explicit ? "沿用你传的值，本次未刷新" : "本次刷新") + "）\n";
+    }
+
+    /** 超过这个天数未验证，就在搜索回执顶部提示一行（只读计算，不改排序、不隐藏） */
+    static final int STALE_VERIFY_DAYS = 90;
+
+    /**
+     * 搜索回执顶部的时效提示（#752 第 2 条）。
+     *
+     * <p>口径边界，写死在这里免得以后被「顺手优化」掉：
+     * <ul>
+     *   <li>只统计<b>本次返回的这几条</b>（「以下 N 条」说的就是列出来的这批），不看全库、不改排序</li>
+     *   <li>只读计算：不改正文、不隐藏、不降权。要「按新旧排序」是另一个决定，不在这里做</li>
+     *   <li>{@code lastVerifiedAt} 为 null 视为超期（从未记录验证时间），不当作「刚验证过」</li>
+     *   <li>0 条超期时返回空串 —— 每次搜索都印一行「全部新鲜」只是噪音</li>
+     * </ul>
+     */
+    static String staleVerifyLine(java.util.List<Doc> docs, java.time.LocalDate today) {
+        if (docs == null || docs.isEmpty()) return "";
+        java.time.LocalDate cutoff = today.minusDays(STALE_VERIFY_DAYS);
+        int stale = 0;
+        Doc oldest = null;          // 最久未验证的那条（未记录的优先，因为它连起点都没有）
+        boolean oldestUnknown = false;
+        long oldestDays = 0;
+        for (Doc d : docs) {
+            java.time.LocalDateTime v = d.getLastVerifiedAt();
+            if (v == null) {
+                stale++;
+                if (!oldestUnknown) { oldest = d; oldestUnknown = true; }
+                continue;
+            }
+            java.time.LocalDate day = v.toLocalDate();
+            if (day.isBefore(cutoff)) {
+                stale++;
+                long days = java.time.temporal.ChronoUnit.DAYS.between(day, today);
+                if (!oldestUnknown && (oldest == null || days > oldestDays)) {
+                    oldest = d;
+                    oldestDays = days;
+                }
+            }
+        }
+        if (stale == 0) return "";
+        StringBuilder sb = new StringBuilder("⏳ **时效**: 以下 ").append(docs.size()).append(" 条中 ")
+                .append(stale).append(" 条超过 ").append(STALE_VERIFY_DAYS).append(" 天未验证");
+        if (oldest != null) {
+            sb.append("（最久 #").append(oldest.getId())
+              .append(oldestUnknown
+                      ? " 未记录验证时间"
+                      : "，" + oldest.getLastVerifiedAt().toLocalDate() + "，" + oldestDays + " 天")
+              .append("）");
+        }
+        sb.append("\n　只提示、不过滤：这些条目仍可能是对的，但**引用前先核一遍**，别把过期结论当现状。\n");
+        return sb.toString();
+    }
+
     /** 层名短称（一行清单用；组头那句长描述不适合挤进表格） */
     public static String tierShortName(SimilarityScorer.Kind k) {
         if (k == null) return "其他";
@@ -2470,6 +2645,22 @@ public class ExpHubTools {
         sb.append("**版本**: v").append(doc.getVersion()).append("\n");
         sb.append("**标签**: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
         sb.append("**状态**: ").append(getStatusLabel(doc.getStatus())).append("\n");
+        // #752：验证时间必须读得到 —— 否则「改错字时传旧值」根本无从下手（模型不知道旧值是多少）。
+        // ⚠️ 这一行同时登记进 RenderArtifactStripper 的头部元信息白名单，否则「读出来→改一点→整篇写回」
+        //    会把它固化进正文，和之前「状态」「⚑ 标记」踩的是同一个坑。
+        java.time.LocalDateTime verified = doc.getLastVerifiedAt();
+        if (verified == null) {
+            sb.append("**验证时间**: （未记录）\n");
+        } else {
+            long days = java.time.temporal.ChronoUnit.DAYS.between(
+                    verified.toLocalDate(), java.time.LocalDate.now());
+            sb.append("**验证时间**: ").append(verified.toLocalDate())
+              .append("（").append(days <= 0 ? "今天" : days + " 天前").append("）");
+            if (days > STALE_VERIFY_DAYS) {
+                sb.append("　⚠️ 超过 ").append(STALE_VERIFY_DAYS).append(" 天未验证，引用前先核");
+            }
+            sb.append("\n");
+        }
         return sb.toString();
     }
 
@@ -4588,16 +4779,23 @@ public class ExpHubTools {
                 sb.append("📭 没有需要归档的文档。\n");
             } else {
                 sb.append("| 文档 | 标题 | 原版本数 | ").append(dry ? "将归档" : "已归档")
-                  .append(" | 归档版本 | 归档后剩 |\n|---|---|---|---|---|---|\n");
+                  .append(" | 归档版本 | 归档后剩 | ").append(dry ? "将减少" : "主表减少")
+                  .append(" |\n|---|---|---|---|---|---|---|\n");
                 int i = 0;
                 for (VersionArchiveService.DocArchiveResult d : r.details()) {
-                    if (i++ >= 30) { sb.append("| … | 还有 ").append(r.details().size() - 30).append(" 篇 | | | | |\n"); break; }
+                    if (i++ >= 30) { sb.append("| … | 还有 ").append(r.details().size() - 30).append(" 篇 | | | | | |\n"); break; }
                     sb.append("| #").append(d.docId()).append(" | ")
                       .append(abbreviate(d.title() == null ? "(无标题)" : d.title(), 30)).append(" | ")
                       .append(d.keptBefore()).append(" | ").append(d.archived()).append(" | ")
                       .append(archiveVersionsCell(d.versions())).append(" | ")
-                      .append(d.keptAfter()).append(" |\n");
+                      .append(d.keptAfter()).append(" | ")
+                      // #746：这一列是**事务内回读**的真实减少量，不是 deleteBatchIds 的返回值。
+                      // 原来那句「删除 0 行 / 期望 2 行」就是因为照抄返回值，数据全对却报错，
+                      // 而执行者看到「没删」就会重试 —— 重试正是重复副本的来源。
+                      .append(dry ? "-" : ("-" + d.removed())).append(" |\n");
                 }
+                int removedTotal = 0;
+                for (VersionArchiveService.DocArchiveResult d : r.details()) removedTotal += d.removed();
                 sb.append("\n**合计**: ").append(dry ? "将归档 " : "已归档 ")
                   .append(r.archivedRows()).append(" 条");
                 if (r.skippedRows() > 0) {
@@ -4606,7 +4804,12 @@ public class ExpHubTools {
                 }
                 sb.append("，约 ")
                   .append(String.format(java.util.Locale.ROOT, "%.2f", r.archivedBytes() / 1024.0 / 1024.0))
-                  .append(" MB｜主表现有 ").append(r.remainingRows()).append(" 条\n");
+                  .append(" MB｜主表现有 ").append(r.remainingRows()).append(" 条");
+                if (!dry) {
+                    // 回读值：本次事务真的从主表删掉多少行。#746 之前这里只有一个不可信的返回值
+                    sb.append("｜主表本次减少 ").append(removedTotal).append(" 行（事务回读）");
+                }
+                sb.append("\n");
             }
 
             if (dry) {
