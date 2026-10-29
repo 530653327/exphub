@@ -138,9 +138,15 @@ String by = resolveAuthor(updatedName != null ? updatedName : authorName, assist
 
 ```
 改代码 → mvn clean test（必须 clean，增量编译会掩盖 Lombok 问题）
-      → git commit（署名烛龙）→ git push origin master（一次推 gitee + github 两个远端）
-      → 部署交给人执行：cd /usr/local/exphub && bash deploy.sh
+      → git commit（署名烛龙）→ git push origin master
+      → 部署由 AI 自己执行：ssh myserver "cd /usr/local/exphub && bash deploy.sh"
 ```
+
+⚠️ **2026-10-29 越哥改分工**：部署不再是「交给人执行」，**AI 自己部署、自己验证**。
+（此前约定是「你只管 push，部署和测试我自己来」，已作废。）
+部署后必须回读验证，不能只看脚本结尾那句「部署完成」。
+
+**只推 gitee**：本仓库目前只配了 `origin`（gitee），没有 github remote。
 
 **几个坑，别再踩：**
 
