@@ -2673,7 +2673,8 @@ public class ExpHubTools {
           description = "【撤回已判候选】把一条已判（duplicate / distinct / superseded / skip）的候选改回 PENDING，"
                   + "让它重新参与扫描与入队。⚠️ **只回退候选状态**，当初打在文档上的标记 / 取代指针不会撤销"
                   + "（那两项用 set_flags、clear_superseded）。用于判错了想重来 —— "
-                  + "distinct 的语义是「永久不再入队」，没有这个工具就只能改库。")
+                  + "distinct 的语义是「永久不再入队」，没有这个工具就只能改库。"
+                  + "（语义变更 2026-10-29：撤回前的判定整段存入判定流水，候选的 note 字段被清空；用 list_candidate_history 查历史）")
     public String reopenCandidate(
             @ToolParam(description = "必填。候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
             @ToolParam(description = "可选。撤回原因：为什么当初判错了。会与原判定说明一起并入 note，原判定不丢", required = false) String note,
@@ -2842,7 +2843,8 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "resolve_candidate", description = "处理一条整理候选：duplicate（只打标记）/ superseded（只写指针）/ distinct / skip。都不删任何内容。distinct 后不再重新入队。")
+    @Tool(name = "resolve_candidate", description = "处理一条整理候选：duplicate（只打标记）/ superseded（只写指针）/ distinct / skip。都不删任何内容。distinct 后不再重新入队。"
+            + "（语义变更 2026-10-29：note 改为只存**当前**判定理由，不再累积往返历史；每次动作进判定流水，用 list_candidate_history 看完整链路）")
     public String resolveCandidate(
             @ToolParam(description = "候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
             @ToolParam(description = "处理动作：duplicate（确为重复）/ superseded（旧被新取代）/ distinct（判为不同）/ skip（忽略）") String action,
@@ -3070,7 +3072,8 @@ public class ExpHubTools {
         return sb.toString();
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。⚠️ ③层（进度/日志类）**默认不入队**：它们是同一件事的分阶段记录，按设计不该判重，只打分、只展示；要它们入队传 enqueueProgress=true。")
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。⚠️ ③层（进度/日志类）**默认不入队**：它们是同一件事的分阶段记录，按设计不该判重，只打分、只展示；要它们入队传 enqueueProgress=true。"
+            + "（语义变更 2026-10-29：③层从「照旧入队」改为「默认不入队」；回执按「超阈值 = 已判过 + 被截断 + 本次拦下」拆开列）")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。默认 0.50（0.45 更宽松 / 0.55 更严）。区间 [0.30,0.95]，**超区间直接拒绝并回显收到的值**", required = false) Double threshold,
@@ -3153,16 +3156,31 @@ public class ExpHubTools {
                 }
                 if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
 
-                // 2026-10-29 越哥 P1-4：③层默认不入队，必须**单列一行**说清楚，
-                // 且 N 取全量（r.tierStats），不受 limit 影响 —— 否则改 limit 会让人以为③层入队数变了。
+                // 2026-10-29 越哥 P1-4：③层默认不入队，必须单列说清楚。
+                //
+                // ⚠️ 口径坑（越哥 2026-10-29 10:xx 指出，同一类错我犯过第二次）：
+                //    原来写「③层进度类未入队 17 对」—— 17 是**超阈值总数**，其中 15 对本来就因
+                //    判过 distinct 永久出队，跟这个开关毫无关系。真正被拦下的只有展示出来的那 2 对。
+                //    把 17 写成「未入队」会让人以为 P1-4 挡了 17 对，实际挡了 2 对。
+                //    现在按「总数 = 已判过 + 被截断 + 本次拦下」拆开，每项都标明它与开关的关系。
                 if (prog > 0) {
-                    sb.append("\n**③层进度类").append(enqProgress ? "已入队" : "未入队").append("**: ")
-                      .append(prog).append(" 对（全库统计，**不受 limit 影响**）");
+                    SimilarityService.TierDetail pd = r.tierDetail().get(SimilarityScorer.Kind.PROGRESS);
+                    int pJudged = pd == null ? 0 : pd.droppedJudged();
+                    int pShown = pd == null ? 0 : pd.shown();
+                    int pOther = Math.max(0, prog - pJudged - pShown);
+                    sb.append("\n**③层进度类**: 超阈值 ").append(prog).append(" 对 = 已判过 ")
+                      .append(pJudged).append(" 对（distinct 永久出队，**与开关无关**）");
+                    if (pOther > 0) {
+                        sb.append(" + 其余 ").append(pOther).append(" 对（被 limit/抽样截断，本次没展示）");
+                    }
+                    sb.append(" + **本次").append(enqProgress ? "入队 " : "拦下 ").append(pShown).append(" 对**");
                     if (enqProgress) {
-                        sb.append(" —— 本次按 `enqueueProgress=true` 照旧入队，与旧行为一致\n");
+                        sb.append("（`enqueueProgress=true`，与旧行为一致）\n");
                     } else {
-                        sb.append(" —— ③层是同一件事的分阶段记录，按设计不该判重；")
-                          .append("默认只打分、只展示，**不落待判队列**（要恢复旧行为传 `enqueueProgress=true`）\n");
+                        sb.append("（`enqueueProgress=false`，**这 ").append(pShown)
+                          .append(" 对才是本开关挡下的**；其余 ").append(prog - pShown)
+                          .append(" 对本来也不会走到入队）\n");
+                        sb.append("　③层是同一件事的分阶段记录，按设计不该判重；要恢复旧行为传 `enqueueProgress=true`\n");
                     }
                 }
 
