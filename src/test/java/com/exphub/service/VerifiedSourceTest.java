@@ -42,12 +42,15 @@ class VerifiedSourceTest {
     void allWritePathsFillSource() throws Exception {
         String code = read("src/main/java/com/exphub/service/DocService.java");
 
-        int verifyAssigns = count(code, ".setLastVerifiedAt(resolveVerifiedAt(");
+        // 2026-10-29 起 update 走白名单判定（decideVerify），时间与来源成对产出：vd.at() / vd.source()
+        int verifyAssigns = count(code, ".setLastVerifiedAt(resolveVerifiedAt(")
+                + count(code, ".setLastVerifiedAt(vd.at())");
         assertEquals(4, verifyAssigns,
                 "写验证时间的路径应为 4 条（create / update / appendContent / patchContent），实际 "
                         + verifyAssigns);
 
-        int sourceAssigns = count(code, ".setLastVerifiedSource(resolveVerifiedSource(");
+        int sourceAssigns = count(code, ".setLastVerifiedSource(resolveVerifiedSource(")
+                + count(code, ".setLastVerifiedSource(vd.source())");
         assertEquals(4, sourceAssigns,
                 "填了验证时间却没填来源的路径有 " + (verifyAssigns - sourceAssigns) + " 条。"
                         + "后果：这条路径写出来的文档来源是 null，回执只能印「来源未记录」——"
@@ -63,8 +66,10 @@ class VerifiedSourceTest {
                 "create 路径没有先存局部变量：setLastVerifiedAt(resolveVerifiedAt(...)) 之后字段已非 null，"
                         + "再 resolveVerifiedSource(doc.getLastVerifiedAt()) 会判成 manual —— "
                         + "每条新建经验都会被标成「人工声明验证时间」");
-        assertTrue(code.contains("LocalDateTime explicitVerifyU = newDoc.getLastVerifiedAt();"),
-                "update 路径同样要先读入参，理由同上");
+        // update 路径 2026-10-29 起改成把入参直接交给 decideVerify：仍然必须在改写字段**之前**读，
+        // 否则读到的是刚填的时间，来源会从 backfill 被误判成 manual（伪造一次人工确认）
+        assertTrue(code.contains("decideVerify(old, contentChanged, newDoc.getLastVerifiedAt())"),
+                "update 路径必须在 setLastVerifiedAt 之前读入参并交给 decideVerify，理由同上");
     }
 
     @Test

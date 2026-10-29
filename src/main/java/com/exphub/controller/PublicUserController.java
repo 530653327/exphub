@@ -238,6 +238,16 @@ public class PublicUserController {
         doc.setFailCount(existing.getFailCount());
         doc.setRating(existing.getRating());
         doc.setRatingCount(existing.getRatingCount());
+        // 验证时间：门户这条路径原来**完全不写**这两个字段 → 与 MCP 侧语义分叉
+        // （MCP 改正文算验证、门户改正文不算）。2026-10-29 签字：这里必须补写，且口径与
+        // DocService.update 一致 —— 只有正文真变了才刷新。
+        // ⚠️ 来源只能填 auto，不能填 manual：门户无法证明用户真的复核过结论、还是随手改了个错字，
+        //    标 manual 等于伪造一次人工确认，与 A 方案要防的正是同一件事。
+        boolean contentChanged = doc.getContent() != null && !doc.getContent().equals(existing.getContent());
+        if (contentChanged) {
+            doc.setLastVerifiedAt(java.time.LocalDateTime.now());
+            doc.setLastVerifiedSource(DocService.VERIFIED_AUTO);
+        }
         docMapper.updateById(doc);
 
         return R.ok(docMapper.selectById(id), "更新成功");

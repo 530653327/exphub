@@ -52,12 +52,19 @@ class DocVerifyTimeTest {
 
         // 变量名各不相同（doc / newDoc / patch ×2），所以按「赋值次数」钉比按变量名钉更耐改：
         // 4 条写路径 = create + update + appendContent + patchContent，一条都不能少。
-        int assigns = code.split("\\.setLastVerifiedAt\\(resolveVerifiedAt\\(", -1).length - 1;
+        // 2026-10-29 起 update 走白名单判定（decideVerify），不再直接调 resolveVerifiedAt，
+        // 所以两种形态一起数 —— 丢一条路径仍然是红的。
+        int assigns = countOf(code, ".setLastVerifiedAt(resolveVerifiedAt(")
+                + countOf(code, ".setLastVerifiedAt(vd.at())");
         assertEquals(4, assigns,
                 "填验证时间的写路径应为 4 条（create / update / appendContent / patchContent），实际 "
                         + assigns + " —— 少一处就会出现「这条路径改过的文档永远不超期」，"
                         + "而滚动日志恰恰全靠 append 长大");
         assertTrue(code.contains("explicitVerify"), "入参必须先用局部变量接住，见 VerifiedSourceTest");
+    }
+
+    private static int countOf(String code, String needle) {
+        return code.split(java.util.regex.Pattern.quote(needle), -1).length - 1;
     }
 
     @Test

@@ -739,17 +739,18 @@ public class DocService {
         if (old == null) {
             return null;
         }
-        // 验证时间：**默认刷新**为现在（改内容通常意味着有人重新看过这条结论），
-        // 但允许调用方显式传旧值原样写回 —— 「只改一个错字」不该把 90 天前的验证时间刷成今天，
-        // 否则过期判定永远触发不了（#752：时效要能当判据，前提是它不能被顺手刷新）。
-        LocalDateTime explicitVerifyU = newDoc.getLastVerifiedAt();
-        newDoc.setLastVerifiedAt(resolveVerifiedAt(explicitVerifyU));
-        newDoc.setLastVerifiedSource(resolveVerifiedSource(explicitVerifyU));
+        // 验证时间：**不看「写没写库」，只看「正文变没变」**（越哥 2026-10-29 签字的白名单：只留 content）。
+        // 显式传了 verifiedAt → 原样采纳（传旧值 = 本次不算重新确认，传新值 = 人工声明）；
+        // 正文变了 → 视为重新确认，填现在 / auto；
+        // 其余（title/tags/summary/aliases/category/relatedIds/…）→ 原样保留旧值与**旧来源**。
+        // 为什么 summary 不在白名单：压缩/翻译/统一风格的批量脚本一旦跑，全库验证时间会被一次性刷新，
+        // 与「换项目归属刷白」是同一类绕开通道，#752 要堵的就是这个。摘要改写不改变结论是否成立。
         // A3：只有正文真的变了才存全文快照。
-        // content 为 null（= 不传 = 不改）或与原值完全相同，都算「元数据变更」，
-        // 这类快照只记一条事件（change_type=META、content=NULL），不再重复存 4KB 正文。
         String incomingContent = newDoc.getContent();
         boolean contentChanged = incomingContent != null && !incomingContent.equals(old.getContent());
+        VerifyDecision vd = decideVerify(old, contentChanged, newDoc.getLastVerifiedAt());
+        newDoc.setLastVerifiedAt(vd.at());
+        newDoc.setLastVerifiedSource(vd.source());
         saveVersionSnapshot(old, contentChanged, authorOverride);
 
         newDoc.setId(id);
@@ -1007,6 +1008,37 @@ public class DocService {
         return explicit != null ? VERIFIED_MANUAL : VERIFIED_AUTO;
     }
 
+    /** 一次写入对「验证时间」的判定结果：写什么值 + 来源怎么说。 */
+    record VerifyDecision(LocalDateTime at, String source) {}
+
+    /**
+     * 更新路径的判定入口：**只有正文变更才算重新确认**（越哥 2026-10-29 签字）。
+     *
+     * <p>三种情况，优先级从高到低：
+     * <ol>
+     *   <li>调用方显式传了 {@code verifiedAt} → 原样采纳，来源记 {@code manual}。
+     *       传旧值表示「本次只是编辑，不是重新确认」，这是 #752 留的后门，必须保住。</li>
+     *   <li>正文变了（{@code content} 非空且与原值不同）→ 填现在 / {@code auto}。
+     *       要改正文就得先读，读过了就算重新确认。</li>
+     *   <li>其余情况 → **原样保留旧值与旧来源**（含 {@code backfill}：那是回填值，不是人工确认，
+     *       重贴标签会伪造证据）。</li>
+     * </ol>
+     *
+     * <p><b>为什么白名单只留 content，不含 summary</b>：摘要也能改写结论的表述，但压缩/翻译/统一风格
+     * 这类脚本一跑就是全库，验证时间会被一次性刷成同一天 —— 与「换项目归属刷白」同一类绕开通道。
+     * 而改正文顺带改 summary 的，content 变了会自然刷新，不受这条影响。
+     */
+    static VerifyDecision decideVerify(Doc old, boolean contentChanged, LocalDateTime explicit) {
+        if (explicit != null) {
+            return new VerifyDecision(explicit, VERIFIED_MANUAL);
+        }
+        if (contentChanged) {
+            return new VerifyDecision(LocalDateTime.now(), VERIFIED_AUTO);
+        }
+        return new VerifyDecision(old == null ? null : old.getLastVerifiedAt(),
+                old == null ? null : old.getLastVerifiedSource());
+    }
+
     /**
      * A1：把追加片段接到原文末尾。
      *
@@ -1055,6 +1087,11 @@ public class DocService {
         }
         // GUARD:ALLOW-ONUPDATE-REFRESH 归属变更是实质变更（换项目 = 换可见域），
         // updated_at 本就该记成这次变更的时刻，所以刻意不写回，让 MySQL 的 ON UPDATE 去刷。
+        // 🔴 但 last_verified_at **刻意不写**（越哥 2026-10-29 签字）：换归属没有对结论做任何确认，
+        //    操作者可能根本没读正文。若这里刷验证时间，把一篇 120 天没验证的文档搬进另一个项目
+        //    就能让过期信号当场消失 —— 正是 #752 要堵的「顺手刷白」通道。
+        //    两列因此分叉是**定义**不是漏写：updated_at=什么时候被改过，last_verified=结论何时被确认。
+        //    验收口径：换过归属的文档会排在「最近更新」前面，但仍留在「90 天未验证」清单里。
         docMapper.update(null, new UpdateWrapper<Doc>()
                 .eq("id", id)
                 .set("project_id", projectId));
