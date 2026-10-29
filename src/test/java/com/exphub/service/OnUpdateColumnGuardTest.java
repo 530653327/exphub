@@ -66,10 +66,13 @@ class OnUpdateColumnGuardTest {
      *
      * <p>它不是「豁免」，是一份**已知漂移清单**：新装环境（跑 init.sql）与生产库行为不同，
      * 这一条要么统一 DDL、要么统一线上，别让它悄悄存在。
+     *
+     * <p><b>2026-10-29 已清零</b>：唯一那条 {@code doc_templates.updated_at} 选的方向是
+     * 「向线上对齐」—— 删掉 init.sql 里的 ON UPDATE（仅脚本对齐，线上无 DDL 变更），
+     * 修改时间改由 {@code DocTemplateController.update} 显式写入。
+     * 现在两边一致，删表再重建也不会出现行为差异。新增条目会立刻让下面那条测试变红。
      */
-    private static final Map<String, String> KNOWN_DDL_ONLY = Map.of(
-            "doc_templates.updated_at",
-            "init.sql 声明 ON UPDATE，线上实测是普通 datetime（新装环境与生产漂移，待统一）");
+    private static final Map<String, String> KNOWN_DDL_ONLY = Map.of();
 
     /**
      * 历史脚本的豁免：它们**不在** deploy 的自动执行范围里。

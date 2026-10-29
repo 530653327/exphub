@@ -95,6 +95,11 @@ public class DocTemplateController {
         if (template.getTemplateContent() != null) {
             existing.setTemplateContent(template.getTemplateContent());
         }
+        // 🔴 必须显式写时间（2026-10-29 定位）：existing 是从库里读出来的，updated_at 非 null，
+        //    MyBatis-Plus 的 strict fill 只在字段为 null 时填充 → 不写就原样把旧值写回去，
+        //    模板改多少次 updated_at 都不动。原来靠 DDL 的 ON UPDATE 兜底也是错的：
+        //    列被显式赋值时 ON UPDATE 不触发，两边都不生效。
+        existing.setUpdatedAt(java.time.LocalDateTime.now());
         templateService.updateById(existing);
         return R.ok(existing);
     }

@@ -56,12 +56,16 @@ class JavaUpdateWriteBackGuardTest {
             "Project", "projects",
             "AiAssistant", "ai_assistants",
             "PublicUser", "public_users",
-            "User", "users",
-            "DocTemplate", "doc_templates");
+            "User", "users");
 
-    /** 线上 information_schema 实测 + 仓库 DDL 声明的 ON UPDATE 列都在这些表上，列名统一 updated_at。 */
+    /**
+     * 线上 information_schema 实测 + 仓库 DDL 声明的 ON UPDATE 列都在这些表上，列名统一 updated_at。
+     *
+     * <p>2026-10-29：{@code doc_templates} 已移出 —— 该列线上从来没有 ON UPDATE，
+     * init.sql 也已对齐删掉（仅脚本对齐，线上无 DDL 变更）。
+     */
     private static final Set<String> TABLES_WITH_ON_UPDATE = Set.of(
-            "docs", "projects", "ai_assistants", "public_users", "users", "doc_templates");
+            "docs", "projects", "ai_assistants", "public_users", "users");
 
     private static final String WRITEBACK = "updated_at = updated_at";
     private static final String ALLOW_MARK = "GUARD:ALLOW-ONUPDATE-REFRESH";

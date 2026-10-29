@@ -156,7 +156,11 @@ CREATE TABLE IF NOT EXISTS doc_templates (
     instruction      TEXT NOT NULL COMMENT 'AI 填写指南',
     template_content TEXT NOT NULL COMMENT '模板结构（Markdown）',
     created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    -- ⚠️ 刻意不加 ON UPDATE：线上实测该列**没有**这个属性（2026-10-29 核对），
+    --    这里向线上对齐，让新装环境与生产的行为一致。
+    --    修改时间由应用层显式写入（DocTemplateController.update 里的 setUpdatedAt）。
+    --    注意：本次只是**脚本对齐**，线上无需也不许执行 ALTER。
+    updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='经验模板表';
 
 -- ============================================================
