@@ -312,8 +312,10 @@ class ToolDescriptionRedundancyTest {
         // 同日 P2-6：44 → 45，新增 replace_section（按节整节替换）；参数 166 → 170。
         // 同日 #752：五个写工具各加 verifiedAt（update/patch/append/replace_section/import_document），
         //            参数 170 → 175。工具数不变 —— create 是自动填，不需要参数。
+        // 2026-10-30 A5 B 方案：update_experience 与 import_document 各加 originalHash（整篇写回必填），
+        //            参数 175 → 177。工具数仍 45。
         assertEquals(45, toolCount, "工具数变了（45 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(175, paramCount, "参数数变了（175 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(177, paramCount, "参数数变了（177 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

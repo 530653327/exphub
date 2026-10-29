@@ -54,13 +54,21 @@ class DocVerifyTimeTest {
         //    vd.at() 两处调用面之后，数字失去意义 —— 少一条、另一条重复计入，总和照样 4、测试照样绿。
         //    现在逐条按方法名钉，少哪条红哪条。
         assertVerifiedIn(code, "public Doc create(Doc doc)", "create");
-        assertVerifiedIn(code, "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)", "update");
+        // 2026-10-30 A5 B 方案：真正的写库逻辑在带 WriteOrigin 的重载里，4 参版只是委托。
+        // 钉住重载（否则守卫守着一个只有一行 delegate 的空壳，永远绿）
+        assertVerifiedIn(code, "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride,", "update");
         assertVerifiedIn(code, "public Doc appendContent(Long id, String addition, String authorName, LocalDateTime verifiedAt)", "appendContent");
         assertVerifiedIn(code, "public Doc patchContent(Long id, String find, String replacement, String authorName, LocalDateTime verifiedAt)", "patchContent");
 
+        // 4 参重载必须只做委托：复制一份写库逻辑，就是又回到「四条路径各写一遍、改一处漏三处」的老路
+        String delegateBody = SourceScan.methodBody(code,
+                "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)");
+        assertTrue(delegateBody.contains("WriteOrigin.INTERNAL"),
+                "4 参 update 必须委托给带 WriteOrigin 的实现，而不是自己再写一遍");
+
         // update 走白名单判定：时间不再是 resolveVerifiedAt 直填，但必须仍由 decideVerify 产出
         String updateBody = SourceScan.methodBody(code,
-                "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)");
+                "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride,");
         assertTrue(updateBody.contains("decideVerify(old, contentChanged, newDoc.getLastVerifiedAt())"),
                 "update 路径必须走 decideVerify（白名单：只认 content），否则元数据更新会把验证时间刷成今天");
         assertTrue(code.contains("explicitVerify"), "create 的入参必须先用局部变量接住，见 VerifiedSourceTest");

@@ -16,6 +16,8 @@ import com.exphub.service.SimilarityService;
 import com.exphub.service.DocTemplateService;
 import com.exphub.service.ProjectService;
 import com.exphub.service.VersionArchiveService;
+import com.exphub.service.WriteOrigin;
+import com.exphub.util.ContentHashGuard;
 import com.exphub.entity.DocVersionArchive;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -298,6 +300,11 @@ public class ExpHubTools {
             StringBuilder sb = new StringBuilder();
             sb.append("📄 文档导出成功！经验 ID:").append(id).append("「").append(doc.getTitle()).append("」\n\n");
             sb.append("内容已完整导出（共 ").append(doc.getContent() != null ? doc.getContent().length() : 0).append(" 字）。\n\n");
+            // A5 B 方案：整篇写回要带 originalHash，这是它唯一的取值来源。
+            // 记的是**原文**的 hash：本地改完正文后 hash 会变，但回传的仍是这一个。
+            sb.append("**content_sha256**: `").append(ContentHashGuard.sha256(doc.getContent())).append("`\n");
+            sb.append("→ 用 `import_document` / `update_experience` 整篇写回时，把它作为 `originalHash` 传回")
+              .append("（改了正文也用它：它代表「我读到的是这一份完整原文」）。\n\n");
             // 存疑横幅（D1）：export 是长文读取的主路径，横幅必须也出现在这里。
             // 只加在 detail 上等于漏了最该提醒的场景 —— 长文档恰恰是最容易被整篇写回的那类。
             sb.append(doubtBanner(doc, id));
@@ -309,7 +316,6 @@ public class ExpHubTools {
             }
 
             sb.append("\n\n---\n").append("📌 文档结尾");
-
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.exportDocument: FAILED", e);
@@ -319,12 +325,13 @@ public class ExpHubTools {
     }
 
     /**
-     * 导入完整文档内容（信任式，无截断检测，与 export_document 配对使用）
+     * 导入完整文档内容（必须带 originalHash 证明读过完整原文，与 export_document 配对使用）
      */
     @Tool(name = "import_document", description = "【文档维护专用】上传本地完整 Markdown 替换指定经验。自动创建版本快照。小修改用 update_experience。")
     public String importDocument(
             @ToolParam(description = "经验ID（必填）") Long id,
             @ToolParam(description = "完整的Markdown正文内容，将替换整个经验内容") String content,
+            @ToolParam(description = "**必填**。`export_document` 回执里的 content_sha256（**原文**的 hash，不是新内容的）。与库中当前正文不一致直接拒绝——上传半篇就等于删掉另一半", required = false) String originalHash,
             @ToolParam(description = "可选。**改文档作者**（作品归属），非操作人署名；只记「谁改的」用 updatedName", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——操作人署名（作品归属用 authorName）", required = false) String updatedName,
             @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
@@ -353,6 +360,18 @@ public class ExpHubTools {
                 return "❌ 未找到ID为" + id + "的经验";
             }
 
+            // A5 B 方案：与 update_experience 同一条铁律 —— 整篇替换必须证明「你手上是完整原文」。
+            // import 没有 force：它是「导入完整版」，不存在「明知截断仍写」的正当场景，
+            // 真要做那种事应该走 update_experience(force=true) 并在快照里留痕。
+            ContentHashGuard.Verdict verdict = ContentHashGuard.check(originalHash, existing.getContent());
+            if (verdict != ContentHashGuard.Verdict.OK) {
+                log.warn("ExpHubTools.importDocument: originalHash {} blocked. id={}, storedLen={}",
+                        verdict, id, existing.getContent() == null ? 0 : existing.getContent().length());
+                return verdict == ContentHashGuard.Verdict.MISSING
+                        ? ContentHashGuard.missingMessage(id, existing.getContent())
+                        : ContentHashGuard.mismatchMessage(id, existing.getContent(), originalHash);
+            }
+
             Doc updateDoc = new Doc();
             updateDoc.setId(id);
             // E11：导入前剥离渲染痕迹（历史导读/关联经验/文档结尾/终端残留）
@@ -361,7 +380,8 @@ public class ExpHubTools {
             updateDoc.setLastVerifiedAt(verified);
             if (authorName != null && !authorName.isEmpty()) updateDoc.setAuthorName(authorName);
 
-            Doc updated = docService.update(id, updateDoc, java.util.Set.of(), updatedName);
+            Doc updated = docService.update(id, updateDoc, java.util.Set.of(), updatedName,
+                    WriteOrigin.HASH_VERIFIED);
 
             int stripped = content.length() - cleaned.length();
             StringBuilder sb = new StringBuilder();
@@ -518,7 +538,7 @@ public class ExpHubTools {
             sb.append("|--------|------|----------|--------|----------|\n");
             for (DocVersion v : versions) {
                 // A3：META 版只记事件、没有正文副本；老数据无 change_type 时按正文处理
-                String changeLabel = "META".equals(v.getChangeType()) ? "仅元数据" : "正文";
+                String changeLabel = changeTypeLabel(v.getChangeType());
                 sb.append("| v").append(v.getVersion())
                   .append(" | 主表")
                   .append(" | ").append(changeLabel)
@@ -527,7 +547,7 @@ public class ExpHubTools {
                   .append(" |\n");
             }
             for (DocVersionArchive a : archivedAll) {
-                String changeLabel = "META".equals(a.getChangeType()) ? "仅元数据" : "正文";
+                String changeLabel = changeTypeLabel(a.getChangeType());
                 sb.append("| v").append(a.getVersion())
                   .append(" | 📦 已归档")
                   .append(" | ").append(changeLabel)
@@ -1498,7 +1518,7 @@ public class ExpHubTools {
     /**
      * 更新经验
      */
-    @Tool(name = "update_experience", description = "更新已有经验的指定字段：**只传要改的字段**。清空用 clearFields 显式声明，不要传 null。改正文：改一段用 patch_experience、追加用 append_experience、整体重写用 export_document + import_document。🔒 严禁在 content 含账号密码/API密钥/Token。")
+    @Tool(name = "update_experience", description = "更新已有经验的指定字段：**只传要改的字段**。清空用 clearFields 显式声明，不要传 null。改正文：改一段用 patch_experience、追加用 append_experience、整体重写用 export_document + import_document。整篇写回须带 originalHash 证明读过全文。🔒 严禁在 content 含账号密码/API密钥/Token。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）") Long id,
             @ToolParam(description = "可选。新标题。别写版本号（version 管理）", required = false) String title,
@@ -1509,7 +1529,8 @@ public class ExpHubTools {
             @ToolParam(description = "可选。一句话摘要。清空用 clearFields", required = false) String summary,
             @ToolParam(description = "可选。关联经验ID，逗号分隔。清空用 clearFields", required = false) String relatedIds,
             @ToolParam(description = "可选。修改作者名称", required = false) String authorName,
-            @ToolParam(description = "可选。true=跳过截断检测（局部改请用 patch_experience）", required = false) Boolean force,
+            @ToolParam(description = "可选。true=明知本次写回会截断正文、仍要写入（快照标 CONTENT_FORCED 留痕）。**它不能跳过 originalHash 校验**；局部改请用 patch_experience", required = false) Boolean force,
+            @ToolParam(description = "**传 content 时必填**。`export_document` 回执里的 content_sha256（**原文**的 hash，不是新内容的）。与库中当前正文不一致直接拒绝：读半篇就写回会删掉没读到的部分", required = false) String originalHash,
             @ToolParam(description = "可选。显式清空字段，逗号分隔：tags/aliases/summary/relatedIds/category（category 置「未分类」）。title、content 不可清空", required = false) String clearFields,
             @ToolParam(description = "可选。归属：项目ID=归入项目；0=移回全局", required = false) Long projectId,
             @ToolParam(description = "可选。模板类型：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal/project_progress/generic", required = false) String templateType,
@@ -1545,36 +1566,27 @@ public class ExpHubTools {
                 return "❌ 未找到ID为" + id + "的经验";
             }
             
-            // === 截断更新检测（策略二：自动拦截+引导） ===
-            String storedContent = existing.getContent();
-            if (content != null && !content.isEmpty() && storedContent != null
-                    && storedContent.length() > detailMaxChars) {
-                
-                String contentHead = content.substring(0, Math.min(100, content.length()));
-                boolean isPrefixMatch = storedContent.startsWith(contentHead);
-                boolean isShorter = content.length() < storedContent.length();
-                
-                if (isShorter && isPrefixMatch) {
-                    if (force != null && force) {
-                        // force=true 逃生门：用户确认要覆盖
-                        log.info("ExpHubTools.updateExperience: truncation detected but force=true, proceeding. id={}", id);
-                    } else {
-                        // 拦截并引导到正确的文档维护流程
-                        log.warn("ExpHubTools.updateExperience: truncation detected, blocked. id={}, contentLen={}, storedLen={}",
-                                id, content.length(), storedContent.length());
-                        return "⚠️ **检测到截断更新风险！**\n\n"
-                             + "你提供的 content（" + content.length() + "字）比现有文档（" + storedContent.length() + "字）短了很多，\n"
-                             + "且新内容是旧文档的开头部分，这很可能是因为 get_experience_detail 只返回了开头部分，\n"
-                             + "你只看到了部分内容，直接 update 会丢失未展示的部分。\n\n"
-                             + "📋 **请改用文档维护专用流程：**\n"
-                             + "1. export_document(id=" + id + ") → 导出完整文档（无截断）\n"
-                             + "2. 将返回的内容保存为本地 .md 文件\n"
-                             + "3. 修改 .md 文件（人类或AI均可编辑）\n"
-                             + "4. 用 read_file 读取修改后的文件内容\n"
-                             + "5. import_document(id=" + id + ", content=...) → 上传完整版本\n\n"
-                             + "⚡ **如果确认要覆盖**（例如想精简文档为短版本），请设置 force=true 跳过此检查。";
-                    }
+            // === A5 B 方案：整篇写回必须带 originalHash（2026-10-30）===
+            // 取代原来的「新内容更短且以旧正文开头」字数启发式。旧判定的盲区：
+            // 读到前 2 万字、随手加两句，总长比原文还长 → 字数看起来「没缩水」，中间那 1 万字照丢。
+            // 现在只认等式：调用方给的原文 hash == 库里当前正文的 hash。
+            // 注意 force **不参与**这里 —— force 只能表示「我知道会变短」，不能表示「不用证明读过全文」。
+            if (content != null && !content.isEmpty()) {
+                ContentHashGuard.Verdict verdict =
+                        ContentHashGuard.check(originalHash, existing.getContent());
+                if (verdict != ContentHashGuard.Verdict.OK) {
+                    log.warn("ExpHubTools.updateExperience: originalHash {} blocked. id={}, storedLen={}, provided={}",
+                            verdict, id, existing.getContent() == null ? 0 : existing.getContent().length(),
+                            ContentHashGuard.normalize(originalHash));
+                    return verdict == ContentHashGuard.Verdict.MISSING
+                            ? ContentHashGuard.missingMessage(id, existing.getContent())
+                            : ContentHashGuard.mismatchMessage(id, existing.getContent(), originalHash);
                 }
+            } else if (originalHash != null && !originalHash.trim().isEmpty()) {
+                // 没传 content 却传了 hash：不静默丢掉，明确告知它只在整篇写回时有意义
+                return "❌ 传了 originalHash 但没有 content —— 本次没有正文要写。\n\n"
+                     + "originalHash 只用于整篇写回（content 非空）时的校验。"
+                     + "只改标题/标签/摘要等元数据不必传它（未做任何改动）。";
             }
             
             Doc updateDoc = new Doc();
@@ -1647,7 +1659,13 @@ public class ExpHubTools {
             }
 
             updateDoc.setLastVerifiedAt(verified);
-            docService.update(id, updateDoc, clearSet, updatedName);
+            // 来历决定快照怎么留痕：写了正文且 force=true → FORCED（快照标 CONTENT_FORCED）；
+            // 写了正文 → HASH_VERIFIED（上面已经用 originalHash 证明读过全文）；
+            // 只改元数据 → INTERNAL（本来就没有正文变更，不需要任何 hash 语义）。
+            boolean contentWritten = changedFields.contains("content");
+            WriteOrigin origin = !contentWritten ? WriteOrigin.INTERNAL
+                    : (force != null && force ? WriteOrigin.FORCED : WriteOrigin.HASH_VERIFIED);
+            docService.update(id, updateDoc, clearSet, updatedName, origin);
             if (changeScope) {
                 docService.updateProjectId(id, targetProjectId);
             }
@@ -1658,6 +1676,12 @@ public class ExpHubTools {
             res.append("**ID**: ").append(id).append("\n");
             res.append("**新版本**: v").append(existing.getVersion() + 1).append("\n");
             res.append("**已修改字段**: ").append(changedFields.isEmpty() ? "（无，仅调整归属）" : String.join(", ", changedFields)).append("\n");
+            if (contentWritten) {
+                res.append("**原文校验**: originalHash 与库中正文一致（证明读到的是完整原文）\n");
+                if (force != null && force) {
+                    res.append("**force**: true —— 明知会截断仍写入，本版快照已标 CONTENT_FORCED\n");
+                }
+            }
             // 回执自证值（AGENTS.md 第 10 章）：署名必回显，别让调用方事后去列表里才发现记成了别人。
             // 回填后重新读一次，显示的是**库里真实的值**，不是复述入参
             Doc afterUpdate = docService.getById(id);
@@ -1700,6 +1724,18 @@ public class ExpHubTools {
             callLogService.incrementFailCalls();
             return "更新失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * 快照变更类型的中文标签。
+     *
+     * <p>{@code CONTENT_FORCED} = force 强制写回（A5 B 方案 2026-10-30 起）。它和 CONTENT 一样
+     * 存了旧版全文，区别只在「这一版是被强压出来的」—— 审计时最该被单独看见的正是这一种。
+     */
+    private String changeTypeLabel(String changeType) {
+        if ("META".equals(changeType)) return "仅元数据";
+        if ("CONTENT_FORCED".equals(changeType)) return "正文（force 强压）";
+        return "正文";
     }
 
     /**

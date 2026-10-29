@@ -45,7 +45,8 @@ class VerifiedSourceTest {
         // 🔴 2026-10-29 改口径（越哥）：不再数总数（合并两处调用面后「少一条 + 另一条重复」总和不变）。
         //    逐条按方法名钉，少哪条红哪条；update 与门户走白名单，时间/来源由判定结果成对产出。
         assertPair(code, "public Doc create(Doc doc)", "create");
-        assertPair(code, "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)", "update");
+        // 2026-10-30 A5 B 方案：写库逻辑移到带 WriteOrigin 的重载，4 参版只做委托（见 DocVerifyTimeTest）
+        assertPair(code, "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride,", "update");
         assertPair(code, "public Doc appendContent(Long id, String addition, String authorName, LocalDateTime verifiedAt)", "appendContent");
         assertPair(code, "public Doc patchContent(Long id, String find, String replacement, String authorName, LocalDateTime verifiedAt)", "patchContent");
 

@@ -734,6 +734,19 @@ public class DocService {
      */
     @Transactional
     public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride) {
+        return update(id, newDoc, clearFields, authorOverride, WriteOrigin.INTERNAL);
+    }
+
+    /**
+     * 带「来历」的更新：决定本次正文写入要不要在日志里点名「未校验 originalHash」，
+     * 以及快照是否标 {@code CONTENT_FORCED}（A5 B 方案，2026-10-30）。
+     *
+     * <p>hash 校验本身不在这里做 —— 它需要「调用方读到的原文」这个信息，只有 MCP 工具层有。
+     * 服务层只负责<b>留痕</b>：走了哪条路，事后必须能从日志和快照里看出来。
+     */
+    @Transactional
+    public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride,
+                      WriteOrigin origin) {
         clampColumns(newDoc);
         Doc old = docMapper.selectById(id);
         if (old == null) {
@@ -751,7 +764,14 @@ public class DocService {
         VerifyDecision vd = decideVerify(old, contentChanged, newDoc.getLastVerifiedAt());
         newDoc.setLastVerifiedAt(vd.at());
         newDoc.setLastVerifiedSource(vd.source());
-        saveVersionSnapshot(old, contentChanged, authorOverride);
+        if (contentChanged && origin == WriteOrigin.INTERNAL) {
+            // 内部/门户/回填路径：拿不到 originalHash，也确实不该要求（人是在浏览器里直接编的全文）。
+            // 但**必须留一行日志** —— 否则「哪次正文变更没经过 hash 校验」事后无从查证。
+            log.info("update: 正文变更走内部路径（未校验 originalHash）id={} oldLen={} newLen={} author={}",
+                    id, old.getContent() == null ? 0 : old.getContent().length(),
+                    incomingContent.length(), authorOverride);
+        }
+        saveVersionSnapshot(old, contentChanged, authorOverride, origin == WriteOrigin.FORCED);
 
         newDoc.setId(id);
         newDoc.setVersion(old.getVersion() + 1);
@@ -839,12 +859,22 @@ public class DocService {
      *        助手共用（开发/对话/不同项目）。署名必须由调用方自报，否则谁的活都记在同一个人头上。
      */
     private void saveVersionSnapshot(Doc old, boolean contentChanged, String authorOverride) {
+        saveVersionSnapshot(old, contentChanged, authorOverride, false);
+    }
+
+    /**
+     * @param forced 本次是否 force 强制写回（明知会截断）。为 true 时 change_type 标
+     *               {@code CONTENT_FORCED}，让审计一眼看出「这一版是硬压的」。
+     *               <p>为什么用 change_type 而不是加列：加列要改 DDL，而这一条证据只需要
+     *               「能区分」；读取端所有判断都是「是不是 META」，新值天然落到「有正文」这一支。
+     */
+    private void saveVersionSnapshot(Doc old, boolean contentChanged, String authorOverride, boolean forced) {
         DocVersion v = new DocVersion();
         v.setDocId(old.getId());
         v.setVersion(old.getVersion());
         if (contentChanged) {
             v.setContent(old.getContent());
-            v.setChangeType("CONTENT");
+            v.setChangeType(forced ? "CONTENT_FORCED" : "CONTENT");
         } else {
             // 正文没变就不存副本。NULL 是「本次没动正文」的显式标记，不是「数据丢了」；
             // 读取端遇到 NULL 会明确告诉调用方「该版仅元数据变更，正文请参考更早版本」。
