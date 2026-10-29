@@ -44,27 +44,35 @@ class DocVerifyTimeTest {
     }
 
     @Test
-    @DisplayName("守卫：create / update / appendContent / patchContent 四条写路径都要填验证时间")
+    @DisplayName("守卫：按方法名钉住 create / update / appendContent / patchContent 四条写路径，每条都要填验证时间")
     void allWritePathsFillVerifiedAt() throws Exception {
         Path src = Path.of("src/main/java/com/exphub/service/DocService.java");
         assertTrue(Files.exists(src), "找不到 DocService 源码：" + src.toAbsolutePath());
         String code = new String(Files.readAllBytes(src), StandardCharsets.UTF_8);
 
-        // 变量名各不相同（doc / newDoc / patch ×2），所以按「赋值次数」钉比按变量名钉更耐改：
-        // 4 条写路径 = create + update + appendContent + patchContent，一条都不能少。
-        // 2026-10-29 起 update 走白名单判定（decideVerify），不再直接调 resolveVerifiedAt，
-        // 所以两种形态一起数 —— 丢一条路径仍然是红的。
-        int assigns = countOf(code, ".setLastVerifiedAt(resolveVerifiedAt(")
-                + countOf(code, ".setLastVerifiedAt(vd.at())");
-        assertEquals(4, assigns,
-                "填验证时间的写路径应为 4 条（create / update / appendContent / patchContent），实际 "
-                        + assigns + " —— 少一处就会出现「这条路径改过的文档永远不超期」，"
-                        + "而滚动日志恰恰全靠 append 长大");
-        assertTrue(code.contains("explicitVerify"), "入参必须先用局部变量接住，见 VerifiedSourceTest");
+        // 🔴 2026-10-29 改口径（越哥）：原来数「出现 4 次」。合并 resolveVerifiedAt 与白名单判定
+        //    vd.at() 两处调用面之后，数字失去意义 —— 少一条、另一条重复计入，总和照样 4、测试照样绿。
+        //    现在逐条按方法名钉，少哪条红哪条。
+        assertVerifiedIn(code, "public Doc create(Doc doc)", "create");
+        assertVerifiedIn(code, "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)", "update");
+        assertVerifiedIn(code, "public Doc appendContent(Long id, String addition, String authorName, LocalDateTime verifiedAt)", "appendContent");
+        assertVerifiedIn(code, "public Doc patchContent(Long id, String find, String replacement, String authorName, LocalDateTime verifiedAt)", "patchContent");
+
+        // update 走白名单判定：时间不再是 resolveVerifiedAt 直填，但必须仍由 decideVerify 产出
+        String updateBody = SourceScan.methodBody(code,
+                "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)");
+        assertTrue(updateBody.contains("decideVerify(old, contentChanged, newDoc.getLastVerifiedAt())"),
+                "update 路径必须走 decideVerify（白名单：只认 content），否则元数据更新会把验证时间刷成今天");
+        assertTrue(code.contains("explicitVerify"), "create 的入参必须先用局部变量接住，见 VerifiedSourceTest");
     }
 
-    private static int countOf(String code, String needle) {
-        return code.split(java.util.regex.Pattern.quote(needle), -1).length - 1;
+    /** 方法体必须存在，且里面有「把验证时间写进实体」的语句（两种形态任一）。 */
+    private static void assertVerifiedIn(String code, String signature, String label) {
+        String body = SourceScan.methodBody(code, signature);
+        assertTrue(!body.isEmpty(), label + " 方法体没取到（签名变了？）—— 守卫不能静默放行");
+        assertTrue(body.contains(".setLastVerifiedAt("),
+                label + " 没有填验证时间 —— 这条路径改过的文档会永远不超期，"
+                        + "而滚动日志恰恰全靠 append 长大");
     }
 
     @Test

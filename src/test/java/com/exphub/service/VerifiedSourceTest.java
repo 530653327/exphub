@@ -38,23 +38,36 @@ class VerifiedSourceTest {
     }
 
     @Test
-    @DisplayName("守卫：create / update / appendContent / patchContent 四条写路径都要同时填「时间」和「来源」")
+    @DisplayName("守卫：按方法名钉住 4 条 DocService 路径 + 门户 1 条，每条都要同时填「时间」和「来源」")
     void allWritePathsFillSource() throws Exception {
         String code = read("src/main/java/com/exphub/service/DocService.java");
 
-        // 2026-10-29 起 update 走白名单判定（decideVerify），时间与来源成对产出：vd.at() / vd.source()
-        int verifyAssigns = count(code, ".setLastVerifiedAt(resolveVerifiedAt(")
-                + count(code, ".setLastVerifiedAt(vd.at())");
-        assertEquals(4, verifyAssigns,
-                "写验证时间的路径应为 4 条（create / update / appendContent / patchContent），实际 "
-                        + verifyAssigns);
+        // 🔴 2026-10-29 改口径（越哥）：不再数总数（合并两处调用面后「少一条 + 另一条重复」总和不变）。
+        //    逐条按方法名钉，少哪条红哪条；update 与门户走白名单，时间/来源由判定结果成对产出。
+        assertPair(code, "public Doc create(Doc doc)", "create");
+        assertPair(code, "public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride)", "update");
+        assertPair(code, "public Doc appendContent(Long id, String addition, String authorName, LocalDateTime verifiedAt)", "appendContent");
+        assertPair(code, "public Doc patchContent(Long id, String find, String replacement, String authorName, LocalDateTime verifiedAt)", "patchContent");
 
-        int sourceAssigns = count(code, ".setLastVerifiedSource(resolveVerifiedSource(")
-                + count(code, ".setLastVerifiedSource(vd.source())");
-        assertEquals(4, sourceAssigns,
-                "填了验证时间却没填来源的路径有 " + (verifyAssigns - sourceAssigns) + " 条。"
-                        + "后果：这条路径写出来的文档来源是 null，回执只能印「来源未记录」——"
-                        + "等于把「自动/人工/回填」三态里最需要区分的那一态又还回去了");
+        // 第 5 条：门户改正文（2026-10-29 补写）。来源只能是 auto —— 门户证明不了用户真的复核过
+        String portal = read("src/main/java/com/exphub/controller/PublicUserController.java");
+        String portalBody = SourceScan.methodBody(portal, "public R<Doc> updateMyDoc(");
+        assertTrue(!portalBody.isEmpty(), "门户 updateMyDoc 方法体没取到（签名变了？）—— 守卫不能静默放行");
+        assertTrue(portalBody.contains("setLastVerifiedAt("), "门户改正文必须写验证时间，否则与 MCP 侧语义分叉");
+        assertTrue(portalBody.contains("setLastVerifiedSource(DocService.VERIFIED_AUTO)"),
+                "门户来源必须填 auto；填 manual 等于伪造一次「人工确认」");
+        assertTrue(portalBody.contains("contentChanged"),
+                "门户必须判 content 是否真变了：只改标题/摘要不该刷新验证时间");
+    }
+
+    /** 方法体必须存在，且「时间」与「来源」成对出现（否则来源为 null，回执只能印「来源未记录」）。 */
+    private static void assertPair(String code, String signature, String label) {
+        String body = SourceScan.methodBody(code, signature);
+        assertTrue(!body.isEmpty(), label + " 方法体没取到（签名变了？）—— 守卫不能静默放行");
+        assertTrue(body.contains(".setLastVerifiedAt("), label + " 没有填验证时间");
+        assertTrue(body.contains(".setLastVerifiedSource("),
+                label + " 填了时间却没填来源 —— 这条路径写出来的文档来源是 null，"
+                        + "回执只能印「来源未记录」，等于把最需要区分的「自动/人工/回填」三态又还回去了");
     }
 
     @Test
