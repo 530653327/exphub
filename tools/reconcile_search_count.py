@@ -97,7 +97,15 @@ class Mcp:
             if obj.get("id") != mid:
                 continue
             content = (obj.get("result") or {}).get("content") or []
-            return content[0].get("text", "") if content else json.dumps(obj, ensure_ascii=False)
+            txt = content[0].get("text", "") if content else json.dumps(obj, ensure_ascii=False)
+            # 服务端把回执再 JSON 编码了一层（content.text 是带引号的字符串字面量），
+            # 不解开的话正则会把结尾的 \n" 也当成正文的一部分。
+            if isinstance(txt, str) and txt[:1] == '"':
+                try:
+                    txt = json.loads(txt)
+                except Exception:
+                    pass
+            return txt
         raise RuntimeError("等不到响应")
 
 
@@ -142,7 +150,7 @@ def main():
     text = Mcp(url, key).tool("search_experience", call)
 
     m_n = re.search(r"提到这组词的文档共 (\d+) 条", text)
-    m_q = re.search(r"对账用串（原样传 countByFulltext，别手抄）：(\S+)", text)
+    m_q = re.search(r"对账用串（原样传 countByFulltext，别手抄）：(.+)$", text, re.MULTILINE)
     m_code = re.search(r"projectName=([A-Za-z0-9_\-]+)】", text)
     if not (m_n and m_q):
         print(text)
