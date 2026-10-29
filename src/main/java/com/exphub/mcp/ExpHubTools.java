@@ -976,10 +976,13 @@ public class ExpHubTools {
      *
      * <p>口径（写死，别顺手改）：
      * <ul>
-     *   <li>N = 项目侧命中<b>总数</b>（不是这里列出来的 5 条）；</li>
+     *   <li>N = 项目侧「<b>提到这组词的文档数</b>」（纯 DB 计数，一条 count(*) 可对账），
+     *       不是这里列出来的 5 条；也<b>不等于</b>带 projectName 重搜后回执上的「匹配 N 条」——
+     *       后者过了相关度重排、会少。两个口径必须都能解释，所以文案里写清；</li>
      *   <li>这段不受全局 offset/limit 影响 —— 翻到第几页都照常出现，否则翻页的人永远看不到；</li>
      *   <li>每条只给标题 + 摘要（60 字），<b>不出正文</b>：不带 projectName 就拿不到项目正文，
      *       隔离边界不能靠这一行提示破掉；</li>
+     *   <li>projectName 的值前后两处都要带上（段头 + 段尾），别让读者自己回头猜 code；</li>
      *   <li>N=0 或没识别到项目 → 返回空串，回执与「没有项目命中」时逐字一致。</li>
      * </ul>
      */
@@ -987,16 +990,19 @@ public class ExpHubTools {
         if (project == null || projectTotal <= 0 || top == null || top.isEmpty()) {
             return "";
         }
+        String code = project.getProjectCode();
         StringBuilder sb = new StringBuilder("\n---\n");
-        sb.append("【项目「").append(project.getName()).append("」内还有 ").append(projectTotal)
-          .append(" 条，仅看项目请传 projectName】\n\n");
+        sb.append("【项目「").append(project.getName()).append("」内提到这组词的文档共 ").append(projectTotal)
+          .append(" 条，下列 ").append(top.size()).append(" 条只给标题+摘要；查项目内请传 projectName=")
+          .append(code).append("】\n\n");
         int i = 1;
         for (Doc d : top) {
             sb.append(i++).append(". 【ID:").append(d.getId()).append("】").append(d.getTitle())
               .append(" —— ").append(previewSummary(d.getSummary())).append("\n");
         }
-        sb.append("\n💡 以上仅标题+摘要，不返正文；要看内容请带 projectName=")
-          .append(project.getProjectCode()).append(" 重搜该项目。\n");
+        sb.append("\n💡 不返正文。").append(projectTotal)
+          .append(" 是「提到这组词的文档数」（DB 直查可对账）；带 projectName=").append(code)
+          .append(" 重搜会按相关度重排，条数可能更少，不是算错。\n");
         return sb.toString();
     }
 
