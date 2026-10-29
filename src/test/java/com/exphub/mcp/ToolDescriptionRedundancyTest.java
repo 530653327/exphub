@@ -309,8 +309,9 @@ class ToolDescriptionRedundancyTest {
         // 与 list_archive_batches（P0-3 按批次查归档）。参数 158 → 163。
         // 2026-10-29：43 → 44，新增 list_candidate_history（判定流水可读）；参数 163 → 165。
         // 同日 P1-4：scan_similar_docs 加 enqueueProgress，参数 165 → 166。
-        assertEquals(44, toolCount, "工具数变了（44 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(166, paramCount, "参数数变了（166 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 同日 P2-6：44 → 45，新增 replace_section（按节整节替换）；参数 166 → 170。
+        assertEquals(45, toolCount, "工具数变了（45 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(170, paramCount, "参数数变了（170 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

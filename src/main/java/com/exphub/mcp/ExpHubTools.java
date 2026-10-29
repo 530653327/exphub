@@ -10,6 +10,7 @@ import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import com.exphub.service.ReviewCandidateService;
 import com.exphub.entity.ReviewCandidate;
+import com.exphub.service.SectionSplicer;
 import com.exphub.service.SimilarityScorer;
 import com.exphub.service.SimilarityService;
 import com.exphub.service.DocTemplateService;
@@ -1760,6 +1761,76 @@ public class ExpHubTools {
      * <p>比 update 整篇写回安全得多：只替换命中的那一段，其余原样保留。
      * 但必须保证 find 唯一 —— 多处命中时宁可报错让调用方加长锚点，也不能替它猜改哪一处。
      */
+    @Tool(name = "replace_section",
+          description = "【按节整节替换】用一个二级标题定位，把这**一节**的内容整体换掉，其余部分一字不动。"
+                  + "专治滚动日志类文档的「替换最新一轮」：patch 要求 find 恰好命中一次，而整节内容每轮全变，"
+                  + "锚点只能靠两个标题夹着、标题一改就断。这个工具把「定位」和「替换」分开，边界由代码算。"
+                  + "范围 = 从该 `## 标题` 行到下一个同级/更高级标题之前（三级及以下不影响边界）。"
+                  + "命中 0 个 → 列出正文现有二级标题；命中 ≥2 个 → 列出各命中行号，让你先改名；"
+                  + "newContent 为空 → 直接拒绝（清空整节请用 patch）。**只改正文，照常存版本快照。**"
+                  + "回执给出被替换的字符区间与前后各 40 字上下文，方便你确认截到哪儿。")
+    public String replaceSection(
+            @ToolParam(description = "必填。文档 ID") Long docId,
+            @ToolParam(description = "必填。二级小节标题文本，不用带 ##（写成「## 最新一轮」也认）") String sectionHeading,
+            @ToolParam(description = "必填。这一节的新正文（**不含标题行**，标题行原文自动保留）") String newContent,
+            @ToolParam(description = "可选。**谁改的**——操作人署名", required = false) String updatedName) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
+                return "❌ 权限不足：该API Key没有编辑经验的权限";
+            }
+            if (docId == null) {
+                return "❌ 必须传 docId";
+            }
+            Doc existing = docService.getById(docId);
+            if (existing == null) {
+                return "❌ 未找到ID为" + docId + "的经验";
+            }
+            String by = resolveAuthor(updatedName, assistant);
+            String body = existing.getContent() == null ? "" : existing.getContent();
+
+            SectionSplicer.Result r = SectionSplicer.splice(body, sectionHeading, newContent);
+            if (!r.ok()) {
+                StringBuilder sb = new StringBuilder("❌ ").append(r.message());
+                sb.append("（未做任何修改，仍是 v").append(existing.getVersion()).append("）\n");
+                if (!r.candidates().isEmpty()) {
+                    sb.append("\n**并列候选**：\n");
+                    for (String c : r.candidates()) sb.append("- ").append(c).append("\n");
+                }
+                return sb.toString();
+            }
+
+            int oldVer = existing.getVersion();
+            int oldLen = body.length();
+            Doc patch = new Doc();
+            patch.setContent(r.newContent());
+            Doc updated = docService.update(docId, patch, java.util.Set.of(), by);
+            if (updated == null) {
+                return "❌ 更新失败：文档可能已被删除（# " + docId + "）";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ 已按节替换：**").append(existing.getTitle()).append("**（#").append(docId).append("）\n\n");
+            sb.append("**命中节**: ").append(r.heading()).append("\n");
+            sb.append("**替换区间**: 第 ").append(r.start()).append(" ~ ").append(r.end())
+              .append(" 字符（原区间 ").append(r.end() - r.start()).append(" 字符）\n");
+            sb.append("**正文长度**: ").append(oldLen).append(" → ").append(r.newContent().length())
+              .append("（").append(r.newContent().length() - oldLen >= 0 ? "+" : "")
+              .append(r.newContent().length() - oldLen).append("）\n");
+            sb.append("**版本**: v").append(oldVer).append(" → v").append(updated.getVersion()).append("\n");
+            if (r.before() != null) sb.append("**区间前 40 字**: ").append(r.before()).append("\n");
+            if (r.after() != null) sb.append("**区间后 40 字**: ").append(r.after()).append("\n");
+            sb.append("\n**只改了这一节**，其余正文与你传的内容之外的部分一字未动；"
+                    + "旧版本已存快照 v").append(oldVer).append("（要用 get_experience_history 才能看到）。\n");
+            sb.append("**操作人**: ").append(by);
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.replaceSection: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "按节替换失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
     @Tool(name = "patch_experience", description = "在正文里做局部替换（find→replace）。改错字、更新一行结论、换一个失效命令时用它，不要整篇写回。⚠️ find 必须在正文里**恰好出现一次**（0 次或多次都报错，可加长锚点），至少 4 字符。replace 传空串=删除该段。")
     public String patchExperience(
             @ToolParam(description = "经验ID") Long id,
