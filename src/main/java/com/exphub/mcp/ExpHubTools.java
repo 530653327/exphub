@@ -3167,21 +3167,26 @@ public class ExpHubTools {
                     SimilarityService.TierDetail pd = r.tierDetail().get(SimilarityScorer.Kind.PROGRESS);
                     int pJudged = pd == null ? 0 : pd.droppedJudged();
                     int pShown = pd == null ? 0 : pd.shown();
-                    int pOther = Math.max(0, prog - pJudged - pShown);
+                    int pUndecided = Math.max(0, prog - pJudged);          // 客观事实：③层里没判过的对数
+                    int pNotReached = Math.max(0, pUndecided - pShown);    // 没判过、但本次没进清单
                     sb.append("\n**③层进度类**: 超阈值 ").append(prog).append(" 对 = 已判过 ")
-                      .append(pJudged).append(" 对（distinct 永久出队，**与开关无关**）");
-                    if (pOther > 0) {
-                        sb.append(" + 其余 ").append(pOther).append(" 对（被 limit/抽样截断，本次没展示）");
-                    }
-                    sb.append(" + **本次").append(enqProgress ? "入队 " : "拦下 ").append(pShown).append(" 对**");
+                      .append(pJudged).append(" 对（distinct 永久出队，**与开关无关**）")
+                      .append(" + 未判过 ").append(pUndecided).append(" 对");
                     if (enqProgress) {
-                        sb.append("（`enqueueProgress=true`，与旧行为一致）\n");
+                        sb.append("\n　本次 ").append(pShown).append(" 对按 `enqueueProgress=true` 入队（与旧行为一致）");
+                    } else if (pShown > 0) {
+                        sb.append("\n　本次 **拦下 ").append(pShown).append(" 对**")
+                          .append("（`enqueueProgress=false`，这 ").append(pShown)
+                          .append(" 对才是本开关挡下的）");
                     } else {
-                        sb.append("（`enqueueProgress=false`，**这 ").append(pShown)
-                          .append(" 对才是本开关挡下的**；其余 ").append(prog - pShown)
-                          .append(" 对本来也不会走到入队）\n");
-                        sb.append("　③层是同一件事的分阶段记录，按设计不该判重；要恢复旧行为传 `enqueueProgress=true`\n");
+                        sb.append("\n　本次 **0 对走到入队判定**")
+                          .append("（③层一条都没进清单，`enqueueProgress=false` 在这里没起作用）");
                     }
+                    if (pNotReached > 0) {
+                        sb.append("；另有 ").append(pNotReached)
+                          .append(" 对未判的③层没进清单（被 limit / 抽样截断，没到入队这一步）");
+                    }
+                    sb.append("\n　③层是同一件事的分阶段记录，按设计不该判重；要恢复旧行为传 `enqueueProgress=true`\n");
                 }
 
                 // 本次只展示前 N 条：说清「分层统计」和「展示清单」是两个口径，
