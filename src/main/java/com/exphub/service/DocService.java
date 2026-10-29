@@ -764,11 +764,12 @@ public class DocService {
         VerifyDecision vd = decideVerify(old, contentChanged, newDoc.getLastVerifiedAt());
         newDoc.setLastVerifiedAt(vd.at());
         newDoc.setLastVerifiedSource(vd.source());
-        if (contentChanged && origin == WriteOrigin.INTERNAL) {
-            // 内部/门户/回填路径：拿不到 originalHash，也确实不该要求（人是在浏览器里直接编的全文）。
-            // 但**必须留一行日志** —— 否则「哪次正文变更没经过 hash 校验」事后无从查证。
-            log.info("update: 正文变更走内部路径（未校验 originalHash）id={} oldLen={} newLen={} author={}",
-                    id, old.getContent() == null ? 0 : old.getContent().length(),
+        if (contentChanged && (origin == WriteOrigin.INTERNAL || origin == WriteOrigin.LOCAL_EDIT)) {
+            // 内部/门户/回填/局部工具：拿不到 originalHash，也确实不该要求（人是在浏览器里直接编的全文，
+            // 或者服务端自己拼的全文）。但**必须留一行日志** —— 否则「哪次正文变更没经过 hash 校验」
+            // 事后无从查证。origin 一定要打出来：把局部工具混进「门户/迁移」里，翻日志时会误判是谁改的。
+            log.info("update: 正文变更未经 originalHash 校验（origin={}）id={} oldLen={} newLen={} author={}",
+                    origin, id, old.getContent() == null ? 0 : old.getContent().length(),
                     incomingContent.length(), authorOverride);
         }
         saveVersionSnapshot(old, contentChanged, authorOverride, origin == WriteOrigin.FORCED);

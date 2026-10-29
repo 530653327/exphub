@@ -78,11 +78,16 @@ class WholeDocHashGuardTest {
     }
 
     @Test
-    @DisplayName("内部/门户路径不校验 hash，但每次正文写入都要留日志")
+    @DisplayName("内部/门户路径不校验 hash，但每次正文写入都要留日志，且必须标出是哪条路径")
     void internalPathIsLogged() throws IOException {
         String svc = read(DOC_SERVICE);
-        assertTrue(svc.contains("未校验 originalHash"), "内部路径写正文必须留一行日志，否则成了无人知道的旁路");
-        assertTrue(svc.contains("origin == WriteOrigin.INTERNAL"), "日志只对内部路径打，别把已验证的也标成未校验");
+        assertTrue(svc.contains("未经 originalHash 校验"), "未校验 hash 的正文写入必须留一行日志，否则成了无人知道的旁路");
+        assertTrue(svc.contains("origin={}"),
+                "日志必须打出 origin：不打的话，replace_section 的写入会被误读成「门户改的」");
+        assertTrue(svc.contains("origin == WriteOrigin.INTERNAL") && svc.contains("origin == WriteOrigin.LOCAL_EDIT"),
+                "只有「本来就不该有 hash」的两条路径才打日志；已校验/强制写回不许标成未校验");
+        String tools = read(TOOLS);
+        assertTrue(tools.contains("WriteOrigin.LOCAL_EDIT"), "replace_section 必须显式声明 LOCAL_EDIT，别落进 INTERNAL");
     }
 
     @Test

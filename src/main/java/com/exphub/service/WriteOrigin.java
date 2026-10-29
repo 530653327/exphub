@@ -13,6 +13,14 @@ public enum WriteOrigin {
     /** 内部/门户路径：不校验 hash（调用方本来就持有全文），写正文时记一行日志留痕。 */
     INTERNAL,
 
+    /**
+     * 局部编辑工具（{@code replace_section}）：服务端自己拼出新全文，调用方从没持有过全文。
+     *
+     * <p>它和 {@link #INTERNAL} 的区别只在「日志里怎么称呼」：把局部工具混进「门户/迁移」里，
+     * 事后翻日志会以为门户改过这篇。两者都确实没有 hash 可比 —— 也不需要。
+     */
+    LOCAL_EDIT,
+
     /** MCP 整篇写回（update_experience / import_document）：调用方已用 originalHash 证明读到全文。 */
     HASH_VERIFIED,
 

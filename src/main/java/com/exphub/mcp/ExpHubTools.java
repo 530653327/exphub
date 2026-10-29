@@ -1945,7 +1945,7 @@ public class ExpHubTools {
             Doc patch = new Doc();
             patch.setContent(r.newContent());
             patch.setLastVerifiedAt(verified);
-            Doc updated = docService.update(docId, patch, java.util.Set.of(), by);
+            Doc updated = docService.update(docId, patch, java.util.Set.of(), by, WriteOrigin.LOCAL_EDIT);
             if (updated == null) {
                 return "❌ 更新失败：文档可能已被删除（# " + docId + "）";
             }
