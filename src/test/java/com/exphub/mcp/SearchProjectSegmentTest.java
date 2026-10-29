@@ -2,6 +2,7 @@ package com.exphub.mcp;
 
 import com.exphub.entity.Doc;
 import com.exphub.entity.Project;
+import com.exphub.service.DocService;
 import com.exphub.service.SourceScan;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -140,7 +141,7 @@ class SearchProjectSegmentTest {
         assertFalse(body.contains("projDocsHit"), "E5 那套「项目命中前置混排」的变量必须消失");
         assertFalse(body.contains("docs = merged"), "不许再把项目文档合并进主列表（主排序只能有一个域）");
         // 项目段只出现在三个位置：全局为空时的兜底、以及全局结果与翻页提示之后
-        assertEquals(2, occurrences(body, "renderProjectSegment(detected, projectTotal, projectTop)"),
+        assertEquals(2, occurrences(body, "renderProjectSegment(detected, projectTotal, projectTop, query)"),
                 "项目段只该在「全局 0 条」和「全部全局结果之后」两处出现");
     }
 
@@ -200,16 +201,54 @@ class SearchProjectSegmentTest {
         String svc = Files.readString(Path.of("src/main/java/com/exphub/service/DocService.java"),
                 StandardCharsets.UTF_8);
         String body = SourceScan.methodBody(svc,
-                "public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId, int page, int size)");
+                "int page, int size, SearchMeta meta)");
         assertFalse(body.isEmpty(), "取不到 search 方法体，守卫失效");
         assertFalse(body.contains("strictTotal >= size"),
                 "tier 判定挂在调用方 size 上，同一查询 limit=5 / limit=20 就会走不同档、报不同 total（L0-2 的根因）");
         assertTrue(body.contains("strictTotal >= DocService.STRICT_DIRECT_MIN_HITS")
                         || body.contains("strictTotal >= STRICT_DIRECT_MIN_HITS"),
                 "门槛必须用固定常量，不能是入参");
-        assertTrue(SourceScan.methodBody(svc, "public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId, int page, int size)")
+        assertTrue(SourceScan.methodBody(svc, "int page, int size, SearchMeta meta)")
                         .contains("Math.max(size, STRICT_DIRECT_MIN_HITS)"),
                 "覆盖度探针窗口也要与 size 解耦，否则 size 太小会探不到整词覆盖，档位又跟着变");
+    }
+
+    @Test
+    @DisplayName("首行口径标签：三个数并列时必须说清「12」是哪个 12")
+    void totalLabelStatesWhichNumberItIs() {
+        assertEquals("重排后判定相关", ExpHubTools.totalLabel(DocService.SearchTier.RERANK),
+                "OR 召回 + 覆盖率重排的档位，总数是「判定相关」的条数 —— 这正是 12 的来历");
+        assertEquals("严格命中（全文 AND 计数，未重排）", ExpHubTools.totalLabel(DocService.SearchTier.STRICT),
+                "严格档的总数是 SQL count，没重排；这里写「重排后」就是新造一个谎");
+        assertEquals("模糊匹配（LIKE 兜底）", ExpHubTools.totalLabel(DocService.SearchTier.LIKE));
+        assertEquals("匹配", ExpHubTools.totalLabel(null), "拿不到档位时退回中性词，别编一个具体口径");
+    }
+
+    @Test
+    @DisplayName("守卫：首行不许再写裸的「匹配 N 条」")
+    void headerMustUseLabelledTotal() throws IOException {
+        String src = Files.readString(Path.of("src/main/java/com/exphub/mcp/ExpHubTools.java"),
+                StandardCharsets.UTF_8);
+        String body = SourceScan.methodBody(src, "public String searchExperience(");
+        assertTrue(body.contains("totalLabel(searchMeta.tier)"), "首行必须用档位标签");
+        assertFalse(body.contains("append(\"匹配 \").append(effTotal)"),
+                "裸「匹配 N 条」已被退单：读者上一行读 12、下一行读 108，只能判定为算错");
+        assertTrue(body.contains("new DocService.SearchMeta()"), "档位要由 DocService 回传，不许在工具层猜");
+    }
+
+    @Test
+    @DisplayName("对账用串原样打出来：不靠人记 2-gram 展开规则")
+    void reconcileQueryIsPrintedVerbatim() {
+        Project p = project(9, "阿拉善植树赛事小程序", "alxa-planting-event");
+        String seg = ExpHubTools.renderProjectSegment(p, 6,
+                List.of(doc(684, "t", "s", "c")), "阿拉善 植树赛事 名额");
+        String expect = DocService.toOrQueryOf("阿拉善 植树赛事 名额");
+        assertTrue(seg.contains("对账用串"), "段尾必须给对账串：\n" + seg);
+        assertTrue(seg.contains(expect), "要打的是 countByFulltext 收到的那个串（2-gram 展开后）");
+        assertTrue(expect.contains("阿拉") && expect.contains("树赛"),
+                "展开后必然含 2-gram；不含就说明取到的不是真正入参");
+        String noQuery = ExpHubTools.renderProjectSegment(p, 6, List.of(doc(684, "t", "s", "c")));
+        assertFalse(noQuery.contains("对账用串"), "不传 query 的旧调用不该多出这一行（回执逐字不变那条红线）");
     }
 
     private static int occurrences(String haystack, String needle) {

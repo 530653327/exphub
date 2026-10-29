@@ -127,6 +127,37 @@ public class DocService {
      * @param projectId 项目ID。null=只搜全局经验（自动排除项目专属经验）；有值=只搜该项目内经验
      */
     public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId, int page, int size) {
+        return search(keyword, templateType, includeStatus, projectId, page, size, null);
+    }
+
+    /**
+     * 搜索命中所走的档位 —— 它决定回执上「N 条」到底是什么口径，必须能和数字一起说出去。
+     *
+     * <p>为什么要有这个东西（2026-10-30 阁主退单）：同一份回执里并列出现 12（重排后）、
+     * 111（宽松召回）、108（项目域 DB 计数）三个数，而首行只写「匹配 12 条」，没有口径标签，
+     * 读者上一行读 12、下一行读 108，只能判定为算错。
+     */
+    public enum SearchTier {
+        /** 严格 AND 全文命中，总数 = {@code countByFulltext} 的 SQL 计数（未重排）。 */
+        STRICT,
+        /** OR 召回 + 覆盖率重排，总数 = 重排后判定相关的条数（SQL 复现不出来）。 */
+        RERANK,
+        /** 全文索引覆盖不到时的 LIKE 兜底，总数 = LIKE 匹配条数。 */
+        LIKE,
+        /** 没走到任何一档（鉴权失败 / 查询词无实质内容 / 空结果）→ 0 条，口径无意义。 */
+        NONE
+    }
+
+    /** 调用方用来回传档位的可变小对象；不传就是不用（老调用方零改动）。 */
+    public static final class SearchMeta {
+        public SearchTier tier = SearchTier.NONE;
+    }
+
+    /**
+     * 搜索经验（带档位回传：{@code meta.tier} 告诉你这次的总数是什么口径）
+     */
+    public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId,
+                            int page, int size, SearchMeta meta) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
 
@@ -161,6 +192,7 @@ public class DocService {
         if (strictTotal > 0) {
             if (page > 1) {
                 log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
+                if (meta != null) meta.tier = SearchTier.STRICT;
                 return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
             }
             // 覆盖度探针固定看前 STRICT_DIRECT_MIN_HITS 条（与调用方 size 解耦），
@@ -174,6 +206,7 @@ public class DocService {
             if (hasExactCoverage(strictProbe.subList(0, coverageWindow), terms) && strictTotal >= STRICT_DIRECT_MIN_HITS) {
                 log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
                 List<Doc> strictDocs = probeSize > size ? strictProbe.subList(0, Math.min(size, strictProbe.size())) : strictProbe;
+                if (meta != null) meta.tier = SearchTier.STRICT;
                 return buildResultFromRecords(kw, new ArrayList<>(strictDocs), strictTotal, page, size);
             }
             log.info("search tier=strict-weak kw='{}' projectId={} hits={} → 放宽重排", kw, projectId, strictTotal);
@@ -187,6 +220,7 @@ public class DocService {
             if (!ranked.isEmpty()) {
                 log.info("search tier=relaxed kw='{}' projectId={} candidates={} accepted={}",
                         kw, projectId, candidates.size(), ranked.size());
+                if (meta != null) meta.tier = SearchTier.RERANK;
                 return pagedResult(kw, ranked, page, size);
             }
             log.info("search tier=relaxed-empty kw='{}' projectId={} candidates={} concepts={}",
@@ -194,6 +228,7 @@ public class DocService {
         }
 
         // ===== 第 3 级：LIKE 兜底（单字/标点等全文索引覆盖不到的场景）=====
+        if (meta != null) meta.tier = SearchTier.LIKE;
         return searchWithLike(keyword, templateType, includeStatus, projectId, page, size);
     }
 
@@ -251,6 +286,18 @@ public class DocService {
             return 0;
         }
         return docMapper.countByFulltext(terms.toOrQuery(), apiKey, projectId, tt, statusList);
+    }
+
+    /**
+     * 本次查询实际送进 {@code countByFulltext} 的那个串（{@code +(词 词 词)}）。
+     *
+     * <p>为什么要暴露出来：中文概念会被展开成 2-gram，手抄一个「看起来一样」的
+     * {@code +(阿拉善 植树赛事 名额)} 会数出 5，而真实串能数出 6 —— 差一条还查不出原因。
+     * 回执里把它原样打出来，对账的人复制粘贴即可，不靠记忆、不靠文档。
+     */
+    public static String toOrQueryOf(String keyword) {
+        SearchTerms terms = buildSearchTerms(keyword);
+        return terms.toOrQuery();
     }
 
     /**

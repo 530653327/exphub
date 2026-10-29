@@ -837,7 +837,8 @@ public class ExpHubTools {
             // 召回池 = offset + limit，上限 200：offset 很大时不至于让 DB 全表排序
             int poolSize = Math.min(effOffset + effLimit, SEARCH_POOL_MAX);
 
-            var result = docService.search(query, templateType, statusFilter, projectId, 1, poolSize);
+            DocService.SearchMeta searchMeta = new DocService.SearchMeta();
+            var result = docService.search(query, templateType, statusFilter, projectId, 1, poolSize, searchMeta);
             long matchedTotal = result.getTotal();
             java.util.List<Doc> docs = new ArrayList<>(result.getRecords());
 
@@ -906,7 +907,7 @@ public class ExpHubTools {
                 sb.append("4. 确认确实没有可用经验后，再 create_experience 沉淀\n");
                 // 全局 0 条、项目里有 → 这正是「搜不到就以为没记过、于是重复记一遍」的场景，
                 // 提示比什么都重要（L0-1b）。
-                sb.append(renderProjectSegment(detected, projectTotal, projectTop));
+                sb.append(renderProjectSegment(detected, projectTotal, projectTop, query));
                 return sb.toString();
             }
 
@@ -925,7 +926,8 @@ public class ExpHubTools {
             boolean hasMore = toIdx < effTotal;
 
             StringBuilder sb = new StringBuilder();
-            sb.append(filterInfo).append("匹配 ").append(effTotal).append(" 条");
+            sb.append(filterInfo).append(totalLabel(searchMeta.tier)).append(" ")
+              .append(effTotal).append(" 条");
             if (effOffset > 0 || pageDocs.size() < effTotal) {
                 sb.append("，本次返回第 ").append(fromIdx + 1).append("-").append(toIdx).append(" 条");
             }
@@ -949,7 +951,7 @@ public class ExpHubTools {
                   .append(" 条，共 ").append(effTotal).append(" 条）。\n");
             }
             // 项目侧命中：全部全局结果之后单独一段（末尾提示），不吃 offset/limit，只给标题+摘要。
-            sb.append(renderProjectSegment(detected, projectTotal, projectTop));
+            sb.append(renderProjectSegment(detected, projectTotal, projectTop, query));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.searchExperience: FAILED", e);
@@ -987,6 +989,17 @@ public class ExpHubTools {
      * </ul>
      */
     static String renderProjectSegment(Project project, long projectTotal, java.util.List<Doc> top) {
+        return renderProjectSegment(project, projectTotal, top, null);
+    }
+
+    /**
+     * 同上，外加一行「对账用串」：把本次真正送进 {@code countByFulltext} 的
+     * {@code +(词 词 词)} 原样打出来（2-gram 展开后的样子）。
+     *
+     * <p>2026-10-30 阁主点出：手抄这条串会差一条（5 vs 6），而这个坑之前只写在文档里靠人记。
+     * 打出来之后，对账就是「复制这一行 → 贴进 SQL → 数」，不依赖任何人的记忆。
+     */
+    static String renderProjectSegment(Project project, long projectTotal, java.util.List<Doc> top, String query) {
         if (project == null || projectTotal <= 0 || top == null || top.isEmpty()) {
             return "";
         }
@@ -1003,12 +1016,37 @@ public class ExpHubTools {
         sb.append("\n💡 不返正文。").append(projectTotal)
           .append(" 是「提到这组词的文档数」（DB 直查可对账）；带 projectName=").append(code)
           .append(" 重搜会按相关度重排，条数可能更少，不是算错。\n");
+        String orQuery = query == null ? "" : DocService.toOrQueryOf(query);
+        if (!orQuery.isEmpty()) {
+            sb.append("🧾 对账用串（原样传 countByFulltext，别手抄）：").append(orQuery).append("\n");
+        }
         return sb.toString();
     }
 
+    /**
+     * 首行「N 条」的口径标签（2026-10-30 阁主退单：没标签时 12 / 111 / 108 并列会被判成算错）。
+     *
+     * <p>标签必须跟着<b>实际走的档位</b>，不能一律写「重排后」：
+     * 严格档的总数是 {@code countByFulltext} 的 SQL 计数，没经过重排；写「重排后」就是新的谎。
+     */
+    static String totalLabel(DocService.SearchTier tier) {
+        if (tier == null) {
+            return "匹配";
+        }
+        switch (tier) {
+            case STRICT:
+                return "严格命中（全文 AND 计数，未重排）";
+            case RERANK:
+                return "重排后判定相关";
+            case LIKE:
+                return "模糊匹配（LIKE 兜底）";
+            default:
+                return "匹配";
+        }
+    }
+
     /** 列表类工具的默认/最大条数（E6）：默认 10 条省 token，需要全量走 offset 翻页 */
-    private static final int LIST_DEFAULT_SIZE = 10;
-    private static final int LIST_MAX_SIZE = 50;
+    private static final int LIST_DEFAULT_SIZE = 10;    private static final int LIST_MAX_SIZE = 50;
 
     /** update_experience 允许的模板类型（与 doc_templates 表 + 进度类一致） */
     static final java.util.List<String> ALLOWED_TEMPLATE_TYPES_LIST = java.util.List.of(
