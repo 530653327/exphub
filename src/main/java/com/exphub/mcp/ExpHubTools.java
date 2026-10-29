@@ -1515,7 +1515,8 @@ public class ExpHubTools {
             @ToolParam(description = "可选。模板类型：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal/project_progress/generic", required = false) String templateType,
             @ToolParam(description = "可选。**谁改的**——写进快照的审计署名（与 authorName「文档作者」不同）", required = false) String updatedName,
             @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
-                    + "**不传 = 本次写入视为一次验证，记当前时间**；"
+                    + "**不传 = 正文有变更时记为一次验证（当前时间）；只改 tags/title/summary 等元数据则不刷新**"
+                    + "（2026-10-29 起口径改为「内容变更即验证」，白名单只认 content）；"
                     + "只改错字/润色、结论没重新确认过时，传原来的验证时间（get_experience_detail 回执里有）表示不刷新。"
                     + "格式不认识会直接报错，不会静默忽略。", required = false) String verifiedAt) {
         
