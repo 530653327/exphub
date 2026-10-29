@@ -91,4 +91,55 @@ class ScanReceiptTextTest {
         assertTrue(s.contains("字符数"), "口径要写明，否则和字节/行数混用：" + s);
         assertTrue(s.contains("8000"), "要给出阈值本身：" + s);
     }
+
+    @Test
+    @DisplayName("告警分支边界：差 1 也要叫，多算 1 也要叫，恰好闭合时一声都不能响")
+    void alertBranchBoundary() {
+        // 这是 #751 第 1 条要的「正向用例」：故意让加总不成立，确认告警分支真的会触发。
+        // 一个永远不触发的报警器，用「它没响」是测不出来的（死分支照样绿）。
+        String under = ExpHubTools.tierLimitLine("① 疑似字面重复", tier(6, 3, 0, 2, 0, 0, 0, 0), 2);
+        assertTrue(under.contains("未归因 1 条"), "差 1 也得报：" + under);
+        assertTrue(under.contains("自相矛盾"), under);
+
+        String over = ExpHubTools.tierLimitLine("① 疑似字面重复", tier(6, 3, 0, 4, 0, 0, 0, 0), 2);
+        assertTrue(over.contains("多算 1 条"), "多算也要报，否则计数重复累加会被当成正常：" + over);
+        assertTrue(over.contains("自相矛盾"), over);
+
+        // 反向守卫：恰好闭合时禁止出现告警（否则每次扫描都在喊狼来了）
+        String exact = ExpHubTools.tierLimitLine("① 疑似字面重复", tier(6, 3, 1, 2, 0, 0, 0, 0), 2);
+        assertFalse(exact.contains("自相矛盾"), "3 + 1 + 2 = 6，闭合，不该报警：" + exact);
+        assertFalse(exact.contains("未归因"), exact);
+        assertFalse(exact.contains("多算"), exact);
+    }
+
+    @Test
+    @DisplayName("整层被挤空时原因行仍然打印（这条由渲染解耦保证，闭合测试管不到）")
+    void limitBlockStillPrintsEmptyTier() {
+        // #751 第 3 条：三层、名额只够第一层 —— ③层展示 0，但它那行必须还在。
+        java.util.Map<com.exphub.service.SimilarityScorer.Kind, SimilarityService.TierDetail> detail =
+                new java.util.LinkedHashMap<>();
+        detail.put(com.exphub.service.SimilarityScorer.Kind.DUPLICATE, tier(3, 3, 0, 0, 0, 0, 0, 0));
+        detail.put(com.exphub.service.SimilarityScorer.Kind.SERIES, tier(0, 0, 0, 0, 0, 0, 0, 0));
+        detail.put(com.exphub.service.SimilarityScorer.Kind.PROGRESS, tier(5, 0, 0, 5, 0, 0, 0, 0));
+
+        String block = ExpHubTools.tierLimitBlock(detail, 2);
+        assertTrue(block.contains("① 疑似字面重复：超阈值 3 对 = 展示 3 条"), block);
+        assertTrue(block.contains("③ 进度/日志记录：超阈值 5 对 = 展示 0 条 + limit 截断 5"),
+                "整层展示 0 时原因行必须仍然打印：" + block);
+        assertFalse(block.contains("同话题演进链"), "该层一对都没有(above=0)，不该占一行：" + block);
+        // 顺序固定 ①②③，不随 Map 插入顺序变（插入顺序被人改成 ③ 在前也不会乱）
+        assertTrue(block.indexOf("① 疑似") < block.indexOf("③ 进度"),
+                "行顺序必须是 ①→③：" + block);
+    }
+
+    @Test
+    @DisplayName("没有任何截断时说「全部展示」，不是留空让人猜")
+    void limitBlockAllShown() {
+        java.util.Map<com.exphub.service.SimilarityScorer.Kind, SimilarityService.TierDetail> detail =
+                new java.util.LinkedHashMap<>();
+        detail.put(com.exphub.service.SimilarityScorer.Kind.DUPLICATE, tier(2, 2, 0, 0, 0, 0, 0, 0));
+        String block = ExpHubTools.tierLimitBlock(detail, 2);
+        assertTrue(block.contains("各层全部展示，无截断"), block);
+        assertFalse(block.contains("①"), "无截断时不必列层：" + block);
+    }
 }

@@ -2338,6 +2338,40 @@ public class ExpHubTools {
      * <p>所以这里遍历 {@code tierDetail} 而不是展示行，与「展示了几条」完全解耦；
      * 且**加总必须等于「超阈值 − 展示」**，对不上就把差额印出来 —— 不替读者凑数。
      */
+    /**
+     * 渲染「限流归因」整块（2026-10-29 越哥 #751 第 3 条：渲染抽成纯函数才测得了）。
+     *
+     * <p><b>为什么这一段必须与展示列表解耦</b>：整层一条都没进清单时，展示循环里根本没有它，
+     * 而读者最需要的恰恰是那一层「为什么一条都没有」。最初这段写在
+     * {@code for (Row row : r.rows())} 里，整层被挤空就一个字都不出（已经踩过一次）。
+     * 抽出来后，「三层、名额只够第一层、第三层展示 0 但原因行仍在」这条能直接断言。
+     *
+     * @param detail    每层的自证数据（键为层）
+     * @param maxPerDoc 回显给读者看的 per-doc 阈值（必须是调用方实际生效的值，不是默认值）
+     */
+    public static String tierLimitBlock(java.util.Map<SimilarityScorer.Kind, SimilarityService.TierDetail> detail,
+                                        int maxPerDoc) {
+        if (detail == null || detail.isEmpty()) return "";
+        boolean anyDrop = false;
+        for (SimilarityService.TierDetail d : detail.values()) {
+            if (d != null && d.hasDrop()) { anyDrop = true; break; }
+        }
+        StringBuilder sb = new StringBuilder();
+        if (!anyDrop) {
+            sb.append("**限流归因**：各层全部展示，无截断\n");
+            return sb.toString();
+        }
+        sb.append("**限流归因**（每层独立算；调 limit 只改变其中「limit 截断」那一项）：\n");
+        for (SimilarityScorer.Kind k : new SimilarityScorer.Kind[]{
+                SimilarityScorer.Kind.DUPLICATE, SimilarityScorer.Kind.SERIES,
+                SimilarityScorer.Kind.PROGRESS, SimilarityScorer.Kind.UNKNOWN}) {
+            SimilarityService.TierDetail d = detail.get(k);
+            if (d == null || d.above() == 0) continue;   // 该层一对都没有，不必占一行
+            sb.append(tierLimitLine(tierShortName(k), d, maxPerDoc)).append("\n");
+        }
+        return sb.toString();
+    }
+
     public static String tierLimitLine(String layerName, SimilarityService.TierDetail d, int maxPerDoc) {
         if (d == null) return "";
         int shown = d.shown();
@@ -3319,24 +3353,9 @@ public class ExpHubTools {
                 // 2026-10-29 越哥 P1-5：限流原因透明 —— TierDetail 五个数拼一行，**每层独立**。
                 // 上面那句「按性质分层」只说各层有多少对，不说为什么没全展示；
                 // 而「展示 5 条」的成因可能是抽样上限、per-doc、limit 三者之一，调参方向完全不同。
-                // 这段遍历 tierDetail（与展示行无关），所以整层被挤掉时也有交代。
-                boolean anyDrop = false;
-                for (SimilarityService.TierDetail d0 : r.tierDetail().values()) {
-                    if (d0.hasDrop()) { anyDrop = true; break; }
-                }
-                if (!anyDrop) {
-                    sb.append("\n**限流归因**：各层全部展示，无截断\n");
-                } else {
-                    sb.append("\n**限流归因**（每层独立算；调 limit 只改变其中「limit 截断」那一项）：\n");
-                    for (SimilarityScorer.Kind k0 : new SimilarityScorer.Kind[]{
-                            SimilarityScorer.Kind.DUPLICATE, SimilarityScorer.Kind.SERIES,
-                            SimilarityScorer.Kind.PROGRESS, SimilarityScorer.Kind.UNKNOWN}) {
-                        SimilarityService.TierDetail d0 = r.tierDetail().get(k0);
-                        if (d0 == null) continue;
-                        if (d0.above() == 0) continue;       // 该层一对都没有，不必占一行
-                        sb.append(tierLimitLine(tierShortName(k0), d0, r.maxPerDoc())).append("\n");
-                    }
-                }
+                // 整块渲染已抽成 tierLimitBlock()，与展示行完全解耦 —— 这样「整层被挤空时
+                // 原因行仍在」这件事才测得了（#751 第 3 条）。
+                sb.append("\n").append(tierLimitBlock(r.tierDetail(), r.maxPerDoc()));
 
                 // 2026-10-29 越哥 P1-4：③层默认不入队，必须单列说清楚。
                 //

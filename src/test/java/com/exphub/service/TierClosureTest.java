@@ -237,4 +237,111 @@ class TierClosureTest {
         }
         org.junit.jupiter.api.Assertions.assertTrue(lines >= 3, "四个场景合起来至少该有 3 行分层文案");
     }
+
+    /** 取「label 之后的第一个数字」；label 不在文案里则返回 null */
+    private static Integer numAfter(String line, String label) {
+        int i = line.indexOf(label);
+        if (i < 0) return null;
+        int k = i + label.length();
+        while (k < line.length() && !Character.isDigit(line.charAt(k))) k++;
+        int e = k;
+        while (e < line.length() && Character.isDigit(line.charAt(e))) e++;
+        return (k == e) ? null : Integer.valueOf(line.substring(k, e));
+    }
+
+    /** 固定句式里的数字（「超阈值 N 对 = 展示 M 条」永远打印，0 也打） */
+    private static void assertNumber(String line, String label, int expected, String field) {
+        assertEquals(Integer.valueOf(expected), numAfter(line, label),
+                field + "：文案印 " + numAfter(line, label) + "，select() 字段是 " + expected + " —— " + line);
+    }
+
+    /** 原因项：字段为 0 时文案里不该出现该项，非 0 时必须一字不差 */
+    private static void assertCause(String line, String label, int expected, String field) {
+        Integer got = numAfter(line, label);
+        if (expected == 0) {
+            org.junit.jupiter.api.Assertions.assertNull(got,
+                    field + " 实际为 0，文案里却出现「" + label + "」：" + line);
+        } else {
+            assertEquals(Integer.valueOf(expected), got,
+                    field + "：文案印 " + got + "，select() 字段是 " + expected + " —— " + line);
+        }
+    }
+
+    /**
+     * #751 第 2 条：把端到端断言从「不含关键字」升级为「数字逐项比对」。
+     *
+     * <p>为什么要升级：只断言「不含告警关键字」时，**两边口径漂移但仍落在无告警区间**的情况测不出来
+     * —— 比如文案把 per-doc 的数印成 limit 的数，总数照样闭合，关键字断言照样绿。
+     * 那是把两份代码的偏差遮住，比没有测试更危险（因为它给了「已覆盖」的错觉）。
+     */
+    @Test
+    @DisplayName("端到端数字逐项比对：文案里每个数字都必须等于 select() 的同名字段")
+    void receiptNumbersMatchFields() {
+        List<List<SimilarityService.Row>> scenes = new ArrayList<>();
+        int[][] params = new int[3][];
+
+        // 场景 A：①②③ 混合，名额只够 6 条 → limit 截断 + ②层 per-doc 残留
+        List<SimilarityService.Row> a = new ArrayList<>();
+        for (int i = 2; i <= 4; i++) {
+            a.add(row(500L, 500L + i, Kind.DUPLICATE, 0.95, "dup" + i, "dupB" + i));
+        }
+        for (int i = 2; i <= 5; i++) {
+            a.add(row(600L, 600L + i, Kind.SERIES, 0.88, "ser" + i, "serB" + i));
+        }
+        for (int i = 2; i <= 7; i++) {
+            a.add(row(700L + i, 800L + i, Kind.PROGRESS, 0.80,
+                    "progtopicAlfa" + i, "progtopicBeta" + i));
+        }
+        scenes.add(a);
+        params[0] = new int[]{6, 1, 2};
+
+        // 场景 B：③层 10 对，抽样上限 3 → 抽样省 7
+        List<SimilarityService.Row> b = new ArrayList<>();
+        for (int i = 2; i <= 11; i++) {
+            b.add(row(100L + i, 200L + i, Kind.PROGRESS, 0.80,
+                    "uniquetopicAlfa" + i, "uniquetopicBeta" + i));
+        }
+        scenes.add(b);
+        params[1] = new int[]{50, 2, 3};
+
+        // 场景 C：③层 5 对，其中 2 对已判过
+        List<SimilarityService.Row> c = new ArrayList<>();
+        for (int i = 2; i <= 6; i++) {
+            c.add(row(900L + i, 950L + i, Kind.PROGRESS, 0.80,
+                    "jtopicAlfa" + i, "jtopicBeta" + i));
+        }
+        scenes.add(c);
+        params[2] = new int[]{50, 2, 5};
+
+        Set<String> judged = new HashSet<>();
+        judged.add(ReviewCandidateService.pairKey(902L, 952L));
+        judged.add(ReviewCandidateService.pairKey(903L, 953L));
+
+        int checked = 0;
+        for (int idx = 0; idx < scenes.size(); idx++) {
+            int maxRows = params[idx][0], perDoc = params[idx][1], sample = params[idx][2];
+            SimilarityService.Selection sel = idx == 2
+                    ? run(scenes.get(idx), maxRows, perDoc, sample, judged)
+                    : run(scenes.get(idx), maxRows, perDoc, sample);
+
+            for (Map.Entry<Kind, SimilarityService.TierDetail> e : sel.detail().entrySet()) {
+                SimilarityService.TierDetail d = e.getValue();
+                if (d.above() == 0) continue;
+                String line = com.exphub.mcp.ExpHubTools.tierLimitLine(
+                        com.exphub.mcp.ExpHubTools.tierShortName(e.getKey()), d, perDoc);
+
+                assertNumber(line, "超阈值 ", d.above(), "层" + e.getKey() + " above");
+                assertNumber(line, "= 展示 ", d.shown(), "层" + e.getKey() + " shown");
+                assertCause(line, "已判过不占名额 ", d.droppedJudged(), "层" + e.getKey() + " droppedJudged");
+                assertCause(line, "③层抽样上限省 ", d.droppedBySample(), "层" + e.getKey() + " droppedBySample");
+                assertCause(line, "同话题跳过 ", d.droppedSameTopic(), "层" + e.getKey() + " droppedSameTopic");
+                assertCause(line, "」挤掉 ", d.droppedPerDoc(), "层" + e.getKey() + " droppedPerDoc");
+                assertCause(line, "同族交叉对略去 ", d.droppedRedundant(), "层" + e.getKey() + " droppedRedundant");
+                assertCause(line, "limit 截断 ", d.droppedByLimit(), "层" + e.getKey() + " droppedByLimit");
+                checked++;
+            }
+        }
+        // 构成：A 有 ①②③ 三层、B 只有③层、C 只有③层 → 共 5 行，每行 8 个数字都被比对过
+        assertEquals(5, checked, "分层文案行数变了：应为 A(3) + B(1) + C(1) = 5");
+    }
 }
