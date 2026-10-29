@@ -103,7 +103,10 @@ public final class SectionSplicer {
         int start = offsetOf(lines, startLine);
         int end = offsetOf(lines, endLine);
 
-        String head = lines[startLine].trim();
+        // 标题行**原样保留**（2026-10-29 越哥要求）：原来取 lines[startLine].trim()，
+        // 会把「  ### 甲」这类带缩进的标题改成顶格 —— 只是替换正文，不该顺手改别人的格式。
+        String head = lines[startLine];
+        if (head.endsWith("\r")) head = head.substring(0, head.length() - 1);
         String body = newBody.trim();
         String block = head + "\n\n" + body + "\n\n";
         String tail = (end < content.length()) ? content.substring(end) : "";

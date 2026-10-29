@@ -1452,6 +1452,8 @@ public class ExpHubTools {
             }
             // D1 包 4 · L0 写入查重：旁路执行，失败只降级成一句提示，绝不影响创建结果
             result.append(similarityDigest(similarityService.checkOnCreate(created)));
+            // 2026-10-29 P2-8：一上来就写超长文的情况（把整份报告当一篇存），这里就该提醒
+            result.append(longDocHint(created.getContent() == null ? 0 : created.getContent().length()));
             return result.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.createExperience: FAILED", e);
@@ -1630,6 +1632,9 @@ public class ExpHubTools {
                         : "已归入项目 " + targetProjectId + "（项目内隔离，不进全局搜索）").append("\n");
             }
             res.append("\n经验已更新，其他AI助手可以看到最新内容。");
+            // 2026-10-29 P2-8：整篇写回后正文多长，这里如实报（用库里回读值，不复述入参）
+            res.append(longDocHint(afterUpdate == null || afterUpdate.getContent() == null
+                    ? 0 : afterUpdate.getContent().length()));
             return res.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.updateExperience: FAILED", e);
@@ -1697,6 +1702,8 @@ public class ExpHubTools {
             if (addPreview.length() > 120) addPreview = addPreview.substring(0, 120) + "…";
             sb.append("**追加内容开头**:\n> ").append(addPreview.replace("\n", "\n> ")).append("\n\n");
             sb.append("原文完整保留（服务端拼接，未经过任何截断），旧版本已存为快照 v").append(oldVer).append("。");
+            // 2026-10-29 P2-8：滚动日志/施工日志就是靠 append 一次次涨到 2 万字的，这里提醒最有效
+            sb.append(longDocHint(newLen));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.appendExperience: FAILED", e);
@@ -1824,6 +1831,8 @@ public class ExpHubTools {
             sb.append("\n**只改了这一节**，其余正文与你传的内容之外的部分一字未动；"
                     + "旧版本已存快照 v").append(oldVer).append("（要用 get_experience_history 才能看到）。\n");
             sb.append("**操作人**: ").append(by);
+            // 2026-10-29 P2-8：按节替换是最容易被用来「把一大段塞进长文」的入口，这里一并提示
+            sb.append(longDocHint(r.newContent().length()));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.replaceSection: FAILED", e);
@@ -2277,6 +2286,85 @@ public class ExpHubTools {
                     + " —— 回执自相矛盾，请报缺陷";
         }
         return s;
+    }
+
+    /**
+     * 长文软阈值（2026-10-29 越哥 P2-8）：**只提示，不阻断**。
+     *
+     * <p><b>为什么要提示</b>：文档变长的代价不是「占空间」，是两件同时变贵的事——
+     * ① 整篇导出可能读不全（超长会被接口截断，读的人拿到的是残篇）；
+     * ② 每次改动都得整篇写回或小心翼翼找锚点，改一处事实赔一版快照。
+     * 这两个代价都在长文上叠加，而写的人当时感觉不到。
+     *
+     * <p><b>口径</b>：字符数（{@code String.length()}，与 #713 的「字」一致），不是字节、不是行数；
+     * <b>含</b>正文里所有内容（含历史小节），不做「扣除归档导读」这类特殊处理 ——
+     * 口径越简单越不会被下一个人理解错。
+     *
+     * <p>阈值取 8000：现网 #748（日常入口，3.8k）远低于它，#714（拆分前 21k）远高于它，
+     * 落在中间的正是「该拆还没拆」的那批。
+     */
+    static final int LONG_DOC_SOFT_LIMIT = 8000;
+
+    static String longDocHint(int chars) {
+        if (chars <= LONG_DOC_SOFT_LIMIT) return "";
+        return "\n📏 **长度提示（不阻断，操作已生效）**：正文现在 " + chars + " 字（字符数口径），"
+                + "超过 " + LONG_DOC_SOFT_LIMIT + " 字的软阈值。\n"
+                + "　长文会让「整篇导出可能读不全」和「改一处要赔一版快照」同时变贵 —— "
+                + "建议按主题拆章，或把可归档的施工日志挪进独立文档（只留一句「历史见 X」）。\n";
+    }
+
+    /** 层名短称（一行清单用；组头那句长描述不适合挤进表格） */
+    static String tierShortName(SimilarityScorer.Kind k) {
+        if (k == null) return "其他";
+        return switch (k) {
+            case DUPLICATE -> "① 疑似字面重复";
+            case SERIES -> "② 同话题演进链";
+            case PROGRESS -> "③ 进度/日志记录";
+            case UNKNOWN -> "④ 信息不足";
+        };
+    }
+
+    /**
+     * 单层限流归因：**一行说清这一层为什么没全展示**（2026-10-29 越哥 P1-5）。
+     *
+     * <p><b>要解决的具体症状</b>：同一份数据「只展示 5 条」，可能是③层抽样上限、可能是
+     * 「单篇最多 2 条」的 per-doc 限流、也可能是 limit 截断 —— 三种原因调参方向完全不同
+     * （一个传 progressSample=0，一个放宽 maxPerDoc，一个加大 limit），但回执不说是哪个。
+     *
+     * <p><b>为什么原来那段不够</b>：每层的自证括号写在 {@code for (Row row : r.rows())} 里，
+     * 只有该层**至少有一条进了清单**时才渲染。整层被挤掉时（limit 小、③层一条没进）
+     * 一个字都不输出，读者只看到「超阈值 17 对」却拿不到任何原因。
+     *
+     * <p>所以这里遍历 {@code tierDetail} 而不是展示行，与「展示了几条」完全解耦；
+     * 且**加总必须等于「超阈值 − 展示」**，对不上就把差额印出来 —— 不替读者凑数。
+     */
+    static String tierLimitLine(String layerName, SimilarityService.TierDetail d, int maxPerDoc) {
+        if (d == null) return "";
+        int shown = d.shown();
+        int accounted = d.droppedJudged() + d.droppedPerDoc() + d.droppedBySample()
+                + d.droppedSameTopic() + d.droppedRedundant() + d.droppedByLimit();
+
+        java.util.List<String> causes = new java.util.ArrayList<>();
+        // 顺序按「先绑的闸先说」：已判过 → 抽样上限 → 同话题 → per-doc → 同族 → limit
+        if (d.droppedJudged() > 0) causes.add("已判过不占名额 " + d.droppedJudged());
+        if (d.droppedBySample() > 0) causes.add("③层抽样上限省 " + d.droppedBySample() + "（要全看传 progressSample=0）");
+        if (d.droppedSameTopic() > 0) causes.add("同话题跳过 " + d.droppedSameTopic());
+        if (d.droppedPerDoc() > 0) causes.add("「单篇最多 " + maxPerDoc + " 条」挤掉 " + d.droppedPerDoc());
+        if (d.droppedRedundant() > 0) causes.add("同族交叉对略去 " + d.droppedRedundant());
+        if (d.droppedByLimit() > 0) causes.add("limit 截断 " + d.droppedByLimit());
+
+        StringBuilder sb = new StringBuilder("· ").append(layerName)
+                .append("：超阈值 ").append(d.above()).append(" 对 = 展示 ").append(shown).append(" 条");
+        if (!causes.isEmpty()) sb.append(" + ").append(String.join(" + ", causes));
+        int expect = d.above() - shown;
+        if (accounted != expect) {
+            int diff = expect - accounted;
+            sb.append(diff > 0 ? " + **未归因 " + diff + " 条**" : " + **多算 " + (-diff) + " 条**")
+              .append("（加总不等于「超阈值 − 展示」，回执自相矛盾，请报缺陷）");
+        } else if (causes.isEmpty()) {
+            sb.append("（全部展示，无截断）");
+        }
+        return sb.toString();
     }
 
     /** 满员那种口径（`未展示 145 对 = 139 + 6`），同样要求加总吻合 */
@@ -3227,6 +3315,28 @@ public class ExpHubTools {
                     sb.append("｜进度/日志记录 ").append(prog).append(" 对（一般不用判）");
                 }
                 if (unk > 0) sb.append("｜信息不足 ").append(unk).append(" 对");
+
+                // 2026-10-29 越哥 P1-5：限流原因透明 —— TierDetail 五个数拼一行，**每层独立**。
+                // 上面那句「按性质分层」只说各层有多少对，不说为什么没全展示；
+                // 而「展示 5 条」的成因可能是抽样上限、per-doc、limit 三者之一，调参方向完全不同。
+                // 这段遍历 tierDetail（与展示行无关），所以整层被挤掉时也有交代。
+                boolean anyDrop = false;
+                for (SimilarityService.TierDetail d0 : r.tierDetail().values()) {
+                    if (d0.hasDrop()) { anyDrop = true; break; }
+                }
+                if (!anyDrop) {
+                    sb.append("\n**限流归因**：各层全部展示，无截断\n");
+                } else {
+                    sb.append("\n**限流归因**（每层独立算；调 limit 只改变其中「limit 截断」那一项）：\n");
+                    for (SimilarityScorer.Kind k0 : new SimilarityScorer.Kind[]{
+                            SimilarityScorer.Kind.DUPLICATE, SimilarityScorer.Kind.SERIES,
+                            SimilarityScorer.Kind.PROGRESS, SimilarityScorer.Kind.UNKNOWN}) {
+                        SimilarityService.TierDetail d0 = r.tierDetail().get(k0);
+                        if (d0 == null) continue;
+                        if (d0.above() == 0) continue;       // 该层一对都没有，不必占一行
+                        sb.append(tierLimitLine(tierShortName(k0), d0, r.maxPerDoc())).append("\n");
+                    }
+                }
 
                 // 2026-10-29 越哥 P1-4：③层默认不入队，必须单列说清楚。
                 //

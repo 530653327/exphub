@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -130,6 +131,51 @@ class SectionSplicerTest {
         assertEquals(2, r.candidates().size(), "应给出两处候选：" + r.candidates());
         assertTrue(r.candidates().get(0).contains("第 1 行"), r.candidates().toString());
         assertTrue(r.candidates().get(1).contains("第 4 行"), r.candidates().toString());
+    }
+
+    @Test
+    @DisplayName("同名三级小节并列时同样拒绝（不能因为级别深就随便挑一个改）")
+    void rejectsAmbiguousLevel3() {
+        // 实际场景：滚动日志里每轮都写「### 最新一轮」，改名时很容易留下两个同名节
+        String doc = String.join("\n",
+                "# 日志",
+                "",
+                "### 最新一轮",
+                "10-28 的内容",
+                "",
+                "### 最新一轮",
+                "10-29 的内容",
+                "",
+                "### 更早",
+                "旧内容");
+        SectionSplicer.Result r = SectionSplicer.splice(doc, "最新一轮", "新内容");
+        assertFalse(r.ok(), "同名三级小节并列必须拒绝");
+        assertEquals(2, r.candidates().size(), "应给出两处候选：" + r.candidates());
+        assertTrue(r.candidates().get(0).contains("第 3 行"), "第 1 处应在第 3 行：" + r.candidates());
+        assertTrue(r.candidates().get(1).contains("第 6 行"), "第 2 处应在第 6 行：" + r.candidates());
+        // 拒绝时不能改内容
+        assertNull(r.newContent(), "拒绝时不得返回新正文");
+    }
+
+    @Test
+    @DisplayName("标题行原样保留：级别与缩进一字不改，且不会重复出一个新标题")
+    void keepsHeadingLineVerbatim() {
+        String doc = "### 甲\n旧内容\n\n### 乙\nB";
+        SectionSplicer.Result r = SectionSplicer.splice(doc, "甲", "新甲");
+        assertTrue(r.ok(), r.message());
+        assertEquals("### 甲\n\n新甲\n\n### 乙\nB", r.newContent());
+        // 标题行必须只出现一次：拼接时再补一个标题就会变成「### 甲\n\n### 甲」
+        int first = r.newContent().indexOf("### 甲");
+        assertEquals(first, r.newContent().lastIndexOf("### 甲"), "标题不应重复出现：" + r.newContent());
+    }
+
+    @Test
+    @DisplayName("标题带前导缩进时不被 trim 掉（只替换正文，不动别人的格式）")
+    void preservesHeadingIndent() {
+        String doc = "  ### 甲\n旧内容\n\n### 乙\nB";
+        SectionSplicer.Result r = SectionSplicer.splice(doc, "甲", "新甲");
+        assertTrue(r.ok(), r.message());
+        assertTrue(r.newContent().startsWith("  ### 甲\n\n新甲"), "缩进应原样保留：" + r.newContent());
     }
 
     @Test
