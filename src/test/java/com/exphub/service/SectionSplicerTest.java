@@ -29,6 +29,26 @@ class SectionSplicerTest {
             "C 内容");
 
     @Test
+    @DisplayName("三级标题也能当目标：边界是下一个 ≤3 级的标题（#748 的小节就是 ### 级）")
+    void level3WorksAsTarget() {
+        String doc = "# 大标题\n\n### 三、待办\n旧待办内容\n\n### 四、口径\n口径内容";
+        SectionSplicer.Result r = SectionSplicer.splice(doc, "三、待办", "新待办");
+        assertTrue(r.ok(), r.message());
+        assertTrue(r.newContent().contains("### 三、待办\n\n新待办"), r.newContent());
+        assertTrue(r.newContent().contains("### 四、口径\n口径内容"), "下一个三级标题应成为边界");
+    }
+
+    @Test
+    @DisplayName("三级标题下的四级子标题属于本节内容，不构成边界")
+    void level4StaysInsideLevel3() {
+        String doc = "### 甲\n\n#### 甲-1\ndetail\n\n### 乙\nB";
+        SectionSplicer.Result r = SectionSplicer.splice(doc, "甲", "新甲");
+        assertTrue(r.ok(), r.message());
+        assertFalse(r.newContent().contains("#### 甲-1"), "四级子标题内容应随本节被替换");
+        assertTrue(r.newContent().contains("### 乙"));
+    }
+
+    @Test
     @DisplayName("正常替换中间一节：前后两节一字不动")
     void replacesMiddleSection() {
         SectionSplicer.Result r = SectionSplicer.splice(DOC, "第二节", "新的 B 内容");

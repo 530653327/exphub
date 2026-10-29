@@ -65,18 +65,19 @@ public final class SectionSplicer {
 
         String[] lines = content.split("\n", -1);
         List<Integer> hitLines = new ArrayList<>();
-        List<String> allH2 = new ArrayList<>();
+        List<String> allHeadings = new ArrayList<>();
         for (int i = 0; i < lines.length; i++) {
-            String t = headingText(lines[i]);
-            if (t == null) continue;
-            if (isLevel2(lines[i])) allH2.add("「" + t + "」");
+            int lv = headingLevel(lines[i]);
+            if (lv == 0) continue;
+            String t = normalizeHeading(lines[i]);
+            if (lv <= 3) allHeadings.add("「" + t + "」");
             if (t.equals(h)) hitLines.add(i);
         }
 
         if (hitLines.isEmpty()) {
-            String tip = allH2.isEmpty() ? "（这篇正文里没有任何二级标题）"
-                    : "现有二级标题：" + String.join("、", allH2);
-            return Result.fail("没找到标题为「" + h + "」的二级小节。" + tip, allH2, List.of());
+            String tip = allHeadings.isEmpty() ? "（这篇正文里没有任何一~三级标题）"
+                    : "现有标题：" + String.join("、", allHeadings);
+            return Result.fail("没找到标题为「" + h + "」的小节。" + tip, allHeadings, List.of());
         }
         if (hitLines.size() > 1) {
             List<String> cands = new ArrayList<>();
@@ -84,13 +85,16 @@ public final class SectionSplicer {
                 cands.add("第 " + (i + 1) + " 行：" + lines[i].trim());
             }
             return Result.fail("标题「" + h + "」在正文里出现 " + hitLines.size()
-                    + " 次，无法确定改哪一节。请先把标题改成互不相同（或改用 patch 精确替换）。", allH2, cands);
+                    + " 次，无法确定改哪一节。请先把标题改成互不相同（或改用 patch 精确替换）。", allHeadings, cands);
         }
 
         int startLine = hitLines.get(0);
+        int level = headingLevel(lines[startLine]);
         int endLine = lines.length;
+        // 边界：下一个「同级或更高级」标题（level ≤ 本节 level）；更深层标题属于本节内容
         for (int i = startLine + 1; i < lines.length; i++) {
-            if (isLevel2(lines[i]) || isLevel1(lines[i])) {
+            int lv = headingLevel(lines[i]);
+            if (lv != 0 && lv <= level) {
                 endLine = i;
                 break;
             }
@@ -110,7 +114,7 @@ public final class SectionSplicer {
 
         return new Result(true,
                 "命中标题「" + h + "」（第 " + (startLine + 1) + " 行起，到第 " + endLine + " 行之前）",
-                merged, start, end, head, before, after, allH2, List.of());
+                merged, start, end, head, before, after, allHeadings, List.of());
     }
 
     /** 把「## 最新一轮」「最新一轮」「##最新一轮」统一成「最新一轮」 */
@@ -123,27 +127,29 @@ public final class SectionSplicer {
         return t.trim();
     }
 
-    /** 是标题行则返回标题文本，否则返回 null。只认 1~2 级（决定边界的那两级） */
+    /**
+     * 标题级别：{@code #} 的数量（1~6），不是标题返回 0。
+     *
+     * <p>2026-10-29 修正：原来只认 1~2 级 —— 但实际文档里「三、待办」这类小节常写成 {@code ###}，
+     * 于是工具在最该用的地方用不了。改成通用级别判断：边界 = 下一个「级别 ≤ 本节级别」的标题，
+     * 更深的子标题属于本节内容。
+     */
+    static int headingLevel(String line) {
+        if (line == null) return 0;
+        String t = line.trim();
+        if (t.isEmpty() || t.charAt(0) != '#') return 0;
+        int n = 0;
+        while (n < t.length() && t.charAt(n) == '#') n++;
+        if (n < 1 || n > 6) return 0;
+        if (n >= t.length()) return 0;                 // 纯 "###" 不算标题
+        char c = t.charAt(n);
+        if (c != ' ' && c != '\t') return 0;           // 必须有空白，避免把 #tag 当标题
+        return n;
+    }
+
+    /** 是标题行则返回标题文本，否则返回 null（一~六级都算，级别见 {@link #headingLevel}） */
     static String headingText(String line) {
-        if (line == null) return null;
-        String t = line.trim();
-        if (!t.startsWith("#")) return null;
-        if (isLevel1(t) || isLevel2(t)) {
-            return normalizeHeading(t);
-        }
-        return null;
-    }
-
-    private static boolean isLevel1(String line) {
-        String t = line.trim();
-        return t.startsWith("# ") || t.equals("#");
-    }
-
-    private static boolean isLevel2(String line) {
-        String t = line.trim();
-        if (!t.startsWith("##")) return false;
-        if (t.startsWith("###")) return false;
-        return t.length() > 2;
+        return headingLevel(line) == 0 ? null : normalizeHeading(line);
     }
 
     /** 第 lineIdx 行的起始字符偏移（按 \n 计，行尾的 \n 归前一行） */
