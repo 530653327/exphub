@@ -70,6 +70,10 @@ public class Doc {
     // 搜索回执的「超期 N 条」只认这一列 —— 没有它就只能拿 updated_at 凑，等于拿「谁最近动过」
     // 冒充「谁最近确认过」。
     private LocalDateTime lastVerifiedAt;
+    // 验证时间的来源（2026-10-29）：backfill / auto / manual。
+    // 为什么必须单独存：存量 645 篇的值是 updated_at 回填来的 —— 那是「最后一次被改过」的下界，
+    // 不是「有人确认过结论还成立」。只把时间显示出来、不标来源，下一个 AI 会把它当证据用。
+    private String lastVerifiedSource;
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

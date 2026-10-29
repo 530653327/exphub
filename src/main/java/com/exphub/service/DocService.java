@@ -97,7 +97,11 @@ public class DocService {
         doc.setStatus("ACTIVE");
         // 新建即视为一次验证（这条经验是刚被写下的结论）。
         // 保留传入值只在「搬迁/导入历史文档」时有用，正常创建传 null → 填当前时间。
-        doc.setLastVerifiedAt(resolveVerifiedAt(doc.getLastVerifiedAt()));
+        // ⚠️ 必须先把入参存进局部变量：下面 setLastVerifiedAt 会改写字段，
+        //    再读 doc.getLastVerifiedAt() 拿到的就是刚填的时间，来源会被误判成 manual。
+        LocalDateTime explicitVerify = doc.getLastVerifiedAt();
+        doc.setLastVerifiedAt(resolveVerifiedAt(explicitVerify));
+        doc.setLastVerifiedSource(resolveVerifiedSource(explicitVerify));
         docMapper.insert(doc);
         
         // 记录操作日志
@@ -738,7 +742,9 @@ public class DocService {
         // 验证时间：**默认刷新**为现在（改内容通常意味着有人重新看过这条结论），
         // 但允许调用方显式传旧值原样写回 —— 「只改一个错字」不该把 90 天前的验证时间刷成今天，
         // 否则过期判定永远触发不了（#752：时效要能当判据，前提是它不能被顺手刷新）。
-        newDoc.setLastVerifiedAt(resolveVerifiedAt(newDoc.getLastVerifiedAt()));
+        LocalDateTime explicitVerifyU = newDoc.getLastVerifiedAt();
+        newDoc.setLastVerifiedAt(resolveVerifiedAt(explicitVerifyU));
+        newDoc.setLastVerifiedSource(resolveVerifiedSource(explicitVerifyU));
         // A3：只有正文真的变了才存全文快照。
         // content 为 null（= 不传 = 不改）或与原值完全相同，都算「元数据变更」，
         // 这类快照只记一条事件（change_type=META、content=NULL），不再重复存 4KB 正文。
@@ -912,6 +918,7 @@ public class DocService {
         // ⚠️ 这条路径不走 update()，验证时间必须在这里也填 —— 漏一处就会出现
         //    「append 过的文档永远不超期」，而滚动日志恰恰全靠 append 长大
         patch.setLastVerifiedAt(resolveVerifiedAt(verifiedAt));
+        patch.setLastVerifiedSource(resolveVerifiedSource(verifiedAt));
         docMapper.updateById(patch);
 
         Doc updated = docMapper.selectById(id);
@@ -952,6 +959,7 @@ public class DocService {
         patch.setContent(merged);
         patch.setVersion(old.getVersion() + 1);
         patch.setLastVerifiedAt(resolveVerifiedAt(verifiedAt));
+        patch.setLastVerifiedSource(resolveVerifiedSource(verifiedAt));
         docMapper.updateById(patch);
 
         Doc updated = docMapper.selectById(id);
@@ -974,6 +982,25 @@ public class DocService {
      */
     static LocalDateTime resolveVerifiedAt(LocalDateTime explicit) {
         return explicit != null ? explicit : LocalDateTime.now();
+    }
+
+    /** 验证时间来源：回填（updated_at 推出来的） / 写入时自动 / 人工声明 */
+    public static final String VERIFIED_BACKFILL = "backfill";
+    public static final String VERIFIED_AUTO = "auto";
+    public static final String VERIFIED_MANUAL = "manual";
+
+    /**
+     * 验证时间的「来源」——决定回执里那句话该怎么写。
+     *
+     * <p><b>为什么必须存来源（2026-10-29 阁主第 ① 条）</b>：645 篇存量值是用 {@code updated_at}
+     * 回填的，那只是「最后一次被改过」的下界，不是「有人确认过结论仍然成立」。
+     * 回执只显示时间、不显示来源，下一个 AI 读到就会当验证证据用 ——
+     * 而这个坑只有「读文档才知道」，字段本身不会骗人。
+     *
+     * @param explicit 调用方是否显式传了 verifiedAt
+     */
+    static String resolveVerifiedSource(LocalDateTime explicit) {
+        return explicit != null ? VERIFIED_MANUAL : VERIFIED_AUTO;
     }
 
     /**

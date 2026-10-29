@@ -2416,6 +2416,23 @@ public class ExpHubTools {
     }
 
     /**
+     * 验证时间来源的展示标签（2026-10-29 阁主第 ① 条）。
+     *
+     * <p>三态必须一眼分开，尤其 {@code backfill}：那批值是从 {@code updated_at} 推出来的，
+     * 只代表「最后一次被改过」，<b>不是</b>「有人确认过结论还成立」。
+     * 回执里不加这个标签，下一个 AI 就会拿它当验证证据 —— 而这个误会不会有任何报错提醒。
+     */
+    static String verifiedSourceLabel(String source) {
+        if (source == null || source.trim().isEmpty()) return "来源未记录";
+        return switch (source.trim()) {
+            case DocService.VERIFIED_BACKFILL -> "**回填值，非验证证据**";
+            case DocService.VERIFIED_MANUAL -> "人工声明";
+            case DocService.VERIFIED_AUTO -> "写入时自动记录";
+            default -> "来源未记录（" + source.trim() + "）";
+        };
+    }
+
+    /**
      * 写回执里的验证时间行（自证值：读库里真实结果，不复述入参）。
      *
      * <p>为什么必须回显：调用方传了旧值到底有没有生效，从别处看不出来 ——
@@ -2432,8 +2449,15 @@ public class ExpHubTools {
         }
         String day = v.toLocalDate().toString();
         long days = java.time.temporal.ChronoUnit.DAYS.between(v.toLocalDate(), java.time.LocalDate.now());
-        return "**验证时间**: " + day + "（" + (days <= 0 ? "今天" : days + " 天前") + "，"
-                + (explicit ? "沿用你传的值，本次未刷新" : "本次刷新") + "）\n";
+        String when = days <= 0 ? "今天" : days + " 天前";
+        // 「沿用你传的值」这句不能省：调用方传了旧值到底有没有生效，只能从这里看出来（#752 验收项）。
+        String how = explicit ? "沿用你传的值，本次未刷新" : "本次刷新";
+        // 回填值不参与「刷新/未刷新」的判断：它本来就不是一次写入行为产生的
+        if (DocService.VERIFIED_BACKFILL.equals(after.getLastVerifiedSource())) {
+            how = "历史回填，非验证证据";
+        }
+        return "**验证时间**: " + day + "（" + when + "｜"
+                + verifiedSourceLabel(after.getLastVerifiedSource()) + "，" + how + "）\n";
     }
 
     /** 超过这个天数未验证，就在搜索回执顶部提示一行（只读计算，不改排序、不隐藏） */
@@ -2454,19 +2478,23 @@ public class ExpHubTools {
         if (docs == null || docs.isEmpty()) return "";
         java.time.LocalDate cutoff = today.minusDays(STALE_VERIFY_DAYS);
         int stale = 0;
+        int backfill = 0;           // 超期条目里有多少是 updated_at 回填出来的
         Doc oldest = null;          // 最久未验证的那条（未记录的优先，因为它连起点都没有）
         boolean oldestUnknown = false;
         long oldestDays = 0;
         for (Doc d : docs) {
             java.time.LocalDateTime v = d.getLastVerifiedAt();
+            boolean isBackfill = DocService.VERIFIED_BACKFILL.equals(d.getLastVerifiedSource());
             if (v == null) {
                 stale++;
+                if (isBackfill) backfill++;
                 if (!oldestUnknown) { oldest = d; oldestUnknown = true; }
                 continue;
             }
             java.time.LocalDate day = v.toLocalDate();
             if (day.isBefore(cutoff)) {
                 stale++;
+                if (isBackfill) backfill++;
                 long days = java.time.temporal.ChronoUnit.DAYS.between(day, today);
                 if (!oldestUnknown && (oldest == null || days > oldestDays)) {
                     oldest = d;
@@ -2484,7 +2512,13 @@ public class ExpHubTools {
                       : "，" + oldest.getLastVerifiedAt().toLocalDate() + "，" + oldestDays + " 天")
               .append("）");
         }
-        sb.append("\n　只提示、不过滤：这些条目仍可能是对的，但**引用前先核一遍**，别把过期结论当现状。\n");
+        sb.append("\n");
+        if (backfill > 0) {
+            // 回填值必须点出来：它是 updated_at 推出来的，真实「最后一次确认」只会更早
+            sb.append("　⚠️ 其中 ").append(backfill).append(" 条是 `updated_at` **回填值**、不是验证证据"
+                    + "（真实确认时间只会更早，别把它当「最近核过」）。\n");
+        }
+        sb.append("　只提示、不过滤：这些条目仍可能是对的，但**引用前先核一遍**，别把过期结论当现状。\n");
         return sb.toString();
     }
 
@@ -2655,7 +2689,8 @@ public class ExpHubTools {
             long days = java.time.temporal.ChronoUnit.DAYS.between(
                     verified.toLocalDate(), java.time.LocalDate.now());
             sb.append("**验证时间**: ").append(verified.toLocalDate())
-              .append("（").append(days <= 0 ? "今天" : days + " 天前").append("）");
+              .append("（").append(days <= 0 ? "今天" : days + " 天前").append("｜")
+              .append(verifiedSourceLabel(doc.getLastVerifiedSource())).append("）");
             if (days > STALE_VERIFY_DAYS) {
                 sb.append("　⚠️ 超过 ").append(STALE_VERIFY_DAYS).append(" 天未验证，引用前先核");
             }

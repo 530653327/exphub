@@ -50,15 +50,14 @@ class DocVerifyTimeTest {
         assertTrue(Files.exists(src), "找不到 DocService 源码：" + src.toAbsolutePath());
         String code = new String(Files.readAllBytes(src), StandardCharsets.UTF_8);
 
-        assertTrue(code.contains("doc.setLastVerifiedAt(resolveVerifiedAt(doc.getLastVerifiedAt()))"),
-                "create 未填验证时间 —— 新建的文档会永远显示「未记录」");
-        assertTrue(code.contains("newDoc.setLastVerifiedAt(resolveVerifiedAt(newDoc.getLastVerifiedAt()))"),
-                "update 未填验证时间");
-        // append / patch 各一处（两条路径写法同名，用出现次数区分：合计 2 次 patch 变量赋值）
-        int patchAssigns = code.split("patch\\.setLastVerifiedAt\\(resolveVerifiedAt\\(", -1).length - 1;
-        assertEquals(2, patchAssigns,
-                "appendContent / patchContent 各需一处（实际 " + patchAssigns + "）—— "
-                        + "少一处就会出现「这条路径改过的文档永远不超期」");
+        // 变量名各不相同（doc / newDoc / patch ×2），所以按「赋值次数」钉比按变量名钉更耐改：
+        // 4 条写路径 = create + update + appendContent + patchContent，一条都不能少。
+        int assigns = code.split("\\.setLastVerifiedAt\\(resolveVerifiedAt\\(", -1).length - 1;
+        assertEquals(4, assigns,
+                "填验证时间的写路径应为 4 条（create / update / appendContent / patchContent），实际 "
+                        + assigns + " —— 少一处就会出现「这条路径改过的文档永远不超期」，"
+                        + "而滚动日志恰恰全靠 append 长大");
+        assertTrue(code.contains("explicitVerify"), "入参必须先用局部变量接住，见 VerifiedSourceTest");
     }
 
     @Test

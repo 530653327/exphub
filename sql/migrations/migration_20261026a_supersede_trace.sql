@@ -51,8 +51,13 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'docs'
 
 -- 回填历史：已有取代关系但没留痕的，标记人为「未记录」
 -- （不做猜测；诚实地写「未记录」比编一个名字更符合审计要求）
+--
+-- ⚠️ `updated_at = updated_at` 不是多余：docs.updated_at 带 ON UPDATE CURRENT_TIMESTAMP，
+-- 这句 UPDATE 只 SET 别的列，MySQL 仍会把 updated_at 刷成执行时刻。
+-- 2026-10-29 已经因此把全库修改时间压平过一次，见 migration_20261029c 的说明。
 UPDATE docs
-   SET superseded_marked_by = '未记录（该列上线前产生）'
+   SET superseded_marked_by = '未记录（该列上线前产生）',
+       updated_at           = updated_at
  WHERE superseded_by IS NOT NULL
    AND (superseded_marked_by IS NULL OR superseded_marked_by = '');
 
