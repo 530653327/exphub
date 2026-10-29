@@ -1515,8 +1515,10 @@ public class ExpHubTools {
             @ToolParam(description = "可选。模板类型：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal/project_progress/generic", required = false) String templateType,
             @ToolParam(description = "可选。**谁改的**——写进快照的审计署名（与 authorName「文档作者」不同）", required = false) String updatedName,
             @ToolParam(description = "可选。验证时间（YYYY-MM-DD 或 YYYY-MM-DD HH:mm）。"
+                    + "**只传 verifiedAt、其他字段全不传 = 记录一次验证（不改正文），算一次真实改动**"
+                    + "（2026-10-29 起；复核完结论仍成立、内容不需要动时用这个）；"
                     + "**不传 = 正文有变更时记为一次验证（当前时间）；只改 tags/title/summary 等元数据则不刷新**"
-                    + "（2026-10-29 起口径改为「内容变更即验证」，白名单只认 content）；"
+                    + "（口径「内容变更即验证」，白名单只认 content）；"
                     + "只改错字/润色、结论没重新确认过时，传原来的验证时间（get_experience_detail 回执里有）表示不刷新。"
                     + "格式不认识会直接报错，不会静默忽略。", required = false) String verifiedAt) {
         
@@ -1611,6 +1613,15 @@ public class ExpHubTools {
             // A2：显式清空（null 无法表达清空，见 DocService.update 注释）
             java.util.Set<String> clearSet = parseClearFields(clearFields);
             for (String f : clearSet) changedFields.add("清空:" + f);
+
+            // 2026-10-29 越哥裁决：**显式 verifiedAt 必须算作一次真实改动**。
+            // 不这么做，「复核完、结论仍然成立、正文不需要改」这个最正常的动作会被下面的空改动拦截挡下 ——
+            // 想留下验证证据的唯一出路变成「随便改点东西」，而那正是白名单要防的伪造。
+            // 影响面仅限「空改动拦截」：decideVerify 的优先级一个字没动（显式值本来就最高 → manual）；
+            // 也不产生任何内容字段，正文/摘要/标签都不会被改。
+            if (verified != null) {
+                changedFields.add("验证时间");
+            }
 
             // 一个字段都没变 + 也没要求改归属 → 明确告知「什么都没改」，不要报假成功
             if (changedFields.isEmpty() && projectId == null) {

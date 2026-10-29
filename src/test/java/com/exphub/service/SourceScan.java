@@ -10,7 +10,7 @@ package com.exphub.service;
  * <p>局限：不做词法分析，字符串/注释里的花括号会干扰配对。所以取不到或取到整文件时返回空串，
  * 由调用方断言「方法体必须非空」，避免静默放行。
  */
-final class SourceScan {
+public final class SourceScan {
 
     private SourceScan() {
     }
@@ -19,7 +19,7 @@ final class SourceScan {
      * 返回从 {@code signature} 所在方法的第一个 '{' 到配对 '}' 之间的文本（含两端大括号）。
      * 找不到签名、找不到左括号、或括号不配对（取到了文件尾）→ 返回空串。
      */
-    static String methodBody(String code, String signature) {
+    public static String methodBody(String code, String signature) {
         if (code == null || signature == null) return "";
         int at = code.indexOf(signature);
         if (at < 0) return "";
