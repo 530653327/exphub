@@ -137,6 +137,17 @@ public class DocService {
      * 111（宽松召回）、108（项目域 DB 计数）三个数，而首行只写「匹配 12 条」，没有口径标签，
      * 读者上一行读 12、下一行读 108，只能判定为算错。
      */
+    /**
+     * 检索命中的档位。首行「命中档」标签取的就是它。
+     *
+     * <p>⚠️ <b>线上实际只会出现 RERANK</b>（2026-10-30 实测 9 条查询，9 条全落重排档）。
+     * STRICT 要求 AND 全命中数 ≥ {@code STRICT_DIRECT_MIN_HITS}（20）才直出，中文概念查询
+     * 展开成 2-gram 之后几乎不可能达到；LIKE 只在全文索引完全覆盖不到时兜底，现网 ngram 索引
+     * 覆盖全部正文，也走不到。这两档目前<b>只有单测覆盖</b>。
+     *
+     * <p>所以：看到 STRICT / LIKE 标签，先怀疑是不是本地测试环境或索引异常，别当成常规路径。
+     * 保留三档是为了以后调门槛（见 {@code STRICT_DIRECT_MIN_HITS}），不是「三种都在跑」。
+     */
     public enum SearchTier {
         /** 严格 AND 全文命中，总数 = {@code countByFulltext} 的 SQL 计数（未重排）。 */
         STRICT,
@@ -1618,6 +1629,7 @@ public class DocService {
             return null;
         }
         doc.setStatus(status);
+        doc.setUpdatedAt(null);   // 刷新 updated_at，理由见下方 markForDeletion 的同类注释
         docMapper.updateById(doc);
         
         // 记录状态变更日志
@@ -1655,6 +1667,18 @@ public class DocService {
         doc.setDeleteReason(truncateForColumn(reason, 500));
         doc.setDeleteMarkedBy(truncateForColumn(by, 100));
         doc.setDeleteMarkedAt(java.time.LocalDateTime.now());
+        // P0-时间戳：状态/标记类写入必须刷新 updated_at。
+        //
+        // 这里的实体是 selectById 从库里读出来的，updatedAt **带着旧值**。MyBatis-Plus 3.5.7 的
+        // strictUpdateFill 只在字段为 null 时才填 now，非 null 就原样进 UPDATE 的 SET 子句；
+        // 而 MySQL 的 ON UPDATE CURRENT_TIMESTAMP 只在「没有显式赋值」时才生效 ——
+        // 于是 updated_at 被显式写回旧时间，**冻结**，且整条链路不报错、不影响任何功能，
+        // 只能靠事后比对时间才发现（「结构上扫不到」说的就是这一类）。
+        //
+        // 置 null 让 fill 填 now。反例：incrementCallCount / updateCallResult / reportResult /
+        // updateRating 这几处计数写**故意不动** updatedAt —— 「被检索/被评价」不该算一次内容修改，
+        // 否则阅读行为会把 updated_at 刷成当前时刻，搜索排序和「多久没更新」全失真。
+        doc.setUpdatedAt(null);
         docMapper.updateById(doc);
         callLogService.logUpdate(doc);
         log.info("markForDeletion: doc={} by={} reason={}", id, by, reason);
@@ -1675,10 +1699,18 @@ public class DocService {
             return doc;
         }
         doc.setStatus("ACTIVE");
-        doc.setDeleteReason(null);
-        doc.setDeleteMarkedBy(null);
-        doc.setDeleteMarkedAt(null);
+        doc.setUpdatedAt(null);
         docMapper.updateById(doc);
+        // 三个 delete_* 字段必须在第二条 UPDATE 里置 null：updateById 对 null 字段是「跳过」而不是「置空」，
+        // 上面那个 doc.setDeleteReason(null) 之类的写法一条都写不进库（2026-10-30 修）。
+        // 后果：取消待删后 status 已回 ACTIVE，但 delete_reason / delete_marked_by / delete_marked_at 还挂着，
+        // 后台待删队列按 status 过滤看不到它，任何人查这行却仍看到「谁在什么时候以什么理由标过待删」。
+        com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Doc> uw =
+                new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
+        uw.eq("id", id);
+        uw.set("delete_reason", null).set("delete_marked_by", null).set("delete_marked_at", null);
+        uw.setSql("updated_at = updated_at");   // 主路径已经写好 now，别让 ON UPDATE 再刷一次
+        docMapper.update(null, uw);
         callLogService.logUpdate(doc);
         log.info("cancelDeletion: doc={}", id);
         return doc;
