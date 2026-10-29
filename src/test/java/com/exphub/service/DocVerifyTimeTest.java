@@ -62,6 +62,19 @@ class DocVerifyTimeTest {
     }
 
     @Test
+    @DisplayName("守卫：迁移回填必须显式写 updated_at = updated_at，否则全库修改时间被刷成执行那一刻")
+    void migrationDoesNotTouchUpdatedAt() throws Exception {
+        Path sql = Path.of("sql/migrations/migration_20261029c_last_verified_at.sql");
+        assertTrue(Files.exists(sql), "找不到迁移脚本：" + sql.toAbsolutePath());
+        String code = new String(Files.readAllBytes(sql), StandardCharsets.UTF_8);
+        assertTrue(code.contains("updated_at        = updated_at")
+                        || code.contains("updated_at = updated_at"),
+                "回填语句缺 updated_at = updated_at。updated_at 列带 ON UPDATE CURRENT_TIMESTAMP，"
+                        + "只 SET last_verified_at 也会把它刷成执行时刻 —— 2026-10-29 实测把 652 篇的"
+                        + "修改时间全部改成了部署那一秒");
+    }
+
+    @Test
     @DisplayName("守卫：get_experience_detail 的验证时间行要登记进剥离白名单，否则会被写回固化")
     void detailHeaderLineIsStripped() throws Exception {
         Path src = Path.of("src/main/java/com/exphub/util/RenderArtifactStripper.java");

@@ -28,4 +28,15 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- 回填：存量行以 updated_at 为起点（见文件头口径说明）
-UPDATE docs SET last_verified_at = updated_at WHERE last_verified_at IS NULL;
+--
+-- ⚠️⚠️ 必须显式写 `updated_at = updated_at`，否则会**把全库 updated_at 刷成执行这一刻**。
+-- 2026-10-29 实测踩到：`updated_at` 列带 ON UPDATE CURRENT_TIMESTAMP，
+-- 这条 UPDATE 虽然只 SET last_verified_at，MySQL 仍会自动更新 updated_at —— 652 篇文档的
+-- 修改时间被统一改成部署时刻（14:38:44），"什么时候改过" 这条信息当场报废。
+-- 当时能救回来，是因为同一句 UPDATE 里 last_verified_at 拿到的是**赋值前**的 updated_at（原始值），
+-- 顺手 `UPDATE docs SET updated_at = last_verified_at` 复原了。换一次写法就没这么幸运。
+-- 显式给列赋值时 MySQL 不触发 ON UPDATE，所以下面这行的 `updated_at = updated_at` 是必要的空操作。
+UPDATE docs
+SET last_verified_at = updated_at,
+    updated_at        = updated_at
+WHERE last_verified_at IS NULL;
