@@ -267,6 +267,22 @@ public class ExpHubTools {
     }
 
     /**
+     * 数出片段里有多少行是「终端残留」（job control 的 {@code Terminated: N}、
+     * {@code xxx.sh: line N}、{@code bash: line N}、{@code curl: (N)}）。
+     *
+     * <p>为什么要数：剥掉内容必须**说出来**（AGENTS 第 10 章：回执必须自证值）。
+     * 「已追加」而实际少了两行，读者永远不知道少了什么。
+     */
+    static int terminalResidueLines(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        int n = 0;
+        for (String line : text.split("\n", -1)) {
+            if (com.exphub.util.RenderArtifactStripper.isTerminalResidue(line.trim())) n++;
+        }
+        return n;
+    }
+
+    /**
      * 导出完整文档内容（无截断，适合长文档维护）
      */
     @Tool(name = "export_document", description = "【文档维护专用】完整导出为 Markdown（无截断），存本地 .md 编辑后用 import_document 回写。它只导当前正文，不列归档清单；短经验用 get_experience_detail。")
@@ -1715,6 +1731,18 @@ public class ExpHubTools {
             if (text == null || text.trim().isEmpty()) {
                 return "❌ 追加内容不能为空。请传入要追加的 Markdown 片段。";
             }
+            // 2026-10-29 ③（B6 通路）：片段入口只剥终端残留，不做全量 strip ——
+            // 全量 strip 会把以 `**状态**:` 开头的正常片段当渲染头部元信息吃掉。
+            int residueLines = terminalResidueLines(text);
+            if (residueLines > 0) {
+                String cleaned = com.exphub.util.RenderArtifactStripper.stripTerminalResidue(text);
+                if (cleaned.trim().isEmpty()) {
+                    return "❌ 追加内容全是终端残留（" + residueLines + " 行），已拒绝写入（未做任何改动）。\n\n"
+                            + "这些行是从终端复制命令输出时一起带进来的（job control 的 `Terminated` / curl 报错 /"
+                            + " `xxx.sh: line N`），不是正文。请只贴要追加的内容。";
+                }
+                text = cleaned;
+            }
             java.time.LocalDateTime verified;
             try {
                 verified = parseVerifiedAtParam(verifiedAt);
@@ -1744,6 +1772,10 @@ public class ExpHubTools {
             String addPreview = text.trim();
             if (addPreview.length() > 120) addPreview = addPreview.substring(0, 120) + "…";
             sb.append("**追加内容开头**:\n> ").append(addPreview.replace("\n", "\n> ")).append("\n\n");
+            if (residueLines > 0) {
+                sb.append("**已剥离终端残留**: ").append(residueLines)
+                  .append(" 行（终端作业控制/curl 报错，不是正文）\n\n");
+            }
             sb.append("原文完整保留（服务端拼接，未经过任何截断），旧版本已存为快照 v").append(oldVer).append("。");
             // 2026-10-29 P2-8：滚动日志/施工日志就是靠 append 一次次涨到 2 万字的，这里提醒最有效
             sb.append(longDocHint(newLen));
@@ -1946,6 +1978,17 @@ public class ExpHubTools {
 
             int oldVer = existing.getVersion();
             int oldLen = body.length();
+            // 2026-10-29 ③（B6 通路）：replace 里夹带终端残留同样会写进正文，片段入口只剥这一类
+            int residueLines = terminalResidueLines(replace);
+            if (residueLines > 0) {
+                String cleaned = com.exphub.util.RenderArtifactStripper.stripTerminalResidue(replace);
+                if (cleaned.trim().isEmpty()) {
+                    return "❌ replace 全是终端残留（" + residueLines + " 行），已拒绝执行（仍是 v"
+                            + existing.getVersion() + "）。\n\n"
+                            + "要**删除**这段请明确传空字符串；这里传的是终端里复制出来的报错行，不是要写入的正文。";
+                }
+                replace = cleaned;
+            }
             Doc updated = docService.patchContent(id, find, replace,
                     updatedName != null && !updatedName.trim().isEmpty() ? updatedName.trim() : authorName,
                     verified);
@@ -1963,6 +2006,10 @@ public class ExpHubTools {
             sb.append("**原文**: `").append(abbreviate(find, 100)).append("`\n");
             sb.append("**改为**: `").append(replace == null || replace.isEmpty() ? "（已删除）" : abbreviate(replace, 100)).append("`\n\n");
             sb.append("旧版本已存为快照 v").append(oldVer).append("。\n");
+            if (residueLines > 0) {
+                sb.append("**已剥离终端残留**: ").append(residueLines)
+                  .append(" 行（终端作业控制/curl 报错，不是正文）\n");
+            }
             sb.append(verifiedLine(updated, verified != null));
             return sb.toString();
         } catch (Exception e) {

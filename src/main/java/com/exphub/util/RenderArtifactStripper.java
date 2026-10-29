@@ -17,6 +17,52 @@ public final class RenderArtifactStripper {
     private RenderArtifactStripper() {
     }
 
+    /**
+     * 终端残留的四种形态（E13）。抽成常量是因为它现在有两个用处：
+     * ① {@link #strip} 全量剥离时作为第 6 条规则；② {@link #stripTerminalResidue} 只剥这一类。
+     *
+     * <p>为什么值得单独一条路：2026-10-29 查 #237（第 15 章）v5 的脏数据，
+     * 真凶就是一行 bash 作业控制消息
+     * {@code /tmp/probe/mcpcall.sh: line 50: 58885 Terminated: 15 curl ...} ——
+     * 从终端复制输出时一起带进正文，人在编辑器里很难一眼看出这行不是内容。
+     */
+    private static final String[] TERMINAL_RESIDUE = {
+            "^.*mcpcall\\.sh: line \\d+:.*$",
+            "^.*Terminated:\\s*\\d+.*$",
+            "^bash: line \\d+:.*$",
+            "^curl: \\(\\d+\\).*$"
+    };
+
+    public static boolean isTerminalResidue(String trimmed) {
+        for (String p : TERMINAL_RESIDUE) {
+            if (trimmed.matches(p)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 只剥终端残留，其余一字不动 —— 给 append / patch 这类「写片段」的入口用。
+     *
+     * <p><b>为什么不用 {@link #strip} 全量剥</b>：全量剥含「开头头部元信息块」规则，
+     * 而 append 的 text 是片段、不是渲染视图 —— 一段以 {@code **状态**: ...} 开头的正常内容
+     * 会被当成渲染产物吃掉。**入口写什么就剥什么**：整篇写回走 strip，片段只剥终端残留。
+     */
+    public static String stripTerminalResidue(String text) {
+        if (text == null || text.isEmpty()) return text == null ? "" : text;
+        String[] lines = text.split("\n", -1);
+        StringBuilder kept = new StringBuilder();
+        boolean first = true;
+        for (String line : lines) {
+            if (isTerminalResidue(line.trim())) continue;
+            // 用 join 语义而不是「每行补 \n」：末尾的换行必须原样保留，
+            // 否则 append 出去的内容会多/少一个空行，回执里的字数对不上。
+            if (!first) kept.append('\n');
+            kept.append(line);
+            first = false;
+        }
+        return kept.toString();
+    }
+
         /**
          * 剥离「读取端渲染产生的痕迹」（E11，2026-10-24 忆阁实测发现）。
          *
@@ -115,11 +161,8 @@ public final class RenderArtifactStripper {
                     continue;
                 }
 
-                // 6) 终端残留
-                if (t.matches("^.*mcpcall\\.sh: line \\d+:.*$")
-                        || t.matches("^.*Terminated:\\s*\\d+.*$")
-                        || t.matches("^bash: line \\d+:.*$")
-                        || t.matches("^curl: \\(\\d+\\).*$")) {
+                // 6) 终端残留（规则与 stripTerminalResidue 同源，见 TERMINAL_RESIDUE）
+                if (isTerminalResidue(t)) {
                     i++;
                     continue;
                 }
