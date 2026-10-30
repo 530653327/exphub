@@ -1266,7 +1266,7 @@ public class ExpHubTools {
                      + "· 改成别的状态 → 先 `cancel_deletion(id=" + id + ")`，再调本工具改状态";
             }
 
-            Doc updated = docService.updateStatus(id, upperStatus);
+            Doc updated = docService.updateStatus(id, upperStatus, operator);
             String statusLabel = getStatusLabel(upperStatus);
             
             return "✅ 经验状态已更新！\n\n**ID**: " + id + "\n**标题**: " + updated.getTitle()
@@ -1353,7 +1353,7 @@ public class ExpHubTools {
                 return "ℹ️ 经验 ID:" + id + " 当前状态是 " + getStatusLabel(existing.getStatus())
                         + "，并没有被标记待删，无需恢复。";
             }
-            Doc restored = docService.cancelDeletion(id);
+            Doc restored = docService.cancelDeletion(id, operator);
             log.info("ExpHubTools.cancelDeletion: #{} 撤销待删, operator={}", id, operator);
             return "✅ 已撤销待删标记\n\n**ID**: " + id + "\n**标题**: " + restored.getTitle()
                     + "\n**当前状态**: " + getStatusLabel(restored.getStatus())

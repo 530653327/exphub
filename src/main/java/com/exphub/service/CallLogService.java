@@ -75,6 +75,25 @@ public class CallLogService {
 
     /** 填充调用者身份；无助手上下文时记为后台管理 */
     private void fillCaller(CallLog entry) {
+        fillCaller(entry, null);
+    }
+
+    /**
+     * 填充调用者身份，可选地以「文档里自报的署名」为准。
+     *
+     * <p><b>为什么要 signedName（2026-10-30 阁主提的审计链问题）</b>：
+     * {@code assistant.getAssistantName()} 是 <b>API Key 绑定的默认名</b>，不是本次操作的人。
+     * 一个 Key 常被多个助手共用（现网 exp-af77fa… 至少 烛龙/白泽/阁主 三个在用），
+     * 于是无论谁改，call_logs.caller_name 永远写成同一个名字 —— 这一列证明不了谁改的。
+     *
+     * <p>而 {@code docs.author_name} / {@code doc_versions.updated_name} 存的是调用方自报的
+     * updatedName（工具层 resolveAuthor 落库），是真实操作人。所以业务写日志时把它传进来，
+     * 覆盖掉 Key 名，并把「Key 绑定名」写进 detail 保留追溯线索。
+     *
+     * <p>只覆盖 caller_name、不动 api_key：api_key 仍是「哪个凭证」，caller_name 变成「哪个人」，
+     * 两者分开记才既有追责能力又不丢凭证维度。
+     */
+    private void fillCaller(CallLog entry, String signedName) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         if (assistant != null) {
             entry.setApiKey(assistant.getApiKey());
@@ -83,6 +102,18 @@ public class CallLogService {
             entry.setApiKey("MANUAL");
             entry.setCallerName("后台管理");
         }
+        if (signedName == null || signedName.trim().isEmpty()) {
+            return;
+        }
+        String signed = signedName.trim();
+        String keyName = entry.getCallerName();
+        if (signed.equals(keyName)) {
+            return;   // 自报名与 Key 名一致，没有额外信息，别把 detail 撑长
+        }
+        entry.setCallerName(signed);
+        String detail = entry.getDetail();
+        entry.setDetail((detail == null ? "" : detail)
+                + "（署名=" + signed + "，Key 绑定=" + keyName + "）");
     }
 
     // 系统自动记录调用日志（从拦截器获取调用者信息）
@@ -125,7 +156,8 @@ public class CallLogService {
         entry.setDocTitle(doc.getTitle());
         entry.setDetail("创建新经验");
 
-        fillCaller(entry);
+        // 同 logUpdate：署名以文档 author_name 为准，Key 名只作追溯线索
+        fillCaller(entry, doc.getAuthorName());
         safeUpdateAssistant(ApiKeyInterceptor.getCurrentAssistant());
         callLogWriter.write(entry);
         return entry;
@@ -133,13 +165,27 @@ public class CallLogService {
 
     // 记录更新经验
     public CallLog logUpdate(Doc doc) {
+        // 主写路径（DocService.update）传进来的 doc 已经是「本次操作后」的行，
+        // author_name 就是操作人自报的署名（updatedName 落库后的值）。
+        return logUpdate(doc, doc == null ? null : doc.getAuthorName());
+    }
+
+    /**
+     * 记录更新经验，署名显式指定。
+     *
+     * <p>状态变更 / 待删标记这类操作**不能**沿用 {@code doc.getAuthorName()} ——
+     * 那是文档原作者，不是本次操作人（阁主可以把别人的文档置为 DEPRECATED）。
+     * 调用方必须把自己解析出的 operator 显式传进来。
+     */
+    public CallLog logUpdate(Doc doc, String signedName) {
         CallLog entry = new CallLog();
         entry.setAction("UPDATE");
         entry.setDocId(doc.getId());
         entry.setDocTitle(doc.getTitle());
         entry.setDetail("更新经验至 v" + doc.getVersion());
 
-        fillCaller(entry);
+        // 署名以自报值为准，Key 名只作 detail 里的追溯线索
+        fillCaller(entry, signedName);
         safeUpdateAssistant(ApiKeyInterceptor.getCurrentAssistant());
         callLogWriter.write(entry);
         return entry;

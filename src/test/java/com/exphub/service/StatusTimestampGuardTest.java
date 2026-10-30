@@ -47,9 +47,9 @@ class StatusTimestampGuardTest {
     void statusWritePathsRefreshUpdatedAt() throws Exception {
         String code = docServiceSource();
 
-        assertRefreshes(code, "public Doc updateStatus(Long id, String status)", "updateStatus");
+        assertRefreshes(code, "public Doc updateStatus(Long id, String status, String operator)", "updateStatus");
         assertRefreshes(code, "public Doc markForDeletion(Long id, String reason, String by)", "markForDeletion");
-        assertRefreshes(code, "public Doc cancelDeletion(Long id)", "cancelDeletion");
+        assertRefreshes(code, "public Doc cancelDeletion(Long id, String operator)", "cancelDeletion");
     }
 
     @Test
@@ -65,7 +65,7 @@ class StatusTimestampGuardTest {
     @Test
     @DisplayName("cancelDeletion 的 delete_* 三列必须走 UpdateWrapper 置空（updateById 对 null 是跳过）")
     void cancelDeletionClearsMarkColumns() throws Exception {
-        String body = SourceScan.methodBody(docServiceSource(), "public Doc cancelDeletion(Long id)");
+        String body = SourceScan.methodBody(docServiceSource(), "public Doc cancelDeletion(Long id, String operator)");
         assertTrue(!body.isEmpty(), "cancelDeletion 方法体没取到（签名变了？）—— 守卫不能静默放行");
         assertTrue(body.contains("uw.set(\"delete_reason\", null)"),
                 "delete_reason 没有用 UpdateWrapper 置空：updateById 对 null 字段是「跳过」，"

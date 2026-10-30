@@ -1617,8 +1617,18 @@ public class DocService {
     /**
      * 更新经验状态（ACTIVE / COMPLETED / BROKEN / DEPRECATED）
      */
-    @Transactional
     public Doc updateStatus(Long id, String status) {
+        return updateStatus(id, status, null);
+    }
+
+    /**
+     * 更新经验状态，并记录本次操作人。
+     *
+     * <p>{@code operator} 必须由调用方解析后传入（工具层的 updatedName / authorName）：
+     * 日志的 caller_name 若只取 API Key 绑定名，多助手共用一个 Key 时就等于全部匿名。
+     */
+    @Transactional
+    public Doc updateStatus(Long id, String status, String operator) {
         // PENDING_DELETE 只能由 markForDeletion 设置：它必须带原因，且语义是「不可逆操作的前置标记」，
         // 不能被通用的状态变更接口顺手写上（否则等于给模型留了一条绕过原因说明的后门）。
         if (PENDING_DELETE.equalsIgnoreCase(status)) {
@@ -1632,8 +1642,8 @@ public class DocService {
         doc.setUpdatedAt(null);   // 刷新 updated_at，理由见下方 markForDeletion 的同类注释
         docMapper.updateById(doc);
         
-        // 记录状态变更日志
-        callLogService.logUpdate(doc);
+        // 记录状态变更日志（署名用 operator：文档原作者不是本次操作人）
+        callLogService.logUpdate(doc, operator);
         
         return doc;
     }
@@ -1680,7 +1690,7 @@ public class DocService {
         // 否则阅读行为会把 updated_at 刷成当前时刻，搜索排序和「多久没更新」全失真。
         doc.setUpdatedAt(null);
         docMapper.updateById(doc);
-        callLogService.logUpdate(doc);
+        callLogService.logUpdate(doc, by);
         log.info("markForDeletion: doc={} by={} reason={}", id, by, reason);
         return doc;
     }
@@ -1691,6 +1701,12 @@ public class DocService {
      */
     @Transactional
     public Doc cancelDeletion(Long id) {
+        return cancelDeletion(id, null);
+    }
+
+    /** 撤销待删，并记录本次操作人（理由同 {@link #updateStatus(Long, String, String)}） */
+    @Transactional
+    public Doc cancelDeletion(Long id, String operator) {
         Doc doc = docMapper.selectById(id);
         if (doc == null) {
             return null;
@@ -1711,7 +1727,7 @@ public class DocService {
         uw.set("delete_reason", null).set("delete_marked_by", null).set("delete_marked_at", null);
         uw.setSql("updated_at = updated_at");   // 主路径已经写好 now，别让 ON UPDATE 再刷一次
         docMapper.update(null, uw);
-        callLogService.logUpdate(doc);
+        callLogService.logUpdate(doc, operator);
         log.info("cancelDeletion: doc={}", id);
         return doc;
     }
