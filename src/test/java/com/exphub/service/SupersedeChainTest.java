@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -130,7 +131,7 @@ class SupersedeChainTest {
         // 关键：只更新，不写版本快照 —— 否则每次整理都多一份全文副本
         verify(docMapper).update(isNull(), any());
         verify(versionMapper, never()).insert(any(DocVersion.class));
-        verify(callLogService).logUpdate(any(Doc.class));
+        verify(callLogService).logUpdate(any(Doc.class), eq("烛龙"));
     }
 
     @Test

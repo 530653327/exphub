@@ -1065,7 +1065,9 @@ public class DocService {
         docMapper.updateById(patch);
 
         Doc updated = docMapper.selectById(id);
-        callLogService.logUpdate(updated);
+        // 署名用入参 authorName，不能读 updated.getAuthorName()：append/patch 都不改 author_name 列，
+        // 读回来的是文档原作者的旧值，日志会把「谁改的」记成「谁最初写的」
+        callLogService.logUpdate(updated, authorName);
         return updated;
     }
 
@@ -1106,7 +1108,9 @@ public class DocService {
         docMapper.updateById(patch);
 
         Doc updated = docMapper.selectById(id);
-        callLogService.logUpdate(updated);
+        // 署名用入参 authorName，不能读 updated.getAuthorName()：append/patch 都不改 author_name 列，
+        // 读回来的是文档原作者的旧值，日志会把「谁改的」记成「谁最初写的」
+        callLogService.logUpdate(updated, authorName);
         return updated;
     }
 
@@ -1438,7 +1442,7 @@ public class DocService {
           // 显式写回：docs.updated_at 带 ON UPDATE CURRENT_TIMESTAMP，不写回就会被自动刷成执行时刻。
           .setSql("updated_at = updated_at");
         docMapper.update(null, uw);
-        callLogService.logUpdate(old);
+        callLogService.logUpdate(old, by);
         log.info("markSuperseded: doc={} supersededBy={} by={}", id, byId, by);
         return new SupersedeResult(true, "已标记 #" + id + " 被 #" + byId + " 取代", docMapper.selectById(id));
     }
