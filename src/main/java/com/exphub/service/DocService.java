@@ -203,6 +203,13 @@ public class DocService {
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
         List<String> statusList = parseStatusList(includeStatus);
 
+        // 作用域全开时默认排除「项目内的进度流水」（2026-11-05 实测回归）：
+        // 进度记录是施工日志，不是答案，而它的数量远超项目经验（exphub #1 是 34 条进度 vs 8 条经验）。
+        // 实测：「部署流程 deploy.sh」在 scope=global 下 #95 排第 1；切到 all 后
+        // #729 / #698 两条忆阁进度流水挤进前 4，把 #95 顶到第 2。
+        // 显式传 templateType=project_progress 时不排除 —— 那时人家就是来找进度的。
+        boolean excludeProgress = all && !"project_progress".equals(tt);
+
         // 无实质内容的查询词（null、空白、纯标点、纯停用词）直接返回空，不再走全库兜底。
         // 旧逻辑：空词 → searchWithLike → concepts 为空 → 不加关键词条件全库分页返回，
         // 线上实测空 query 曾一次返回 198 条无关经验，误导 AI 判断「库里什么都有」。
@@ -219,17 +226,17 @@ public class DocService {
         // 若严格命中只是靠 2-gram 泛词凑出来的（如「数据 结构」凑中「数据模型 表结构」），
         // 直接返回会绕过重排、把真正精确的文档挤掉，此时下沉到第 2 级。
         String strictQuery = toFulltextQuery(kw);
-        long strictTotal = docMapper.countByFulltext(strictQuery, apiKey, projectId, tt, statusList, all, ownerKey);
+        long strictTotal = docMapper.countByFulltext(strictQuery, apiKey, projectId, tt, statusList, all, ownerKey, excludeProgress);
         if (strictTotal > 0) {
             if (page > 1) {
                 log.info("search tier=strict kw='{}' projectId={} scopeAll={} hits={}", kw, projectId, all, strictTotal);
                 if (meta != null) meta.tier = SearchTier.STRICT;
-                return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal, all, ownerKey);
+                return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal, all, ownerKey, excludeProgress);
             }
             // 覆盖度探针固定看前 STRICT_DIRECT_MIN_HITS 条（与调用方 size 解耦），
             // 展示仍按 size 切 —— 判定条件和返回条数是两件事，别混用。
             int probeSize = Math.max(size, STRICT_DIRECT_MIN_HITS);
-            List<Doc> strictProbe = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, probeSize, all, ownerKey);
+            List<Doc> strictProbe = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, probeSize, all, ownerKey, excludeProgress);
             // 严格命中能填满门槛、且存在整词覆盖时，直接采用（精确查询走快路径）；
             // 若只命中零星几条（常见于“某文档恰好引用了整句 query”），继续走重排补全，
             // 避免用户只看到 1 条结果。
@@ -246,7 +253,7 @@ public class DocService {
         // ===== 第 2 级：OR 召回 + 覆盖率重排（真正的放宽：不再要求所有词同时命中）=====
         if (!terms.expanded.isEmpty()) {
             String orQuery = terms.toOrQuery();
-            List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey);
+            List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey, excludeProgress);
             List<Doc> ranked = rankAndFilter(candidates, terms, true);
             if (!ranked.isEmpty()) {
                 log.info("search tier=relaxed kw='{}' projectId={} scopeAll={} candidates={} accepted={}",
@@ -260,7 +267,7 @@ public class DocService {
 
         // ===== 第 3 级：LIKE 兜底（单字/标点等全文索引覆盖不到的场景）=====
         if (meta != null) meta.tier = SearchTier.LIKE;
-        return searchWithLike(keyword, templateType, includeStatus, projectId, page, size, all, ownerKey);
+        return searchWithLike(keyword, templateType, includeStatus, projectId, page, size, all, ownerKey, excludeProgress);
     }
 
     /**
@@ -285,13 +292,14 @@ public class DocService {
         boolean all = scopeAll && projectId == null;
         String ownerKey = all ? apiKey : null;
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
+        boolean excludeProgress = all && !"project_progress".equals(tt);
         List<String> statusList = parseStatusList(includeStatus);
         SearchTerms terms = buildSearchTerms(keyword);
         if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
             return new ArrayList<>();
         }
         List<Doc> candidates = docMapper.searchByFulltext(terms.toOrQuery(), toCleanKeyword(keyword == null ? "" : keyword),
-                apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey);
+                apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey, excludeProgress);
         List<Doc> ranked = rankAndFilter(candidates, terms, false);
         if (ranked.size() > limit) {
             return new ArrayList<>(ranked.subList(0, Math.max(0, limit)));
@@ -327,8 +335,8 @@ public class DocService {
         if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
             return 0;
         }
-        // 项目段的口径永远是「单个项目内」，与作用域开关无关 → scopeAll=false
-        return docMapper.countByFulltext(terms.toOrQuery(), apiKey, projectId, tt, statusList, false, null);
+        // 项目段的口径永远是「单个项目内」，与作用域开关无关 → scopeAll=false、不排除进度
+        return docMapper.countByFulltext(terms.toOrQuery(), apiKey, projectId, tt, statusList, false, null, false);
     }
 
     /**
@@ -349,9 +357,9 @@ public class DocService {
     private Page<Doc> buildFulltextResult(String originalKeyword, String ftQuery, String sortKeyword,
                                           String apiKey, Long projectId, String tt, List<String> statusList,
                                           int page, int size, long total,
-                                          boolean scopeAll, String ownerApiKey) {
+                                          boolean scopeAll, String ownerApiKey, boolean excludeProjectProgress) {
         long offset = (long) (page - 1) * size;
-        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size, scopeAll, ownerApiKey);
+        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size, scopeAll, ownerApiKey, excludeProjectProgress);
 
         return buildResultFromRecords(originalKeyword, records, total, page, size);
     }
@@ -404,7 +412,8 @@ public class DocService {
      * LIKE 搜索兜底（FULLTEXT 无结果或空关键词时使用）
      */
     private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId,
-                                     int page, int size, boolean scopeAll, String ownerApiKey) {
+                                     int page, int size, boolean scopeAll, String ownerApiKey,
+                                     boolean excludeProjectProgress) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
@@ -423,6 +432,10 @@ public class DocService {
                     w.or().in("project_id", myProjects);
                 }
             });
+            // 与全文检索口径一致：项目内的进度流水默认不参与（它们是施工日志，不是答案）
+            if (excludeProjectProgress) {
+                wrapper.and(w -> w.isNull("project_id").or().ne("template_type", "project_progress"));
+            }
         } else {
             if (apiKey != null && projectId == null) {
                 wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", apiKey));

@@ -20,6 +20,9 @@ public interface DocMapper extends BaseMapper<Doc> {
      * @param sortKeyword  NATURAL LANGUAGE MODE 排序词（纯净关键词，不含操作符）
      * @param scopeAll  true=不分作用域：全局可读文档 + 归属当前 Key 的项目文档，一起按相关度排序
      * @param ownerApiKey scopeAll=true 时用于圈定「我名下的项目」，为 null 则只搜全局
+     * @param excludeProjectProgress scopeAll 时是否排除项目内的进度流水（2026-11-05：
+     *        进度记录是施工日志，不是答案；它们数量远超项目经验（exphub #1 是 34 条进度 vs 8 条经验），
+     *        混进主排序会把真正的答案挤下去。显式搜 templateType=project_progress 时不排除）
      */
     @Select("<script>" +
         "SELECT * FROM docs " +
@@ -28,6 +31,7 @@ public interface DocMapper extends BaseMapper<Doc> {
         "  <when test='scopeAll'>" +
         "    AND ( (project_id IS NULL AND (visibility = 'PUBLIC' OR api_key = #{apiKey})) " +
         "          <if test='ownerApiKey != null'>OR project_id IN (SELECT id FROM projects WHERE api_key = #{ownerApiKey})</if> ) " +
+        "    <if test='excludeProjectProgress'>AND NOT (project_id IS NOT NULL AND template_type = 'project_progress')</if> " +
         "  </when>" +
         "  <otherwise>" +
         "    <if test='apiKey != null and projectId == null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
@@ -50,7 +54,8 @@ public interface DocMapper extends BaseMapper<Doc> {
         @Param("offset") long offset,
         @Param("limit") long limit,
         @Param("scopeAll") boolean scopeAll,
-        @Param("ownerApiKey") String ownerApiKey
+        @Param("ownerApiKey") String ownerApiKey,
+        @Param("excludeProjectProgress") boolean excludeProjectProgress
     );
 
     /**
@@ -63,6 +68,7 @@ public interface DocMapper extends BaseMapper<Doc> {
         "  <when test='scopeAll'>" +
         "    AND ( (project_id IS NULL AND (visibility = 'PUBLIC' OR api_key = #{apiKey})) " +
         "          <if test='ownerApiKey != null'>OR project_id IN (SELECT id FROM projects WHERE api_key = #{ownerApiKey})</if> ) " +
+        "    <if test='excludeProjectProgress'>AND NOT (project_id IS NOT NULL AND template_type = 'project_progress')</if> " +
         "  </when>" +
         "  <otherwise>" +
         "    <if test='apiKey != null and projectId == null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
@@ -80,6 +86,7 @@ public interface DocMapper extends BaseMapper<Doc> {
         @Param("templateType") String templateType,
         @Param("statusList") List<String> statusList,
         @Param("scopeAll") boolean scopeAll,
-        @Param("ownerApiKey") String ownerApiKey
+        @Param("ownerApiKey") String ownerApiKey,
+        @Param("excludeProjectProgress") boolean excludeProjectProgress
     );
 }
