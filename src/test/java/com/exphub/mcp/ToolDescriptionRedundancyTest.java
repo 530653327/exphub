@@ -316,8 +316,10 @@ class ToolDescriptionRedundancyTest {
         //            参数 175 → 177。工具数仍 45。
         // 2026-11-05 #1220 P0：45 → 46，新增 get_project_brief（项目概览聚合读，1 个参数）；
         //            search_experience 加 scope（all/global/project），参数 177 → 179。
-        assertEquals(46, toolCount, "工具数变了（45 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(179, paramCount, "参数数变了（177 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-11-05 #1220 P1：46 → 47，新增 batch_get（批量读，3 个参数）；
+        //            resolve_candidate 加 candidateIds（批量判定），参数 179 → 183。
+        assertEquals(47, toolCount, "工具数变了（46 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(183, paramCount, "参数数变了（179 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

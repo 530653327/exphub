@@ -2973,6 +2973,141 @@ public class ExpHubTools {
      * 状态行放在头部而不是只在横幅里：横幅是「附加说明」，头部是「这份文档是什么」，
      * 读的人第一眼扫头部就能看到，不读横幅也不会漏。
      */
+    /** batch_get 单篇默认返回多少字符；超了给 offset 续读 */
+    private static final int BATCH_GET_DOC_CHARS = 3000;
+    /** batch_get 一次最多读几篇：再多就该想想「是不是搜索没搜对」了 */
+    static final int BATCH_GET_MAX_DOCS = 20;
+
+    /**
+     * 解析逗号分隔的 ID 列表（去重保序）。两处批量入口共用同一套规则，
+     * 免得「批量判定认 #51、批量读不认」这种同一个参数两套脾气。
+     *
+     * @throws IllegalArgumentException 有非数字项或解析不出任何 ID
+     */
+    static java.util.List<Long> parseIds(String raw, String paramName) {
+        java.util.List<Long> parsed = new java.util.ArrayList<>();
+        if (raw == null) {
+            throw new IllegalArgumentException(paramName + " 不能为空");
+        }
+        for (String part : raw.split("[,，;；、\\s]+")) {
+            String t = part.replace("#", "").trim();
+            if (t.isEmpty()) continue;
+            try {
+                parsed.add(Long.parseLong(t));
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(paramName + " 里有非数字项：「" + part + "」。格式如 \"51,52,53\"");
+            }
+        }
+        if (parsed.isEmpty()) {
+            throw new IllegalArgumentException(paramName + " 解析不出任何 ID。格式如 \"51,52,53\"");
+        }
+        return new java.util.ArrayList<>(new java.util.LinkedHashSet<>(parsed));
+    }
+
+    /**
+     * 批量读（2026-11-05 · #1220 第②条）。
+     *
+     * <p>为什么需要它：近 7 天 {@code get_experience_detail} 被调了 2173 次、{@code search_experience} 只有 1228 次 ——
+     * 读是搜的 1.77 倍。其中很大一块是「一次要读 5~8 篇，发 8 次请求」。
+     * 这个工具解决的就是连读，不解决「搜不准」。
+     *
+     * <p>两条边界写死：
+     * <ul>
+     *   <li><b>每篇默认只给前 3000 字符</b>，并给出下一段 offset —— 20 篇 × 2 万字塞进一条回执，
+     *       等于把「省下的 8 次请求」变成一次读不完的巨型响应；</li>
+     *   <li><b>不要用 export_document 代替</b>：它只接受单个 id、不分段。</li>
+     * </ul>
+     */
+    @Tool(name = "batch_get",
+          description = "一次读多篇经验的正文开头（最多 20 篇）。每篇默认只给前 3000 字符，回执带「下一段 offset」，"
+                  + "要看全某篇再用 get_experience_detail(id, offset=)。brief=true 只给标题+摘要+首段，适合先扫一遍。"
+                  + "替代「一次要读 5~8 篇就发 8 次请求」。")
+    public String batchGet(
+            @ToolParam(description = "经验 ID 列表，逗号分隔，如 \"748,714,1220\"（上限 20 篇）") String ids,
+            @ToolParam(description = "可选。每篇最多返回多少字符，默认 3000，上限 8000", required = false) Integer maxCharsPerDoc,
+            @ToolParam(description = "可选。true=只给标题+摘要+首段（约 400 字），适合先扫一遍挑目标；默认 false 给正文开头", required = false) Boolean brief) {
+        try {
+            AiAssistant assistant = getCaller();
+            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanSearch())) {
+                return "❌ 权限不足：该API Key没有查询经验的权限";
+            }
+            java.util.List<Long> idList;
+            try {
+                idList = parseIds(ids, "ids");
+            } catch (IllegalArgumentException e) {
+                return "❌ " + e.getMessage();
+            }
+            if (idList.size() > BATCH_GET_MAX_DOCS) {
+                return "❌ 一次最多 " + BATCH_GET_MAX_DOCS + " 篇（本次 " + idList.size()
+                        + " 篇）。分两次读 —— 一次给几十篇，等于把回执变成读不完的长文。";
+            }
+            boolean briefMode = Boolean.TRUE.equals(brief);
+            int cap = briefMode ? 400
+                    : ((maxCharsPerDoc == null || maxCharsPerDoc <= 0)
+                        ? BATCH_GET_DOC_CHARS : Math.min(maxCharsPerDoc, 8000));
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("📚 **批量读 ").append(idList.size()).append(" 篇**")
+              .append(briefMode ? "（精简：标题+摘要+首 " + cap + " 字）" : "（每篇最多 " + cap + " 字符）")
+              .append("\n\n");
+
+            int got = 0, miss = 0;
+            for (int i = 0; i < idList.size(); i++) {
+                Long id = idList.get(i);
+                Doc doc = docService.getById(id);
+                if (doc == null) {
+                    miss++;
+                    sb.append("## ").append(i + 1).append(". 【ID:").append(id)
+                      .append("】❌ 未找到（可能已删除，或不在此 Key 的权限范围）\n\n");
+                    continue;
+                }
+                got++;
+                sb.append("## ").append(i + 1).append(".\n");
+                // 复用详情页头部与存疑横幅 —— 这两块是 RenderArtifactStripper 按字面前缀白名单认的，
+                // 这里另写一套措辞，迟早与剥离规则对不上（那是把提示语固化进正文的经典路径）
+                sb.append(renderDetailHeader(doc));
+                sb.append(doubtBanner(doc, id));
+                sb.append("\n");
+
+                String full = doc.getContent();
+                if (full == null || full.isEmpty()) {
+                    sb.append("> 该文档没有正文内容。\n\n");
+                    continue;
+                }
+                int total = full.length();
+                int to = Math.min(cap, total);
+                // 别把表情等代理对从中间切开
+                if (to < total && Character.isLowSurrogate(full.charAt(to))) to++;
+                String slice = full.substring(0, to).replaceAll("\\s+", " ").trim();
+                if (!briefMode) {
+                    sb.append("**正文（第 0 – ").append(to).append(" / 共 ").append(total).append(" 字符）**\n\n");
+                    sb.append(slice).append("\n");
+                } else {
+                    sb.append("**摘要**: ").append(previewSummary(doc.getSummary())).append("\n");
+                }
+                if (to < total) {
+                    sb.append("\n> 还有 ").append(total - to).append(" 字符没读：`get_experience_detail(id=")
+                      .append(id).append(", offset=").append(to).append(")`\n");
+                } else {
+                    sb.append("\n");
+                }
+                sb.append("\n");
+            }
+
+            sb.append("---\n");
+            sb.append("📊 共请求 ").append(idList.size()).append(" 篇：读到 ").append(got).append("｜未找到 ").append(miss)
+              .append("｜本次回执 ").append(sb.length()).append(" 字符\n");
+            if (got > 0 && miss == 0) {
+                sb.append("💡 已读到的都是开头。要读全文或某篇的后续段落，用 get_experience_detail(id, offset=)。\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.batchGet: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "批量读取失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
     static String renderDetailHeader(Doc doc) {
         StringBuilder sb = new StringBuilder();
         sb.append("# ").append(doc.getTitle()).append("\n\n");
@@ -3573,12 +3708,15 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "resolve_candidate", description = "处理一条整理候选：duplicate（只打标记）/ superseded（只写指针）/ distinct / skip。都不删任何内容。distinct 后不再重新入队。"
-            + "（语义变更 2026-10-29：note 改为只存**当前**判定理由，不再累积往返历史；每次动作进判定流水，用 list_candidate_history 看完整链路）")
+    @Tool(name = "resolve_candidate", description = "处理整理候选：duplicate（只打标记）/ superseded（只写指针）/ distinct / skip。都不删任何内容。"
+            + "**支持批量**：传 candidateIds=\"51,52,53\"（上限 20 条，必须带 note 作统一理由），不传则按 candidateId 单条处理。"
+            + "distinct 后不再重新入队；skip 只是「这次先不看」，得分明显变高会重新提出，也可 reopen_candidate 撤回。"
+            + "（语义变更 2026-11-05：新增批量与 skip 可复活）")
     public String resolveCandidate(
-            @ToolParam(description = "候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
-            @ToolParam(description = "处理动作：duplicate（确为重复）/ superseded（旧被新取代）/ distinct（判为不同）/ skip（忽略）") String action,
-            @ToolParam(description = "可选。判断依据：为什么判为重复或取代。写下来，日后回看才知道当时为什么这么判", required = false) String note,
+            @ToolParam(description = "候选 ID（list_review_candidates 返回的「候选 #N」里的 N）。单条处理用；批量改用 candidateIds", required = false) Long candidateId,
+            @ToolParam(description = "可选。**批量**处理：候选 ID 列表，逗号分隔，如 \"51,52,53\"（上限 20）。与 candidateId 二选一", required = false) String candidateIds,
+            @ToolParam(description = "处理动作：duplicate（确为重复）/ superseded（旧被新取代）/ distinct（判为不同）/ skip（本次忽略，可复活）") String action,
+            @ToolParam(description = "可选。判断依据：为什么判为重复或取代。写下来，日后回看才知道当时为什么这么判。**批量时必填**", required = false) String note,
             @ToolParam(description = "可选。处理人署名", required = false) String authorName,
             @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
@@ -3587,29 +3725,24 @@ public class ExpHubTools {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
             String by = resolveAuthor(updatedName, authorName, assistant);
+
+            // ===== 批量分支（2026-11-05 · #1220 第⑥条）=====
+            if (candidateIds != null && !candidateIds.trim().isEmpty()) {
+                return resolveCandidatesInBatch(candidateIds, action, note, by);
+            }
+            if (candidateId == null) {
+                return "❌ 必须传 candidateId（单条）或 candidateIds（批量，逗号分隔）。"
+                        + "不知道 ID 就先 list_review_candidates(status=ALL)。";
+            }
+
             // ⚠️ 2026-10-26 12:0x 阁主第 3 条：**「忽略」不许能改写「判为重复」**。
             //    背景：他删掉两条临时样本后，候选 #26 成了悬空行（引用的文档已删），
             //    而头行建议「用 skip 收掉」；但 #26 已经是 DUPLICATE 终态 ——
             //    skip 若覆盖它，等于用「忽略」改写了「判为重复」这个结论。
             //    规则：**悬空行只能清空（PENDING → SKIPPED），不能改判**。
-            ReviewCandidate pre = reviewCandidateService.get(candidateId);
-            if (pre != null) {
-                boolean aGone = docService.getById(pre.getDocA()) == null;
-                boolean bGone = docService.getById(pre.getDocB()) == null;
-                if (aGone || bGone) {
-                    boolean isSkip = "skip".equalsIgnoreCase(action == null ? "" : action.trim());
-                    boolean isPending = ReviewCandidate.PENDING.equals(pre.getStatus());
-                    if (!(isSkip && isPending)) {
-                        String gone = (aGone ? "#" + pre.getDocA() : "") + (aGone && bGone ? "、" : "")
-                                + (bGone ? "#" + pre.getDocB() : "");
-                        return "❌ 候选 #" + candidateId + " 引用的文档已删除（" + gone
-                                + "），这是一条**悬空行**。\n\n"
-                                + "**悬空行只能清空，不能改判**：" + (isPending
-                                    ? "它还在待判断，要清掉请传 action=skip（只会标 SKIPPED，不动任何文档）。"
-                                    : "它已经是 **" + pre.getStatus() + "** 终态，判定保留、无需处理 —— "
-                                      + "`skip` 不会覆盖已有结论，正是为了防止「忽略」改写成「判为重复」。");
-                    }
-                }
+            String dangling = danglingRejection(reviewCandidateService.get(candidateId), action);
+            if (dangling != null) {
+                return dangling;
             }
             ReviewCandidateService.ResolveResult r =
                     reviewCandidateService.resolve(candidateId, action, note, by);
@@ -3630,6 +3763,97 @@ public class ExpHubTools {
             callLogService.incrementFailCalls();
             return "处理候选失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /** 批量判定一次最多处理多少条（#1220 第⑥条）：一次刷太多，判错的代价就没人认真看了 */
+    static final int BATCH_RESOLVE_MAX = 20;
+
+    /**
+     * 悬空行护栏（抽成方法是因为批量也要用同一套判据）。
+     *
+     * <p>规则没变：**悬空行只能清空（PENDING → SKIPPED），不能改判**。
+     * 抽出来之前这段只服务单条路径 —— 批量一旦漏了它，就等于给「忽略改写判为重复」开了后门。
+     *
+     * @return null 表示放行；否则是要原样返回给调用方的拒绝文案
+     */
+    private String danglingRejection(ReviewCandidate pre, String action) {
+        if (pre == null) return null;
+        boolean aGone = docService.getById(pre.getDocA()) == null;
+        boolean bGone = docService.getById(pre.getDocB()) == null;
+        if (!aGone && !bGone) return null;
+        boolean isSkip = "skip".equalsIgnoreCase(action == null ? "" : action.trim());
+        boolean isPending = ReviewCandidate.PENDING.equals(pre.getStatus());
+        if (isSkip && isPending) return null;   // 清空是唯一允许的动作
+        String gone = (aGone ? "#" + pre.getDocA() : "") + (aGone && bGone ? "、" : "")
+                + (bGone ? "#" + pre.getDocB() : "");
+        return "❌ 候选 #" + pre.getId() + " 引用的文档已删除（" + gone
+                + "），这是一条**悬空行**。\n\n"
+                + "**悬空行只能清空，不能改判**：" + (isPending
+                    ? "它还在待判断，要清掉请传 action=skip（只会标 SKIPPED，不动任何文档）。"
+                    : "它已经是 **" + pre.getStatus() + "** 终态，判定保留、无需处理 —— "
+                      + "`skip` 不会覆盖已有结论，正是为了防止「忽略」改写成「判为重复」。");
+    }
+
+    /**
+     * 批量判定（2026-11-05 · #1220 第⑥条：`list_review_candidates` 里压着 43 条 PENDING，
+     * 一条一条判 43 次调用 —— 理性的选择是不判，队列只会越来越长）。
+     *
+     * <p>三条硬约束，都是「批量最容易出事」的地方：
+     * <ol>
+     *   <li><b>上限 20 条</b>：不够可以分两次，一口气刷 43 条没人会认真看理由；</li>
+     *   <li><b>必须带 note</b>：一次判 N 条，没有统一理由事后无法复盘（每条都记进判定流水）；</li>
+     *   <li><b>逐条过悬空行护栏</b>：批量不许绕过「悬空行只能清空」这条规矩。</li>
+     * </ol>
+     *
+     * <p>回执逐条给结果：「已处理过」单独算**跳过**不叫失败 —— 把早就判过的当错误报，
+     * 会让人以为批量坏了。
+     */
+    private String resolveCandidatesInBatch(String rawIds, String action, String note, String by) {
+        java.util.List<Long> ids;
+        try {
+            ids = parseIds(rawIds, "candidateIds");
+        } catch (IllegalArgumentException e) {
+            return "❌ " + e.getMessage() + "（可取 list_review_candidates 回执里的「候选 #N」）";
+        }
+        if (ids.size() > BATCH_RESOLVE_MAX) {
+            return "❌ 一次最多 " + BATCH_RESOLVE_MAX + " 条（本次 " + ids.size() + " 条）。分几次判，别一口气刷 —— 刷过去的没人会认真看理由。";
+        }
+        if (note == null || note.trim().isEmpty()) {
+            return "❌ 批量判定必须传 note：一次判 " + ids.size()
+                    + " 条，没有统一理由事后无法复盘。每条都会记进判定流水，理由只写一次、逐条复用。";
+        }
+
+        int ok = 0, skipped = 0, failed = 0;
+        StringBuilder sb = new StringBuilder();
+        sb.append("🗂 批量判定 · action=").append(action == null ? "(空)" : action)
+          .append("｜共 ").append(ids.size()).append(" 条\n\n");
+        for (Long id : ids) {
+            String dang = danglingRejection(reviewCandidateService.get(id), action);
+            if (dang != null) {
+                failed++;
+                sb.append("- ❌ #").append(id).append(" 悬空行（引用的文档已删），只能 skip 清空\n");
+                continue;
+            }
+            ReviewCandidateService.ResolveResult r = reviewCandidateService.resolve(id, action, note, by);
+            if (r.ok()) {
+                ok++;
+                sb.append("- ✅ #").append(id).append(" → ").append(r.candidate().getStatus()).append("\n");
+            } else if (r.candidate() != null && !ReviewCandidate.PENDING.equals(r.candidate().getStatus())) {
+                skipped++;
+                sb.append("- ⏭ #").append(id).append(" 跳过（").append(r.candidate().getStatus()).append("）：")
+                  .append(r.message()).append("\n");
+            } else {
+                failed++;
+                sb.append("- ❌ #").append(id).append(" ").append(r.message()).append("\n");
+            }
+        }
+        sb.append("\n**合计**：成功 ").append(ok).append("｜跳过 ").append(skipped).append("｜失败 ").append(failed)
+          .append("\n**操作人**: ").append(by)
+          .append("\n**理由**（已逐条写入判定流水）: ").append(abbreviate(note.trim(), 200));
+        if (ok > 0 && ("duplicate".equalsIgnoreCase(action) || "superseded".equalsIgnoreCase(action))) {
+            sb.append("\n\n记住：没有删除、没有合并正文。要彻底清理仍需用 mark_for_deletion 标记后由用户在后台确认。");
+        }
+        return sb.toString();
     }
 
     // ==================== D1 施工包 4：相似度候选生成 ====================

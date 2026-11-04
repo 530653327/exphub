@@ -53,6 +53,14 @@ public class ReviewCandidateService {
     static final int NOTE_MAX = 2000;
 
     /**
+     * 已忽略（SKIPPED）的候选对复活阈值（2026-11-05 · #1220 第⑥条）。
+     *
+     * <p>取 0.10：低于这个幅度说明「重现」只是评分抖动，不是内容真的更像了。
+     * 太小会让忽略形同虚设（每周都来问一遍），太大又会让真正的重逢永远沉底。
+     */
+    static final BigDecimal SKIP_REVIVE_DELTA = new BigDecimal("0.10");
+
+    /**
      * 得分归一化（包级静态便于单测）。
      *
      * <p>线上实测发现的坑：调用方传 `score=0` 时库里落 `0.0000`，
@@ -137,8 +145,15 @@ public class ReviewCandidateService {
      * 把一对候选放进队列。已存在时不新建：
      * <ul>
      *   <li>PENDING → 更新得分与理由（同样的对，新算出更高分就刷新）</li>
-     *   <li>DISTINCT / SKIPPED / DUPLICATE / SUPERSEDED → 保持原状，不再打扰</li>
+     *   <li>SKIPPED → <b>可复活</b>：判分比上次高出 {@link #SKIP_REVIVE_DELTA} 才重新提出，否则静默跳过</li>
+     *   <li>DISTINCT / DUPLICATE / SUPERSEDED → 保持原状，不再打扰</li>
      * </ul>
+     *
+     * <p>⚠️ 2026-11-05（#1220 第⑥条）：SKIPPED 原来和 DISTINCT 一样被永久封口，
+     * 而 {@code resolve(action=skip)} 的回执一直写着「下次相似度再算到它仍会提出来」——
+     * <b>工具承诺了会再问，实际不会</b>。判错一次就再也见不到，理性的做法自然是不判。
+     * 现在把承诺兑现：忽略只是「这次先不看」，不是「永远别看」。
+     * 但也不能每次都来问（那等于没忽略），所以要求得分显著提升才复活。
      */
     public EnqueueResult enqueue(Long docA, Long docB, BigDecimal score, String reasons, String source) {
         // 归一化一次，后面所有写入路径都用它 —— 避免「新建时存 NULL、刷新时存 0」这种不一致
@@ -193,11 +208,34 @@ public class ReviewCandidateService {
                 }
                 return new EnqueueResult(false, exist, msg.toString());
             }
+            // SKIPPED = 「这次先不看」，不是「永远别看」：得分明显变高就重新提出来。
+            // 阈值存在的意义：否则每周扫描都会把同一批已忽略的对再问一遍，等于没忽略。
+            if (ReviewCandidate.SKIPPED.equals(exist.getStatus())) {
+                boolean muchHigher = validScore != null
+                        && (exist.getScore() == null
+                            || validScore.compareTo(exist.getScore().add(SKIP_REVIVE_DELTA)) >= 0);
+                if (!muchHigher) {
+                    return new EnqueueResult(false, exist,
+                            "该候选对已忽略过（#" + exist.getId() + "），本次得分没有明显变化，不再打扰");
+                }
+                String before = exist.getScore() == null ? "无" : exist.getScore().toPlainString();
+                exist.setStatus(ReviewCandidate.PENDING);
+                exist.setScore(validScore);
+                exist.setResolvedAt(null);
+                exist.setResolvedBy(null);
+                exist.setNote(truncate("曾判忽略；得分 " + before + " → " + validScore.toPlainString()
+                        + " 明显提高，重新提出", NOTE_MAX));
+                candidateMapper.updateById(exist);
+                logAction(exist.getId(), "REVIVE", ReviewCandidate.SKIPPED, ReviewCandidate.PENDING,
+                        "system(enqueue)", "得分 " + before + " → " + validScore.toPlainString());
+                return new EnqueueResult(true, exist,
+                        "该候选对曾判忽略，得分从 " + before + " 升到 " + validScore.toPlainString()
+                                + "，已重新放回待判断");
+            }
             return new EnqueueResult(false, exist,
                     "该候选对已处理过（状态 " + exist.getStatus() + "），不重复入队 —— "
                             + "人已经判断过的对，不该每周再问一遍");
         }
-
         ReviewCandidate c = new ReviewCandidate();
         c.setDocA(a);
         c.setDocB(b);
@@ -402,7 +440,11 @@ public class ReviewCandidateService {
                 String kNote = userNote == null ? "本次忽略" : userNote;
                 c.setNote(truncate(kNote, NOTE_MAX));
                 logAction(candidateId, CandidateResolutionLog.ACT_SKIP, prev, ReviewCandidate.SKIPPED, who, userNote);
-                return finish(c, who, "✅ 已忽略，未改动任何数据；下次相似度再算到它仍会提出来");
+                // 文案必须与 enqueue 的实际行为一致：以前这里写「仍会提出来」，
+                // 而 enqueue 把 SKIPPED 也当封口状态 —— 承诺了不会发生的事。
+                return finish(c, who, "✅ 已忽略，未改动任何数据。**这是「这次先不看」，不是永久封口**："
+                        + "今后得分比现在高 " + SKIP_REVIVE_DELTA.toPlainString() + " 以上会重新提出；"
+                        + "想立刻恢复待判断用 reopen_candidate(candidateId=" + candidateId + ")");
             }
             default -> {
                 return new ResolveResult(false, "无法识别的 action：" + action
