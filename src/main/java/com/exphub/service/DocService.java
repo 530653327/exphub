@@ -169,8 +169,28 @@ public class DocService {
      */
     public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId,
                             int page, int size, SearchMeta meta) {
+        return search(keyword, templateType, includeStatus, projectId, page, size, meta, false);
+    }
+
+    /**
+     * 搜索经验（带作用域全开）
+     *
+     * @param scopeAll true=不分作用域：全局可读文档 + 归属当前 Key 的项目文档，
+     *                 <b>在同一条 SQL 里一起按相关度排序</b>（不是两次查询再拼）。
+     *                 传入 projectId 时本开关无效（指定了项目就按项目走）。
+     *
+     * <p>为什么加这个（2026-11-05 · #1220 第③条）：原来「不传 projectName 只搜全局」是硬隔离，
+     * 一件事散在两个项目里就得先 list_projects 再逐个 projectName 搜 ——
+     * 近 7 天 list_projects 203 次、list_project_experiences 97 次，这不是偶发而是常态动作。
+     * 作用域应该是过滤维度，不是隔离墙。
+     */
+    public Page<Doc> search(String keyword, String templateType, String includeStatus, Long projectId,
+                            int page, int size, SearchMeta meta, boolean scopeAll) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+        // 作用域全开与「指定项目」互斥：指定了项目就按项目走，不要意外把全局带进来
+        boolean all = scopeAll && projectId == null;
+        String ownerKey = all ? apiKey : null;
 
         // 项目域鉴权：项目必须归属当前 Key（后台无 Key 上下文时放行）。
         // 校验通过后，项目本身即为隔离边界，不再对项目内文档重复做 api_key 过滤
@@ -199,17 +219,17 @@ public class DocService {
         // 若严格命中只是靠 2-gram 泛词凑出来的（如「数据 结构」凑中「数据模型 表结构」），
         // 直接返回会绕过重排、把真正精确的文档挤掉，此时下沉到第 2 级。
         String strictQuery = toFulltextQuery(kw);
-        long strictTotal = docMapper.countByFulltext(strictQuery, apiKey, projectId, tt, statusList);
+        long strictTotal = docMapper.countByFulltext(strictQuery, apiKey, projectId, tt, statusList, all, ownerKey);
         if (strictTotal > 0) {
             if (page > 1) {
-                log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
+                log.info("search tier=strict kw='{}' projectId={} scopeAll={} hits={}", kw, projectId, all, strictTotal);
                 if (meta != null) meta.tier = SearchTier.STRICT;
-                return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal);
+                return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal, all, ownerKey);
             }
             // 覆盖度探针固定看前 STRICT_DIRECT_MIN_HITS 条（与调用方 size 解耦），
             // 展示仍按 size 切 —— 判定条件和返回条数是两件事，别混用。
             int probeSize = Math.max(size, STRICT_DIRECT_MIN_HITS);
-            List<Doc> strictProbe = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, probeSize);
+            List<Doc> strictProbe = docMapper.searchByFulltext(strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, probeSize, all, ownerKey);
             // 严格命中能填满门槛、且存在整词覆盖时，直接采用（精确查询走快路径）；
             // 若只命中零星几条（常见于“某文档恰好引用了整句 query”），继续走重排补全，
             // 避免用户只看到 1 条结果。
@@ -226,21 +246,21 @@ public class DocService {
         // ===== 第 2 级：OR 召回 + 覆盖率重排（真正的放宽：不再要求所有词同时命中）=====
         if (!terms.expanded.isEmpty()) {
             String orQuery = terms.toOrQuery();
-            List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT);
+            List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey);
             List<Doc> ranked = rankAndFilter(candidates, terms, true);
             if (!ranked.isEmpty()) {
-                log.info("search tier=relaxed kw='{}' projectId={} candidates={} accepted={}",
-                        kw, projectId, candidates.size(), ranked.size());
+                log.info("search tier=relaxed kw='{}' projectId={} scopeAll={} candidates={} accepted={}",
+                        kw, projectId, all, candidates.size(), ranked.size());
                 if (meta != null) meta.tier = SearchTier.RERANK;
                 return pagedResult(kw, ranked, page, size);
             }
-            log.info("search tier=relaxed-empty kw='{}' projectId={} candidates={} concepts={}",
-                    kw, projectId, candidates.size(), terms.concepts.size());
+            log.info("search tier=relaxed-empty kw='{}' projectId={} scopeAll={} candidates={} concepts={}",
+                    kw, projectId, all, candidates.size(), terms.concepts.size());
         }
 
         // ===== 第 3 级：LIKE 兜底（单字/标点等全文索引覆盖不到的场景）=====
         if (meta != null) meta.tier = SearchTier.LIKE;
-        return searchWithLike(keyword, templateType, includeStatus, projectId, page, size);
+        return searchWithLike(keyword, templateType, includeStatus, projectId, page, size, all, ownerKey);
     }
 
     /**
@@ -248,11 +268,22 @@ public class DocService {
      * 用于“0 结果”时给调用方兜底参考，避免 AI 误判“没有经验”而重复创建。
      */
     public List<Doc> findSimilar(String keyword, String templateType, String includeStatus, Long projectId, int limit) {
+        return findSimilar(keyword, templateType, includeStatus, projectId, limit, false);
+    }
+
+    /**
+     * 相近经验（带作用域开关）。scopeAll 口径与 {@link #search} 完全一致，
+     * 否则会出现「搜索全开了、0 结果兜底又退回全局」的口径割裂。
+     */
+    public List<Doc> findSimilar(String keyword, String templateType, String includeStatus, Long projectId,
+                                 int limit, boolean scopeAll) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
         if (projectId != null && !canAccessProject(projectId, apiKey)) {
             return new ArrayList<>();
         }
+        boolean all = scopeAll && projectId == null;
+        String ownerKey = all ? apiKey : null;
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
         List<String> statusList = parseStatusList(includeStatus);
         SearchTerms terms = buildSearchTerms(keyword);
@@ -260,7 +291,7 @@ public class DocService {
             return new ArrayList<>();
         }
         List<Doc> candidates = docMapper.searchByFulltext(terms.toOrQuery(), toCleanKeyword(keyword == null ? "" : keyword),
-                apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT);
+                apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey);
         List<Doc> ranked = rankAndFilter(candidates, terms, false);
         if (ranked.size() > limit) {
             return new ArrayList<>(ranked.subList(0, Math.max(0, limit)));
@@ -296,7 +327,8 @@ public class DocService {
         if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
             return 0;
         }
-        return docMapper.countByFulltext(terms.toOrQuery(), apiKey, projectId, tt, statusList);
+        // 项目段的口径永远是「单个项目内」，与作用域开关无关 → scopeAll=false
+        return docMapper.countByFulltext(terms.toOrQuery(), apiKey, projectId, tt, statusList, false, null);
     }
 
     /**
@@ -316,9 +348,10 @@ public class DocService {
      */
     private Page<Doc> buildFulltextResult(String originalKeyword, String ftQuery, String sortKeyword,
                                           String apiKey, Long projectId, String tt, List<String> statusList,
-                                          int page, int size, long total) {
+                                          int page, int size, long total,
+                                          boolean scopeAll, String ownerApiKey) {
         long offset = (long) (page - 1) * size;
-        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size);
+        List<Doc> records = docMapper.searchByFulltext(ftQuery, sortKeyword, apiKey, projectId, tt, statusList, offset, (long) size, scopeAll, ownerApiKey);
 
         return buildResultFromRecords(originalKeyword, records, total, page, size);
     }
@@ -370,7 +403,8 @@ public class DocService {
     /**
      * LIKE 搜索兜底（FULLTEXT 无结果或空关键词时使用）
      */
-    private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId, int page, int size) {
+    private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId,
+                                     int page, int size, boolean scopeAll, String ownerApiKey) {
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         String apiKey = (assistant != null) ? assistant.getApiKey() : null;
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
@@ -378,13 +412,26 @@ public class DocService {
 
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();
         // 与全文检索保持一致：项目域已鉴权，不再叠加文档级 Key 过滤
-        if (apiKey != null && projectId == null) {
-            wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", apiKey));
-        }
-        if (projectId != null) {
-            wrapper.eq("project_id", projectId);
+        if (scopeAll) {
+            // 作用域全开：全局可读文档 OR 我名下项目的文档。
+            // 这里用 in(id 列表) 而不是拼 inSql 字符串 —— 拼 SQL 等于给自己开一条注入路径。
+            List<Long> myProjects = ownerProjectIds(ownerApiKey);
+            wrapper.and(w -> {
+                w.and(g -> g.isNull("project_id")
+                            .and(v -> v.eq("visibility", "PUBLIC").or().eq("api_key", apiKey)));
+                if (!myProjects.isEmpty()) {
+                    w.or().in("project_id", myProjects);
+                }
+            });
         } else {
-            wrapper.isNull("project_id");
+            if (apiKey != null && projectId == null) {
+                wrapper.and(w -> w.eq("visibility", "PUBLIC").or().eq("api_key", apiKey));
+            }
+            if (projectId != null) {
+                wrapper.eq("project_id", projectId);
+            } else {
+                wrapper.isNull("project_id");
+            }
         }
         if (tt != null) {
             wrapper.eq("template_type", tt);
@@ -711,6 +758,25 @@ public class DocService {
         if (project == null) return false;
         if (apiKey == null) return true;
         return apiKey.equals(project.getApiKey());
+    }
+
+    /**
+     * 当前 Key 名下的项目 ID 列表（作用域全开时用于圈定「我的项目」）。
+     *
+     * <p>只 select id：项目数很少，没必要把名称/描述一起拖回来。
+     * apiKey 为 null（后台无 Key 上下文）时返回空 —— 此时作用域全开退化为
+     * 「只搜全局公开文档」，而不是「谁的项目都能看」。
+     */
+    private List<Long> ownerProjectIds(String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) return new ArrayList<>();
+        QueryWrapper<Project> qw = new QueryWrapper<>();
+        qw.select("id").eq("api_key", apiKey);
+        List<Project> list = projectMapper.selectList(qw);
+        List<Long> ids = new ArrayList<>(list.size());
+        for (Project p : list) {
+            if (p.getId() != null) ids.add(p.getId());
+        }
+        return ids;
     }
 
     /** 包级静态便于单测：M10 的关键安全性在于「ALL 也不许带出待删项」 */

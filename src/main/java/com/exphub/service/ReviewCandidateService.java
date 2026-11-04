@@ -263,6 +263,42 @@ public class ReviewCandidateService {
                 .last("LIMIT " + size));
     }
 
+    /**
+     * 全队列按状态分组计数（2026-11-05 · #1220 第⑥条）。
+     *
+     * <p>为什么必须单列一个方法：{@link #listByStatus} 带了 {@code LIMIT}，
+     * 回执里的「N 条」只是<b>本页</b>条数 —— 用 limit=1 查 PENDING 时，
+     * 队列里压着 34 条，回执却写「1 条」，读的人会以为快清完了。
+     * 积压量是这个队列最该被看见的数字，不能被分页吃掉。
+     *
+     * <p>实现上用 GROUP BY 一次拿全，别按状态逐个 count（5 个状态 = 5 次查询）。
+     *
+     * @return 状态 → 条数；库为空时返回空 Map（调用方自己决定怎么显示 0）
+     */
+    public java.util.Map<String, Long> countByStatusGroup() {
+        QueryWrapper<ReviewCandidate> qw = new QueryWrapper<>();
+        qw.select("status AS st", "COUNT(*) AS cnt").groupBy("status");
+        List<java.util.Map<String, Object>> rows = candidateMapper.selectMaps(qw);
+        java.util.Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        if (rows == null) return counts;
+        for (java.util.Map<String, Object> row : rows) {
+            Object st = mapValueIgnoreCase(row, "st");
+            Object cnt = mapValueIgnoreCase(row, "cnt");
+            long n = (cnt instanceof Number num) ? num.longValue() : 0L;
+            counts.put(st == null ? "UNKNOWN" : st.toString(), n);
+        }
+        return counts;
+    }
+
+    /** selectMaps 的 key 大小写随驱动而变（MySQL 常返回小写，有的环境返回大写），不能直接 get */
+    private static Object mapValueIgnoreCase(java.util.Map<String, Object> row, String key) {
+        if (row == null) return null;
+        for (java.util.Map.Entry<String, Object> e : row.entrySet()) {
+            if (e.getKey() != null && e.getKey().equalsIgnoreCase(key)) return e.getValue();
+        }
+        return null;
+    }
+
     /** 取一条候选（回执要按它对判悬空/已判） */
     public ReviewCandidate get(Long id) {
         return id == null ? null : candidateMapper.selectById(id);

@@ -773,12 +773,13 @@ public class ExpHubTools {
     /**
      * 搜索经验库
      */
-    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。⚠️ 不传 projectName 只搜全局：项目经验不会进排序，仅在末尾提示「项目内还有 N 条」的标题+摘要。0 结果会给出相近经验与排查建议。")
+    @Tool(name = "search_experience", description = "搜索经验库（宽松召回、按相关度排；用自然语言描述场景）。默认只搜 ACTIVE，要历史传 includeStatus=COMPLETED,DEPRECATED,BROKEN 或 ALL。**scope 默认 all**：全局经验 + 你名下所有项目的经验一起排序，结果标注来源项目；scope=global 只搜全局（旧的「项目段末尾提示」行为），scope=project 只搜 projectName 指定的项目。0 结果会给出相近经验与排查建议。")
     public String searchExperience(
             @ToolParam(description = "场景描述，空格分隔多个关键词") String query,
             @ToolParam(description = "可选。模板类型过滤：problem_solution/knowledge_doc/todo_list/bug_fix/config_guide/how_to/schedule_plan/goal", required = false) String templateType,
             @ToolParam(description = "可选。默认只搜 ACTIVE；要已完成/过期传 COMPLETED,DEPRECATED,BROKEN，ALL=全部", required = false) String includeStatus,
-            @ToolParam(description = "可选。项目名或别名。不传只搜全局（项目命中仅在末尾提示标题+摘要）", required = false) String projectName,
+            @ToolParam(description = "可选。项目名或别名。传了即为「只搜该项目」", required = false) String projectName,
+            @ToolParam(description = "可选。作用域：all（默认，全局+我名下全部项目一起排） / global（只搜全局） / project（只搜 projectName 指定的项目）。语义变更 2026-11-05", required = false) String scope,
             @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。偏移量，默认 0（翻页照抄上页提示的 offset 值）", required = false) Integer offset,
             @ToolParam(description = "可选。true=精简（只 ID/标题/类型/摘要）；false=完整", required = false) Boolean brief) {
@@ -819,7 +820,29 @@ public class ExpHubTools {
                 }
                 projectId = candidates.get(0).getId();
             }
-            
+
+            // ===== 作用域解析（2026-11-05 · #1220 第③条）=====
+            // 原来「不传 projectName 就只搜全局」是硬隔离：一件事散在两个项目里，
+            // 就得先 list_projects 再逐个 projectName 搜（近 7 天 list_projects 203 次、
+            // list_project_experiences 97 次 —— 这已经是常态动作，不是偶发）。
+            // 现在作用域是可选过滤维度：默认 all = 全局 + 我名下全部项目，同一条 SQL 一起排序。
+            String sc = (scope == null || scope.trim().isEmpty()) ? "all" : scope.trim().toLowerCase();
+            if (!java.util.Set.of("all", "global", "project").contains(sc)) {
+                return "❌ scope 只能是 all / global / project（收到：" + scope + "）。\n"
+                     + "· all（默认）= 全局 + 你名下全部项目一起排，结果标 🗂 来源\n"
+                     + "· global = 只搜全局经验（项目命中只在末尾提示）\n"
+                     + "· project = 只搜 projectName 指定的项目";
+            }
+            if ("project".equals(sc) && projectId == null) {
+                return "❌ scope=project 必须同时传 projectName。不知道项目名就先 list_projects 看一眼。";
+            }
+            if (projectId != null && "global".equals(sc)) {
+                return "❌ 冲突：传了 projectName 又传 scope=global。只想搜某个项目用 scope=project，"
+                     + "想全局+项目一起搜就把 scope 留空（默认 all）。";
+            }
+            // 指定了项目 → 按项目走；否则 scope=all 才跨域
+            boolean scopeAll = "all".equals(sc) && projectId == null;
+
             // 默认只搜索 ACTIVE 状态
             String statusFilter = includeStatus;
             if (statusFilter == null || statusFilter.isEmpty()) {
@@ -838,7 +861,7 @@ public class ExpHubTools {
             int poolSize = Math.min(effOffset + effLimit, SEARCH_POOL_MAX);
 
             DocService.SearchMeta searchMeta = new DocService.SearchMeta();
-            var result = docService.search(query, templateType, statusFilter, projectId, 1, poolSize, searchMeta);
+            var result = docService.search(query, templateType, statusFilter, projectId, 1, poolSize, searchMeta, scopeAll);
             long matchedTotal = result.getTotal();
             java.util.List<Doc> docs = new ArrayList<>(result.getRecords());
 
@@ -853,7 +876,9 @@ public class ExpHubTools {
             java.util.List<Doc> projectTop = java.util.List.of();
             if (projectId == null) {
                 autoProject = detectProjectInQuery(query);
-                if (autoProject != null) {
+                // ⚠️ 2026-11-05：scopeAll 时项目文档已经并进主排序，再算一遍项目段
+                //    就是同一批内容在回执里出现两遍（还会让人以为「主列表没搜到项目内容」）。
+                if (autoProject != null && !scopeAll) {
                     try {
                         // N：项目侧命中的**纯 DB 计数**（宽松 OR 召回口径），能被一条 count(*) 对账。
                         // 不能用 search(...).getTotal()：那是覆盖率重排后的条数，随候选池浮动。
@@ -889,7 +914,7 @@ public class ExpHubTools {
             if (docs.isEmpty()) {
                 // 2) 相近经验兜底：避免 AI 误判“没有经验”而重复创建
                 // （原第 1 步「识别到项目后再搜一次」已前移到上面合并召回，此处不再重复）
-                var similar = docService.findSimilar(query, templateType, statusFilter, projectId, 3);
+                var similar = docService.findSimilar(query, templateType, statusFilter, projectId, 3, scopeAll);
                 StringBuilder sb = new StringBuilder();
                 sb.append(filterInfo).append("未找到\"").append(query).append("\"的精确匹配。\n\n");
                 if (!similar.isEmpty()) {
@@ -931,14 +956,20 @@ public class ExpHubTools {
             if (effOffset > 0 || pageDocs.size() < effTotal) {
                 sb.append("，本次返回第 ").append(fromIdx + 1).append("-").append(toIdx).append(" 条");
             }
+            if (scopeAll) {
+                sb.append("｜作用域 all（全局 + 你名下项目）");
+            }
             sb.append("：\n\n");
+
+            // 作用域全开时，每条结果要标出「来自哪个项目」，否则读的人分不清这条是全局结论还是项目内部结论
+            java.util.Map<Long, String> projNames = scopeAll ? loadProjectNames() : java.util.Map.of();
 
             // #752 第 2 条：时效提示（只读计算，不改正文、不改排序、不隐藏）。
             // 放顶部是因为「这条结论还作不作数」必须在读内容之前就知道；
             // 埋在每条后面会被当成噪音，读者已经在按过期结论规划了。
             sb.append(staleVerifyLine(pageDocs, java.time.LocalDate.now()));
 
-            sb.append(renderDocs(pageDocs, briefMode));
+            sb.append(renderDocs(pageDocs, briefMode, projNames, query));
 
             // 翻页提示：不提示的话调用方以为「只有这些」，这正是原来隐式 25 条上限的根源
             sb.append("\n---\n");
@@ -1095,6 +1126,11 @@ public class ExpHubTools {
 
     /** M18-b：精简模式的一条结果（单行，省 token）。包级可见便于单测。 */
     static String briefLine(int index, Doc doc) {
+        return briefLine(index, doc, java.util.Map.of());
+    }
+
+    /** 精简模式 + 来源标注（作用域全开时用） */
+    static String briefLine(int index, Doc doc, java.util.Map<Long, String> projNames) {
         // 标记前置，扫一眼就知道哪条结论存疑（flags 为空时不改变原有输出格式）
         String flagMark = "";
         if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
@@ -1103,26 +1139,118 @@ public class ExpHubTools {
         // D1 取代链：被取代的条目必须一眼可见，否则 AI 会把旧结论当现行结论用
         String supersededMark = (doc.getSupersededBy() != null)
                 ? " ⛔已被#" + doc.getSupersededBy() + "取代" : "";
+        String projMark = "";
+        if (projNames != null && !projNames.isEmpty() && doc.getProjectId() != null) {
+            String pn = projNames.get(doc.getProjectId());
+            projMark = " 🗂" + (pn != null ? pn : ("#" + doc.getProjectId()));
+        }
         return index + ". 【ID:" + doc.getId() + "】" + doc.getTitle()
                 + " —— " + getTemplateTypeLabel(doc.getTemplateType())
-                + " " + getStatusLabel(doc.getStatus()) + flagMark + supersededMark
+                + " " + getStatusLabel(doc.getStatus()) + flagMark + supersededMark + projMark
                 + " · " + previewSummary(doc.getSummary()) + "\n";
+    }
+
+    /** 命中片段：命中词前后各取这么多字（#1220 第②条，2026-11-05） */
+    private static final int SNIPPET_PAD = 40;
+
+    /**
+     * 从正文里抠出命中词周围的原句，用于搜索结果列表（2026-11-05 · #1220 第②条）。
+     *
+     * <p>为什么不在 SQL 里做：MySQL FULLTEXT 只给相关度分数，<b>不返回命中位置</b>，
+     * 想在库里取片段只能再套一遍 LIKE/正则，代价远大于在内存里 indexOf。
+     * 搜索结果本来就是 {@code SELECT *}（content 已经在手上），这里零额外查询。
+     *
+     * <p>取「正文里最早出现的那个命中词」而不是第一个 token：查询词顺序未必等于正文顺序，
+     * 按正文位置取才能看到最靠前的上下文。
+     *
+     * @return 片段（带 … 表示截断）；一个词都没命中返回 null（宁可不显示，也不显示无关内容）
+     */
+    static String hitSnippet(String content, String query) {
+        if (content == null || content.isEmpty() || query == null || query.isBlank()) return null;
+        int bestPos = -1;
+        int bestLen = 0;
+        for (String raw : query.split("[\\s,，、;；/]+")) {
+            String t = raw.trim();
+            // 单字太泛（「的」「为」满篇都是），至少 2 字才当命中词
+            if (t.length() < 2) continue;
+            int pos = content.indexOf(t);
+            if (pos >= 0 && (bestPos < 0 || pos < bestPos)) {
+                bestPos = pos;
+                bestLen = t.length();
+            }
+        }
+        if (bestPos < 0) return null;
+
+        int start = Math.max(0, bestPos - SNIPPET_PAD);
+        int end = Math.min(content.length(), bestPos + bestLen + SNIPPET_PAD);
+        // 别把代理对（emoji 等）从中间切断 —— 切一半会变成乱码方块
+        if (start > 0 && Character.isLowSurrogate(content.charAt(start))) start--;
+        if (end < content.length() && Character.isLowSurrogate(content.charAt(end))) end++;
+
+        String piece = content.substring(start, end).replaceAll("\\s+", " ").trim();
+        return (start > 0 ? "…" : "") + piece + (end < content.length() ? "…" : "");
+    }
+
+    /** 项目 id → 名称（作用域全开时给每条结果标来源，只查一次） */
+    private java.util.Map<Long, String> loadProjectNames() {
+        java.util.Map<Long, String> m = new java.util.HashMap<>();
+        try {
+            for (Project p : projectService.listProjects()) {
+                if (p.getId() != null) m.put(p.getId(), p.getName());
+            }
+        } catch (Exception e) {
+            log.debug("loadProjectNames failed: {}", e.getMessage());
+        }
+        return m;
+    }
+
+    /**
+     * 候选队列全量分布（#1220 第⑥条）：固定顺序输出，避免 HashMap 每次顺序都不一样。
+     * 未知状态也要报出来 —— 静默吞掉等于把「多了个没人认识的状态」藏起来。
+     */
+    static String formatStatusCounts(java.util.Map<String, Long> counts) {
+        java.util.List<String> order = java.util.List.of(
+                ReviewCandidate.PENDING, ReviewCandidate.DUPLICATE, ReviewCandidate.SUPERSEDED,
+                ReviewCandidate.DISTINCT, ReviewCandidate.SKIPPED);
+        java.util.Map<String, Long> src = (counts == null) ? java.util.Map.of() : counts;
+        StringBuilder sb = new StringBuilder();
+        long total = 0;
+        for (String st : order) {
+            long n = src.getOrDefault(st, 0L);
+            total += n;
+            if (sb.length() > 0) sb.append("｜");
+            sb.append(st).append(" ").append(n);
+        }
+        for (var e : src.entrySet()) {
+            if (order.contains(e.getKey())) continue;
+            long n = (e.getValue() == null) ? 0L : e.getValue();
+            total += n;
+            sb.append("｜").append(e.getKey()).append(" ").append(n);
+        }
+        sb.append("｜合计 ").append(total);
+        return sb.toString();
     }
 
     private String renderDocs(List<Doc> docs) {
         return renderDocs(docs, false);
     }
 
+    private String renderDocs(List<Doc> docs, boolean brief) {
+        return renderDocs(docs, brief, java.util.Map.of(), null);
+    }
+
     /**
      * @param brief true=精简模式（M18-b）：一条一行，只留 ID/标题/类型/状态/摘要。
      *              省 token，适合「先扫一遍挑目标」；要看标签、作者、历史版本提示就传 false。
+     * @param projNames 作用域全开时用于给每条标「来自哪个项目」，空 Map = 不标
+     * @param query 原始查询词，用于生成命中片段（只在完整模式加，精简模式保持一行到底）
      */
-    private String renderDocs(List<Doc> docs, boolean brief) {
+    private String renderDocs(List<Doc> docs, boolean brief, java.util.Map<Long, String> projNames, String query) {
         StringBuilder sb = new StringBuilder();
         int i = 1;
         for (Doc doc : docs) {
             if (brief) {
-                sb.append(briefLine(i++, doc));
+                sb.append(briefLine(i++, doc, projNames));
                 continue;
             }
             String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
@@ -1130,7 +1258,19 @@ public class ExpHubTools {
             sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
             sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel)
               .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
+            // 来源标注：作用域全开时全局与项目内经验混排，不标来源等于让读的人猜
+            if (projNames != null && !projNames.isEmpty() && doc.getProjectId() != null) {
+                String pn = projNames.get(doc.getProjectId());
+                sb.append("   🗂 来源: 项目「").append(pn != null ? pn : ("#" + doc.getProjectId())).append("」\n");
+            }
             sb.append("   摘要: ").append(previewSummary(doc.getSummary())).append("\n");
+            // 命中片段（2026-11-05 · #1220 第②条）：只给标题+摘要时，判断「要不要读」只能靠猜，
+            // 于是退化成整篇 get_experience_detail（7 天 2173 次读 vs 1228 次搜 = 1.77 倍）。
+            // 这里直接从 content 抠出命中词周围的原句，让「读不读」在列表阶段就能定。
+            String snippet = hitSnippet(doc.getContent(), query);
+            if (snippet != null) {
+                sb.append("   命中: ").append(snippet).append("\n");
+            }
             sb.append("   标签: ").append(doc.getTags() != null ? doc.getTags() : "无").append("\n");
             // set_flags：标记回显。给 AI 一个明确的「别把这条当确定结论」信号
             if (doc.getFlags() != null && !doc.getFlags().isBlank()) {
@@ -3114,13 +3254,17 @@ public class ExpHubTools {
                 return "❌ " + bad.getMessage();
             }
             List<ReviewCandidate> list = reviewCandidateService.listByStatus(status, size);
+            // 全队列按状态分组计数（#1220 第⑥条）：limit 只截列表，不能连总数一起吃掉
+            java.util.Map<String, Long> groupCounts = reviewCandidateService.countByStatusGroup();
+            String distribution = formatStatusCounts(groupCounts);
             String scope = (st == null) ? "ALL（不限状态）" : st;
             if (list.isEmpty()) {
                 return "📭 队列为空（状态 " + scope + "）。\n\n"
                         + (st == null
                             ? "全部状态都没有任何候选记录。\n"
                             : "整理新候选：发现两条内容高度重合时用 add_review_candidate 入队。\n")
-                        + "想看所有状态用 status=ALL。";
+                        + "想看所有状态用 status=ALL。\n\n"
+                        + "📊 全队列分布: " + distribution + "\n";
             }
             // 批量取标题，避免逐条查
             java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
@@ -3129,7 +3273,11 @@ public class ExpHubTools {
             for (Doc d : docService.listByIds(ids)) docMap.put(d.getId(), d);
 
             StringBuilder sb = new StringBuilder();
-            sb.append("🗂 整理候选队列 · ").append(scope).append("（").append(list.size()).append(" 条）\n");
+            sb.append("🗂 整理候选队列 · ").append(scope)
+              .append("（本页 ").append(list.size()).append(" 条 / 传入 limit=").append(size).append("）\n");
+            // ⚠️ 2026-11-05：原来只写「N 条」，而 N 是本页条数（被 LIMIT 截过）。
+            //    用 limit=1 查 PENDING 时队列压着 34 条、回执却写「1 条」—— 积压量被分页吃掉了。
+            sb.append("📊 全队列分布: ").append(distribution).append("\n");
             // ⚠️ 2026-10-26 11:5x 阁主：「项目 #8 扫出 1 篇，队列里却有 2 条」——
             //    两个数各自都对，差值来自**候选行不随文档删除失效**：行还在，它引用的文档没了。
             //    以前只有逐行写「已不存在」，头行不给总数，读的人会以为「扫出 1 篇」和「2 条」矛盾。
@@ -4074,6 +4222,152 @@ public class ExpHubTools {
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.getProject: FAILED", e);
+            return "查询失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 项目概览聚合读（2026-11-05 · #1220 第④条）。
+     *
+     * <p>原来回答「这个项目现在什么样」要连调 5 次：get_project（2ms）+ get_project_agents（6ms）
+     * + list_project_experiences（85ms）+ get_project_progress（4ms）+ check_my_todos（18ms）。
+     * 前四个加起来不到 100ms，纯粹是被拆成 5 个端点 —— 近 7 天这组调用合计 586 次。
+     *
+     * <p>这里只做「聚合读」：一次返回概要，<b>不复制细节</b>。
+     * 章节只给标题清单（不给正文）、经验只给最近 3 条标题、进度只给最近 1 条。
+     * 要正文仍然去调各自的工具 —— 否则这个接口自己就会长成一篇读不完的长文。
+     */
+    @Tool(name = "get_project_brief", description = "一次拿全项目概览：元信息 + AGENTS.md 章节清单 + 经验条数与最近 3 条 + 最近 1 条进度 + 未完成待办数。"
+            + "要正文细节再分别调 get_project_agents / list_project_experiences / get_project_progress / check_my_todos。")
+    public String getProjectBrief(
+            @ToolParam(description = "项目ID（用 list_projects 查）") Long projectId) {
+        try {
+            if (projectId == null) {
+                return "❌ 必须传 projectId。不知道 ID 就先 list_projects。";
+            }
+            Project p = projectService.getProject(projectId);
+            if (p == null) {
+                return "❌ 未找到项目ID " + projectId + "，或你没有访问权限。可用 list_projects 查看你有权访问的项目。";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("# ").append(p.getName()).append("（#").append(p.getId()).append("）\n\n");
+            sb.append("**编码**: ").append(p.getProjectCode())
+              .append(" ｜ **状态**: ").append(p.getStatus()).append("\n");
+            if (p.getAliases() != null && !p.getAliases().isBlank()) {
+                sb.append("**别名**: ").append(abbreviate(p.getAliases(), 100)).append("\n");
+            }
+            if (p.getDescription() != null && !p.getDescription().isBlank()) {
+                sb.append("**描述**: ").append(abbreviate(p.getDescription(), 120)).append("\n");
+            }
+            if (p.getDefaultTestCmd() != null && !p.getDefaultTestCmd().isBlank()) {
+                sb.append("**默认测试命令**: ").append(abbreviate(p.getDefaultTestCmd(), 100)).append("\n");
+            }
+            sb.append("\n");
+
+            // 一次查询拿项目内全部「读端可见」文档（已排除待删），再在内存里按角色分类。
+            // 分类而不是多次查询：这些文档本来就在同一张表、同一个 project_id 下。
+            List<Doc> all = projectService.listVisibleProjectDocs(projectId, null);
+            int mainDoc = 0;
+            java.util.List<Doc> chapters = new ArrayList<>();
+            java.util.List<Doc> experiences = new ArrayList<>();
+            Doc lastProgress = null;
+            for (Doc d : all) {
+                String role = d.getDocRole();
+                if ("MAIN".equals(role)) {
+                    mainDoc++;
+                } else if ("CHAPTER".equals(role)) {
+                    chapters.add(d);
+                } else if ("project_progress".equals(d.getTemplateType())) {
+                    // all 已按 updated_at 倒序，第一条即最新
+                    if (lastProgress == null) lastProgress = d;
+                } else if ("todo_list".equals(d.getTemplateType())) {
+                    // 待办单独计数，不混进「经验」
+                } else {
+                    experiences.add(d);
+                }
+            }
+
+            // ===== AGENTS.md =====
+            sb.append("## AGENTS.md\n");
+            if (mainDoc == 0 && chapters.isEmpty()) {
+                sb.append("未建立（可用 update_project_agents_main / update_project_agents_chapter 建立）\n");
+            } else {
+                long always = 0;
+                for (Doc c : chapters) {
+                    if ("ALWAYS".equalsIgnoreCase(c.getLoadStrategy())) always++;
+                }
+                sb.append("MAIN 索引: ").append(mainDoc > 0 ? "有" : "**缺失**")
+                  .append(" ｜ 章节 ").append(chapters.size()).append(" 章");
+                if (!chapters.isEmpty()) {
+                    sb.append("（ALWAYS ").append(always).append(" / ON_DEMAND ")
+                      .append(chapters.size() - always).append("）");
+                }
+                sb.append("\n");
+                if (!chapters.isEmpty()) {
+                    sb.append("章节: ");
+                    int shown = 0;
+                    for (Doc c : chapters) {
+                        if (shown >= 12) { sb.append(" …等 ").append(chapters.size()).append(" 章"); break; }
+                        if (shown > 0) sb.append("｜");
+                        sb.append(c.getChapterNo()).append(" ").append(c.getChapterTitle());
+                        shown++;
+                    }
+                    sb.append("\n");
+                }
+            }
+            sb.append("\n");
+
+            // ===== 经验 =====
+            long pendingDelete = projectService.countPendingDeleteInProject(projectId, null);
+            sb.append("## 经验（不含 AGENTS 与进度）\n");
+            sb.append("共 ").append(experiences.size()).append(" 条");
+            if (pendingDelete > 0) {
+                sb.append("｜另有 ").append(pendingDelete).append(" 条已标待删（读端不计入）");
+            }
+            sb.append("\n");
+            if (!experiences.isEmpty()) {
+                sb.append("最近 3 条:\n");
+                int shown = 0;
+                for (Doc d : experiences) {
+                    if (shown >= 3) break;
+                    sb.append("- #").append(d.getId()).append(" ").append(abbreviate(d.getTitle(), 60))
+                      .append("（").append(d.getUpdatedAt() != null ? d.getUpdatedAt().toLocalDate() : "-").append("）\n");
+                    shown++;
+                }
+            }
+            sb.append("\n");
+
+            // ===== 最近进度 =====
+            sb.append("## 最近进度\n");
+            if (lastProgress == null) {
+                sb.append("无（用 append_project_progress 记录第一条）\n");
+            } else {
+                sb.append("- #").append(lastProgress.getId()).append(" ")
+                  .append(abbreviate(lastProgress.getTitle(), 60))
+                  .append("（").append(lastProgress.getUpdatedAt() != null
+                        ? lastProgress.getUpdatedAt().toLocalDate() : "-").append("）\n");
+            }
+            sb.append("\n");
+
+            // ===== 待办 =====
+            sb.append("## 待办\n");
+            int todoCount = 0;
+            try {
+                todoCount = docService.listByTemplateType("todo_list", projectId, "ACTIVE").size();
+            } catch (Exception e) {
+                log.debug("getProjectBrief: 待办计数失败 project={}, {}", projectId, e.getMessage());
+            }
+            sb.append("未完成 ").append(todoCount).append(" 条\n");
+
+            sb.append("\n---\n");
+            sb.append("细节按需取：get_project_agents(projectId=").append(projectId).append(")")
+              .append(" / list_project_experiences(projectId=").append(projectId).append(")")
+              .append(" / get_project_progress(projectId=").append(projectId).append(")")
+              .append(" / check_my_todos(projectId=").append(projectId).append(")");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.getProjectBrief: FAILED", e);
             return "查询失败: " + e.getMessage();
         }
     }

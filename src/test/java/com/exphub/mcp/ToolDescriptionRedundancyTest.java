@@ -314,8 +314,10 @@ class ToolDescriptionRedundancyTest {
         //            参数 170 → 175。工具数不变 —— create 是自动填，不需要参数。
         // 2026-10-30 A5 B 方案：update_experience 与 import_document 各加 originalHash（整篇写回必填），
         //            参数 175 → 177。工具数仍 45。
-        assertEquals(45, toolCount, "工具数变了（45 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(177, paramCount, "参数数变了（177 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-11-05 #1220 P0：45 → 46，新增 get_project_brief（项目概览聚合读，1 个参数）；
+        //            search_experience 加 scope（all/global/project），参数 177 → 179。
+        assertEquals(46, toolCount, "工具数变了（45 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(179, paramCount, "参数数变了（177 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

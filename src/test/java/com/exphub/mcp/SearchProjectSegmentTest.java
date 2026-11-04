@@ -157,11 +157,16 @@ class SearchProjectSegmentTest {
 
         String svc = Files.readString(Path.of("src/main/java/com/exphub/service/DocService.java"),
                 StandardCharsets.UTF_8);
+        // 2026-11-05：签名多了 scopeAll/ownerApiKey（#1220 第③条），按新签名取方法体
         String like = SourceScan.methodBody(svc,
-                "private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId, int page, int size)");
+                "private Page<Doc> searchWithLike(String keyword, String templateType, String includeStatus, Long projectId,");
         assertFalse(like.isEmpty(), "取不到 searchWithLike 方法体，守卫失效");
         assertTrue(like.contains("wrapper.isNull(\"project_id\")"), "LIKE 兜底的全局隔离不许动");
         assertTrue(like.contains("wrapper.eq(\"project_id\", projectId)"), "LIKE 兜底的项目域分支不许动");
+        // 作用域全开（scopeAll=true）是有意放开的一处，但**只能放开到「本 Key 名下的项目」**：
+        // 一旦这里改成「不过滤 project_id」，别人项目的文档就会被 LIKE 兜底带出来。
+        assertTrue(like.contains("ownerProjectIds(ownerApiKey)"),
+                "作用域全开必须用 ownerProjectIds 圈定本 Key 名下项目，不能裸放开 project_id 过滤");
     }
 
     @Test
@@ -200,17 +205,22 @@ class SearchProjectSegmentTest {
     void tierDecisionIndependentOfPageSize() throws IOException {
         String svc = Files.readString(Path.of("src/main/java/com/exphub/service/DocService.java"),
                 StandardCharsets.UTF_8);
-        String body = SourceScan.methodBody(svc,
-                "int page, int size, SearchMeta meta)");
-        assertFalse(body.isEmpty(), "取不到 search 方法体，守卫失效");
+        // 2026-11-05：签名多了 scopeAll（#1220 第③条）。必须指向**实现**那个重载 ——
+        // 旧的 7 参签名现在是转发方法，方法体只有一行 return，抓到它等于什么都没验。
+        String implSig = "int page, int size, SearchMeta meta, boolean scopeAll)";
+        String body = SourceScan.methodBody(svc, implSig);
+        assertFalse(body.isEmpty(), "取不到 search 实现方法体，守卫失效");
         assertFalse(body.contains("strictTotal >= size"),
                 "tier 判定挂在调用方 size 上，同一查询 limit=5 / limit=20 就会走不同档、报不同 total（L0-2 的根因）");
         assertTrue(body.contains("strictTotal >= DocService.STRICT_DIRECT_MIN_HITS")
                         || body.contains("strictTotal >= STRICT_DIRECT_MIN_HITS"),
                 "门槛必须用固定常量，不能是入参");
-        assertTrue(SourceScan.methodBody(svc, "int page, int size, SearchMeta meta)")
+        assertTrue(SourceScan.methodBody(svc, implSig)
                         .contains("Math.max(size, STRICT_DIRECT_MIN_HITS)"),
                 "覆盖度探针窗口也要与 size 解耦，否则 size 太小会探不到整词覆盖，档位又跟着变");
+        // 转发重载不许自己长逻辑：它只应该把 scopeAll=false 传下去
+        String forward = SourceScan.methodBody(svc, "int page, int size, SearchMeta meta)");
+        assertTrue(forward.contains(", false)"), "7 参重载必须等价于「不跨作用域」，不许在里面加判断");
     }
 
     @Test
