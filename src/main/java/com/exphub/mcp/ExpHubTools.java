@@ -1191,6 +1191,16 @@ public class ExpHubTools {
         return (start > 0 ? "…" : "") + piece + (end < content.length() ? "…" : "");
     }
 
+    /** 章号是字符串（"1"、"15"），按字典序排会得到 1,10,11,2…，这里转成数字比较；转不了排最后 */
+    private static int chapterNoValue(String chapterNo) {
+        if (chapterNo == null) return Integer.MAX_VALUE;
+        try {
+            return Integer.parseInt(chapterNo.trim());
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
     /** 项目 id → 名称（作用域全开时给每条结果标来源，只查一次） */
     private java.util.Map<Long, String> loadProjectNames() {
         java.util.Map<Long, String> m = new java.util.HashMap<>();
@@ -4287,6 +4297,12 @@ public class ExpHubTools {
                     experiences.add(d);
                 }
             }
+            // ⚠️ 2026-11-05 实测踩到：all 是按 updated_at 倒序的，直接拿来列章节会出现
+            //    「15 高频踩坑速查｜1 项目概述｜2 …」—— 最近改过的那章跳到第一位。
+            //    章节清单必须按 sort_order + 章号排，这跟「最近更新」是两个维度。
+            chapters.sort(java.util.Comparator
+                    .comparingInt((Doc c) -> c.getSortOrder() == null ? Integer.MAX_VALUE : c.getSortOrder())
+                    .thenComparingInt(c -> chapterNoValue(c.getChapterNo())));
 
             // ===== AGENTS.md =====
             sb.append("## AGENTS.md\n");
