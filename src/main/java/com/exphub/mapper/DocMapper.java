@@ -42,7 +42,7 @@ public interface DocMapper extends BaseMapper<Doc> {
         "  <when test='scopeAll'>" +
         "    AND ( (project_id IS NULL AND (visibility = 'PUBLIC' OR api_key = #{apiKey})) " +
         "          <if test='ownerApiKey != null'>OR project_id IN (SELECT id FROM projects WHERE api_key = #{ownerApiKey})</if> ) " +
-        "    <if test='excludeProjectProgress'>AND (template_type IS NULL OR template_type <> 'project_progress')</if> " +
+        "    <if test='excludeProjectProgress'>AND (template_type IS NULL OR template_type &lt;&gt; 'project_progress')</if> " +
         "  </when>" +
         "  <otherwise>" +
         "    <if test='apiKey != null and projectId == null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +
@@ -79,7 +79,7 @@ public interface DocMapper extends BaseMapper<Doc> {
         "  <when test='scopeAll'>" +
         "    AND ( (project_id IS NULL AND (visibility = 'PUBLIC' OR api_key = #{apiKey})) " +
         "          <if test='ownerApiKey != null'>OR project_id IN (SELECT id FROM projects WHERE api_key = #{ownerApiKey})</if> ) " +
-        "    <if test='excludeProjectProgress'>AND (template_type IS NULL OR template_type <> 'project_progress')</if> " +
+        "    <if test='excludeProjectProgress'>AND (template_type IS NULL OR template_type &lt;&gt; 'project_progress')</if> " +
         "  </when>" +
         "  <otherwise>" +
         "    <if test='apiKey != null and projectId == null'>AND (visibility = 'PUBLIC' OR api_key = #{apiKey})</if> " +

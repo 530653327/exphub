@@ -37,7 +37,7 @@ class ScopeProgressFilterTest {
         assertEquals(2, countOf(mapper, "<if test='excludeProjectProgress'>"),
                 "排除条件必须同时出现在搜索与计数两条 SQL 里（只改一边会让「匹配 N 条」与实际不符）");
 
-        String cond = "AND (template_type IS NULL OR template_type <> 'project_progress')";
+        String cond = "AND (template_type IS NULL OR template_type &lt;&gt; 'project_progress')";
         assertEquals(2, countOf(mapper, cond), "两条 SQL 各需一份排除条件");
     }
 
@@ -48,7 +48,7 @@ class ScopeProgressFilterTest {
         // 裸写会把所有 template_type 为空的文档静默排掉。库里现在没有 NULL 行，所以这个错
         // 在线上不会立刻显形 —— 正是那种「测试全绿、半年后炸」的形态。
         String mapper = read("src/main/java/com/exphub/mapper/DocMapper.java");
-        assertTrue(mapper.contains("template_type IS NULL OR template_type <> 'project_progress'"),
+        assertTrue(mapper.contains("template_type IS NULL OR template_type &lt;&gt; 'project_progress'"),
                 "排除条件必须带 IS NULL 分支");
 
         String svc = read("src/main/java/com/exphub/service/DocService.java");
