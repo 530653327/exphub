@@ -980,6 +980,9 @@ public class ExpHubTools {
             if (effOffset > 0 || pageDocs.size() < effTotal) {
                 sb.append("，本次返回第 ").append(fromIdx + 1).append("-").append(toIdx).append(" 条");
             }
+            // L0-2：重排档的 total 是「重排接受数」，不是库里真实匹配数。两个数分开报，
+            // 否则「共 60 条」既对不上 count(*)，也解释不了翻到后面为什么空了。
+            sb.append(totalScopeNote(searchMeta.matchedTotal, effTotal));
             if (scopeAll) {
                 // 2026-11-05：两个 scope 对「进度流水」的处置不同，回执必须说清 ——
                 // 同一句 query 在 all 和 project 下第一条不一样，不写原因就会被当成工具坏了
@@ -1293,6 +1296,23 @@ public class ExpHubTools {
         if (s == null) s = hitSnippet(summary, query);
         if (s == null) s = hitSnippet(title, query);
         return s;
+    }
+
+    /**
+     * L0-2（#101 S2.2）：total 双口径说明。
+     *
+     * <p>重排档返回的「共 N 条」是**重排接受数**（翻页以它为界）；数据库口径的真实匹配数
+     * 由 {@code SearchMeta.matchedTotal} 给出，可被一条 {@code count(*)} 对账。
+     * 两者不一致时必须说清，否则读的人会以为「库里只有 N 条」或「翻页坏了」。</p>
+     *
+     * @param matched  数据库口径匹配数；-1 表示本档未计算（STRICT / LIKE / NONE）
+     * @param accepted 重排接受数（回执里的「共 N 条」）
+     * @return 需要追加的说明；口径一致或未知时返回空串，不污染回执
+     */
+    static String totalScopeNote(long matched, long accepted) {
+        if (matched < 0 || matched <= accepted) return "";
+        return "（库里 OR 口径匹配 " + matched + " 条，覆盖率重排接受 " + accepted
+                + " 条；翻页以接受数为界）";
     }
 
     /** 章号展示：空章号不能直接拼 null（`append(null)` 会打出「null」，看着像系统坏了） */

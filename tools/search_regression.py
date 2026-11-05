@@ -96,9 +96,12 @@ CASES_LIVE = [
          expect_id=3, note="CJK 无空格 contain；修复前基线=漏召，C9 反向内嵌后应 PASS"),
     dict(cid="A2", query="回金算的入库单",
          expect_id=2, note="CJK 无空格 contain；修复前基线=漏召，C9 后应 PASS"),
+    # 期望值已按 #1272-C21 修正（越哥 2026-11-05 批准选甲）：改为「不识别任何项目」。
+    # 理由：df(忆阁)=33.9% > 30% 门槛，且 ③ 分支右邻是 ASCII `D`、不是边界，两条独立拒绝
+    # 都写在 #678 §5.3 定案表里 —— 不是漏判，也不表示识别能力提升。别再改回 #6。
     dict(cid="A3", query="忆阁DeepSeek余额",
-         expect_id=6, note="CJK+ASCII 混排无空格；修复前基线=漏召，C9 后仍 FAIL："
-                           "「忆阁」仅 2 字，低于 MIN_ALIAS_LEN=3，留待 L0-1a 定案"),
+         expect_id=None, note="#1272-C21 定案：df(忆阁)=33.9% 超线 + ③ 右邻 ASCII 非边界，"
+                              "定案表本就拒绝（期望值已按 C21 修正，非能力提升）"),
     dict(cid="A4", query="拆解宝 报废车回收",
          expect_id=3, note="有空格，靠精确 token 命中；修复前基线=OK"),
     dict(cid="A5", query="hjs",

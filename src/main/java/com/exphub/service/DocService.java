@@ -162,6 +162,16 @@ public class DocService {
     /** 调用方用来回传档位的可变小对象；不传就是不用（老调用方零改动）。 */
     public static final class SearchMeta {
         public SearchTier tier = SearchTier.NONE;
+
+        /**
+         * L0-2（#101 S2.2）：**数据库口径的真实匹配数**（宽松 OR 召回 + 当前 scope 条件），
+         * 可用一条 {@code count(*)} 对账。仅 RERANK 档填，其余档为 -1（未知）。
+         *
+         * <p>为什么不直接改 {@code Page.total}：重排会过滤掉覆盖度不足的候选，
+         * 真实匹配数往往大于「能翻到的条数」。把 total 换成 DB 数会让翻页翻出空页；
+         * 换成重排数又对不上库。两个数分开报，翻页仍以重排接受数为界。</p>
+         */
+        public long matchedTotal = -1L;
     }
 
     /**
@@ -256,9 +266,22 @@ public class DocService {
             List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey, excludeProgress);
             List<Doc> ranked = rankAndFilter(candidates, terms, true);
             if (!ranked.isEmpty()) {
-                log.info("search tier=relaxed kw='{}' projectId={} scopeAll={} candidates={} accepted={}",
-                        kw, projectId, all, candidates.size(), ranked.size());
-                if (meta != null) meta.tier = SearchTier.RERANK;
+                // L0-2：补一条与候选集**同条件**的 count，拿到数据库口径的真实匹配数。
+                // 候选集固定上限 CANDIDATE_LIMIT，ranked.size() 既不是全库匹配数、
+                // 也无法对账（#677 12.6「total 假 60 实 19」）。两个数分开报，翻页口径不变。
+                long orTotal = -1L;
+                try {
+                    orTotal = docMapper.countByFulltext(orQuery, apiKey, projectId, tt, statusList,
+                            all, ownerKey, excludeProgress);
+                } catch (Exception e) {
+                    log.warn("search relaxed count failed kw='{}': {}", kw, e.getMessage());
+                }
+                log.info("search tier=relaxed kw='{}' projectId={} scopeAll={} candidates={} accepted={} matched={}",
+                        kw, projectId, all, candidates.size(), ranked.size(), orTotal);
+                if (meta != null) {
+                    meta.tier = SearchTier.RERANK;
+                    meta.matchedTotal = orTotal;
+                }
                 return pagedResult(kw, ranked, page, size);
             }
             log.info("search tier=relaxed-empty kw='{}' projectId={} scopeAll={} candidates={} concepts={}",
