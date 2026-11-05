@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""搜索打分诊断：分数分布 / 单文档分项 / 反事实重排。
+
+为什么要有这个脚本
+------------------
+#1277 C8 要回答一个问题：某个文档排不上去，到底是「recency 权重太大」还是
+「打分区分度不够」？这两件事的修法完全不同，猜不得。本脚本在**不改任何生产
+公式**的前提下，把这两层量出来：
+
+  --distribution   200 条候选的分数分布（min/P25/中位/P75/max/标准差）
+  --explain ID     指定文档的分项拆解（coverage / field / recency / popularity）
+  --counterfactual 把 recency 权重临时归零、其余不动，重排后目标文档的新位次
+
+正确性怎么保证
+--------------
+不手抄公式，而是复现 DocService.buildSearchTerms + rankAndFilter，再用 --verify
+拿复现出的题序和线上真实返回**逐位对账**。对不上就报 MISMATCH，不拿错数据出结论。
+
+⚠️ 复现时最容易错的一处（已经踩过）：召回的 ORDER BY 用的是 `cleanKeyword` 的
+NATURAL LANGUAGE 模式，**不是** WHERE 里那个展开后的 OR 串（BOOLEAN 模式）。
+写错这一处，200 条候选的边界就会变，对账只有 4/20 一致。
+
+用法
+----
+  # 在服务器上（读 /etc/exphub/.env 拿库连接）
+  python3 tools/score_distribution.py --query "..." --explain 95 --counterfactual
+
+  # 本地（用环境变量给连接）
+  export EXPHUB_DB_HOST=... EXPHUB_DB_USER=... EXPHUB_DB_PASS=... EXPHUB_DB_NAME=exphub
+  python3 tools/score_distribution.py --query "..." --explain 95
+
+  # 带对账（需要 MCP 的 authorization-key）
+  export MCP_KEY=...
+  python3 tools/score_distribution.py --query "..." --explain 95 --counterfactual --verify
+"""
+import argparse
+import io
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
+STOPWORDS = {'的', '了', '和', '与', '及', '或', '怎么', '如何', '什么', '为什么', '哪些',
+             '是否', '可以', '需要', '一下', '我们', '你们', '他们', '这个', '那个',
+             '请问', '帮我', '看看', '相关', '关于', '现在', '进行'}
+CJK = re.compile(r'[\u4e00-\u9fa5]')
+ENV_FILE = '/etc/exphub/.env'
+CANDIDATE_LIMIT = 200          # 与 DocService.CANDIDATE_LIMIT 一致
+RECENCY_WEIGHT = 0.12          # 与 DocService.score 一致
+MCP_URL = 'https://cloudim.club/exphub/mcp/http'
+
+
+# ==================== 连接配置 ====================
+def load_db_conf():
+    """优先环境变量，其次服务器上的 /etc/exphub/.env。"""
+    if os.path.exists(ENV_FILE):
+        env = {}
+        for line in open(ENV_FILE, encoding='utf-8', errors='replace'):
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                k, v = line.split('=', 1)
+                env[k.strip()] = v.strip().strip('"').strip("'")
+        url = env.get('EXPHUB_DB_URL', '')
+        m = re.match(r'jdbc:mysql://([^:/?]+)(?::(\d+))?/([^?]+)', url)
+        if m:
+            return dict(host=m.group(1), port=m.group(2) or '3306', db=m.group(3),
+                        user=env.get('EXPHUB_DB_USERNAME', ''),
+                        password=env.get('EXPHUB_DB_PASSWORD', ''))
+    return dict(host=os.environ.get('EXPHUB_DB_HOST', ''),
+                port=os.environ.get('EXPHUB_DB_PORT', '3306'),
+                db=os.environ.get('EXPHUB_DB_NAME', 'exphub'),
+                user=os.environ.get('EXPHUB_DB_USER', ''),
+                password=os.environ.get('EXPHUB_DB_PASS', ''))
+
+
+DB = load_db_conf()
+
+
+def sql(q):
+    e = os.environ.copy()
+    e['MYSQL_PWD'] = DB['password']
+    r = subprocess.run(['mysql', '--default-character-set=utf8mb4',
+                        '-h', DB['host'], '-P', DB['port'], '-u', DB['user'], DB['db'], '-N', '-B'],
+                       env=e, input=q.encode('utf-8'), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return r.stdout.decode('utf-8', 'replace'), r.stderr.decode('utf-8', 'replace')
+
+
+# ==================== 复现 DocService 内部逻辑 ====================
+def build_terms(keyword):
+    cleaned = re.sub(r'[\+\-><\(\)~\*"@]', ' ', keyword).strip()
+    concepts = []
+    for raw in re.split(r'[\s,，、;；]+', cleaned):
+        tok = raw.strip()
+        if not tok:
+            continue
+        if not any(c.isalnum() or CJK.match(c) for c in tok):
+            continue
+        if tok.lower() in STOPWORDS:
+            continue
+        if tok not in concepts:
+            concepts.append(tok)
+    variants = []
+    for c in concepts:
+        v = [c]
+        chinese = ''.join(ch for ch in c if CJK.match(ch))
+        non_chinese = ''.join(' ' if CJK.match(ch) else ch for ch in c).strip()
+        if non_chinese:
+            for part in re.split(r'[^A-Za-z0-9]+', non_chinese):
+                if len(part) >= 2 and part not in v:
+                    v.append(part)
+        if len(chinese) == 2:
+            if chinese not in v:
+                v.append(chinese)
+        elif len(chinese) > 2:
+            for i in range(len(chinese) - 1):
+                g = chinese[i:i + 2]
+                if g not in v:
+                    v.append(g)
+        variants.append(v)
+    return concepts, variants
+
+
+def clean_keyword(keyword):
+    s = re.sub(r'[\+\-><\(\)~\*"@]', ' ', keyword)
+    return re.sub(r'[\s,，、]+', ' ', s).strip()
+
+
+def _contains(text, needle):
+    return bool(text) and bool(needle) and needle.lower() in text.lower()
+
+
+def field_weight_term(doc, term):
+    if _contains(doc['title'], term): return 3.0
+    if _contains(doc['aliases'], term): return 2.0
+    if _contains(doc['summary'], term): return 2.0
+    if _contains(doc['tags'], term): return 2.0
+    if _contains(doc['content'], term): return 1.0
+    return 0.0
+
+
+def field_weight(doc, variants):
+    best = 0.0
+    for v in variants:
+        best = max(best, field_weight_term(doc, v))
+        if best >= 3.0:
+            break
+    return best
+
+
+def concept_strength(doc, variants):
+    if not variants:
+        return 0.0
+    if field_weight_term(doc, variants[0]) > 0:
+        return 1.0
+    for v in variants[1:]:
+        if field_weight_term(doc, v) > 0:
+            return 0.5
+    return 0.0
+
+
+def parts(doc, variants, recency_weight=RECENCY_WEIGHT):
+    n = len(variants)
+    concept_score = sum(concept_strength(doc, v) for v in variants)
+    coverage = concept_score / max(1, n)
+    field_sum = sum(field_weight(doc, v) for v in variants)
+    field_score = min(1.0, field_sum / max(1, n) / 3.0)
+    days = max(0, doc['days_old'])
+    recency = math.exp(-days / 90.0)
+    pop = min(1.0, math.log1p(doc['calls']) / math.log1p(50))
+    total = 0.55 * coverage + 0.25 * field_score + recency_weight * recency + 0.08 * pop
+    return dict(coverage=coverage, field=field_score, recency=recency, pop=pop, total=total)
+
+
+def pct(vals, p):
+    if not vals:
+        return 0.0
+    k = (len(vals) - 1) * p
+    lo, hi = int(math.floor(k)), int(math.ceil(k))
+    return vals[lo] if lo == hi else vals[lo] + (vals[hi] - vals[lo]) * (k - lo)
+
+
+# ==================== 取候选集 ====================
+def fetch_candidates(query, api_key):
+    concepts, variants = build_terms(query)
+    expanded = []
+    for v in variants:
+        for x in v:
+            if x not in expanded:
+                expanded.append(x)
+    orq = '+(' + ' '.join(expanded) + ')'
+    ck = clean_keyword(query)
+
+    # 注意：WHERE 用 orq（BOOLEAN），ORDER BY 用 cleanKeyword（NATURAL）。写错这处会让候选边界变。
+    where = ("MATCH(title,content,aliases,summary,tags) AGAINST('%s' IN BOOLEAN MODE) "
+             "AND ( (project_id IS NULL AND (visibility='PUBLIC' OR api_key='%s')) "
+             "      OR project_id IN (SELECT id FROM projects WHERE api_key='%s') ) "
+             "AND NOT (project_id IS NOT NULL AND template_type='project_progress') "
+             "AND status IN ('ACTIVE') "
+             "ORDER BY MATCH(title,content,aliases,summary,tags) AGAINST('%s' IN NATURAL LANGUAGE MODE) DESC, "
+             "call_count DESC LIMIT %d"
+             % (orq, api_key, api_key, ck, CANDIDATE_LIMIT))
+
+    q = ("SELECT id, IFNULL(title,''), IFNULL(aliases,''), IFNULL(summary,''), IFNULL(tags,''), "
+         "REPLACE(IFNULL(content,''),'\\n',' '), DATEDIFF(NOW(), updated_at), IFNULL(call_count,0) "
+         "FROM docs WHERE " + where + ";")
+    out, err = sql(q)
+    if err.strip():
+        raise RuntimeError('SQL 失败: ' + err.strip()[:300])
+    rows = []
+    for line in out.split('\n'):
+        if not line.strip():
+            continue
+        f = line.split('\t')
+        if len(f) < 8:
+            continue
+        rows.append(dict(id=int(f[0]), title=f[1], aliases=f[2], summary=f[3], tags=f[4],
+                         content=f[5], days_old=int(f[6]), calls=int(f[7])))
+    return rows, variants, orq, ck
+
+
+def live_ids(query, api_key, limit=30):
+    import urllib.request
+    body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                       'params': {'name': 'search_experience',
+                                  'arguments': {'query': query, 'limit': limit, 'scope': 'all'}}}).encode()
+    req = urllib.request.Request(MCP_URL, data=body,
+                                 headers={'authorization-key': api_key,
+                                          'Content-Type': 'application/json',
+                                          'Accept': 'application/json, text/event-stream'})
+    raw = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'replace')
+    for line in raw.splitlines():
+        s = line.strip()
+        if s.startswith('data:'):
+            s = s[5:].strip()
+        if s.startswith('{'):
+            try:
+                o = json.loads(s)
+            except ValueError:
+                continue
+            if o.get('id') == 1:
+                txt = ((o.get('result') or {}).get('content') or [{}])[0].get('text', '')
+                return [int(x) for x in re.findall(r'【ID:(\d+)】', txt)]
+    return []
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--query', default=None,
+                    help='搜索词。中文在 ssh 命令行里会因服务器 locale 是 ASCII 而变成 surrogate，'
+                         '此时改用 --query-file（stdin 传字节流可保真）')
+    ap.add_argument('--query-file', default=None, help='从文件读搜索词（UTF-8），规避命令行编码问题')
+    ap.add_argument('--explain', type=int, default=None, help='要拆解分项的文档 ID')
+    ap.add_argument('--counterfactual', action='store_true', help='recency 权重归零后重排')
+    ap.add_argument('--verify', action='store_true', help='与线上真实顺序逐位对账（需 MCP_KEY）')
+    a = ap.parse_args()
+
+    query = a.query
+    if a.query_file:
+        query = open(a.query_file, encoding='utf-8').read().strip()
+    if not query or query == '-':
+        query = sys.stdin.read().strip()
+    if not query:
+        print('缺 query')
+        return 2
+
+    api_key = os.environ.get('MCP_KEY') or os.environ.get('MCPKEY') or ''
+    if not api_key:
+        # 对账与 scope=all 的 ownerKey 都靠这个 Key；没有就只做「无 Key 版」的诊断
+        print('⚠️ 未设置 MCP_KEY：scope 条件无法复刻（会退化成 api_key="" 的过滤），仅供粗看。')
+        api_key = ''
+
+    rows, variants, orq, ck = fetch_candidates(query, api_key)
+    if not rows:
+        print('候选集为空，检查 query / 连接')
+        return 1
+    for d in rows:
+        d['p'] = parts(d, variants)
+    rows.sort(key=lambda x: -x['p']['total'])
+
+    print('query=%r' % query)
+    print('concepts=%r  variants=%d 项' % (build_terms(query)[0], len(variants[0])))
+    print('orq=%s' % orq)
+    print('cleanKeyword=%r' % ck)
+    print('候选集=%d 条' % len(rows))
+
+    if a.verify and api_key:
+        live = live_ids(query, api_key)
+        mine = [d['id'] for d in rows[:len(live)]]
+        same = sum(1 for x, y in zip(live, mine) if x == y)
+        print('\n对账：线上 %s' % live[:20])
+        print('      复现 %s' % mine[:20])
+        print('      逐位一致 %d/%d -> %s' % (same, len(live), 'REPRODUCIBLE' if same >= 0.9 * len(live) else 'MISMATCH'))
+
+    scores = sorted(d['p']['total'] for d in rows)
+    mean = sum(scores) / len(scores)
+    sd = math.sqrt(sum((x - mean) ** 2 for x in scores) / len(scores))
+    print('\n=== 分数分布（%d 条）===' % len(scores))
+    print('min=%.4f P25=%.4f 中位=%.4f P75=%.4f max=%.4f' %
+          (scores[0], pct(scores, .25), pct(scores, .50), pct(scores, .75), scores[-1]))
+    print('均值=%.4f 标准差=%.4f 极差=%.4f' % (mean, sd, scores[-1] - scores[0]))
+
+    tiers = {}
+    for d in rows:
+        k = (round(d['p']['coverage'], 2), round(d['p']['field'], 2))
+        tiers[k] = tiers.get(k, 0) + 1
+    print('分档 (coverage, field): %s' % sorted(tiers.items(), key=lambda x: -x[1])[:8])
+
+    if a.explain is not None:
+        d = next((x for x in rows if x['id'] == a.explain), None)
+        if d is None:
+            print('\n#%d 不在候选集内' % a.explain)
+        else:
+            p = d['p']
+            rank = [x['id'] for x in rows].index(a.explain) + 1
+            print('\n=== #%d 分项（位次 %d/%d）===' % (a.explain, rank, len(rows)))
+            print('coverage=%.3f (x0.55 -> %.4f)' % (p['coverage'], 0.55 * p['coverage']))
+            print('field   =%.3f (x0.25 -> %.4f)' % (p['field'], 0.25 * p['field']))
+            print('recency =%.3f (x%.2f -> %.4f)  天数=%d' % (p['recency'], RECENCY_WEIGHT, RECENCY_WEIGHT * p['recency'], d['days_old']))
+            print('pop     =%.3f (x0.08 -> %.4f)  calls=%d' % (p['pop'], 0.08 * p['pop'], d['calls']))
+            print('总分    =%.4f' % p['total'])
+
+    if a.counterfactual:
+        for d in rows:
+            d['cf'] = parts(d, variants, recency_weight=0.0)['total']
+        cf = sorted(rows, key=lambda x: -x['cf'])
+        ids = [d['id'] for d in cf]
+        tgt = a.explain if a.explain is not None else ids[0]
+        print('\n=== 反事实：recency 权重 %.2f -> 0 ===' % RECENCY_WEIGHT)
+        print('#%d 新位次 = %s/%d' % (tgt, (ids.index(tgt) + 1) if tgt in ids else '不在内', len(ids)))
+        print('新前 10: %s' % ids[:10])
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
