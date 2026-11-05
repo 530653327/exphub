@@ -134,13 +134,22 @@ def _contains(text, needle):
     return bool(text) and bool(needle) and needle.lower() in text.lower()
 
 
+FIELD_ORDER = (('title', 3.0), ('aliases', 2.0), ('summary', 2.0), ('tags', 2.0), ('content', 1.0))
+
+
+def first_hit(doc, term):
+    """按 Java fieldWeight 的优先级返回 (字段名, 权重)；未命中 (None, 0)。
+
+    与 DocService.fieldWeight(doc, term) 一一对应：title 3 / aliases·summary·tags 2 / content 1。
+    """
+    for name, w in FIELD_ORDER:
+        if _contains(doc[name], term):
+            return name, w
+    return None, 0.0
+
+
 def field_weight_term(doc, term):
-    if _contains(doc['title'], term): return 3.0
-    if _contains(doc['aliases'], term): return 2.0
-    if _contains(doc['summary'], term): return 2.0
-    if _contains(doc['tags'], term): return 2.0
-    if _contains(doc['content'], term): return 1.0
-    return 0.0
+    return first_hit(doc, term)[1]
 
 
 def field_weight(doc, variants):
@@ -174,6 +183,29 @@ def parts(doc, variants, recency_weight=RECENCY_WEIGHT):
     pop = min(1.0, math.log1p(doc['calls']) / math.log1p(50))
     total = 0.55 * coverage + 0.25 * field_score + recency_weight * recency + 0.08 * pop
     return dict(coverage=coverage, field=field_score, recency=recency, pop=pop, total=total)
+
+
+def explain_concepts(doc, concepts, variants):
+    """逐概念拆解：命中强度 / 字段分 / 第一个命中的字段与词。
+
+    这一层是为了回答「某个词到底有没有参与打分、命中在哪」这类问题 ——
+    只看 coverage / field 两个汇总数，会把「词被丢了」和「词在但没得分」混为一谈。
+    """
+    out = []
+    for c, v in zip(concepts, variants):
+        strength = concept_strength(doc, v)
+        fw = field_weight(doc, v)
+        hit_field, hit_term, hit_w = None, None, 0.0
+        for t in v:
+            name, w = first_hit(doc, t)
+            if w > hit_w:
+                hit_field, hit_term, hit_w = name, t, w
+            if hit_w >= 3.0:
+                break
+        out.append(dict(concept=c, strength=strength, field=fw,
+                        hit_field=hit_field, hit_term=hit_term, hit_weight=hit_w,
+                        hit_exact=(hit_term == c)))
+    return out
 
 
 def pct(vals, p):
@@ -256,6 +288,9 @@ def main():
     ap.add_argument('--query-file', default=None, help='从文件读搜索词（UTF-8），规避命令行编码问题')
     ap.add_argument('--explain', type=int, default=None, help='要拆解分项的文档 ID')
     ap.add_argument('--counterfactual', action='store_true', help='recency 权重归零后重排')
+    ap.add_argument('--top', type=int, default=0, help='打印前 N 名的 ID 与标题（配合 --pollution 看霸榜）')
+    ap.add_argument('--pollution', default='',
+                    help='逗号分隔的污染源 ID，打印前 N 名时标记并统计占比')
     ap.add_argument('--verify', action='store_true', help='与线上真实顺序逐位对账（需 MCP_KEY）')
     a = ap.parse_args()
 
@@ -310,6 +345,13 @@ def main():
         tiers[k] = tiers.get(k, 0) + 1
     print('分档 (coverage, field): %s' % sorted(tiers.items(), key=lambda x: -x[1])[:8])
 
+    # coverage 满分的成员是谁 —— 用来回答「满分是真相关，还是抄了 query 原话」
+    full = [d for d in rows if d['p']['coverage'] >= 0.999]
+    if full:
+        print('\ncoverage=1.0 的 %d 条（满分成员）:' % len(full))
+        for d in full[:10]:
+            print('  #%-5d field=%.2f  %s' % (d['id'], d['p']['field'], (d['title'] or '')[:38]))
+
     if a.explain is not None:
         d = next((x for x in rows if x['id'] == a.explain), None)
         if d is None:
@@ -323,6 +365,32 @@ def main():
             print('recency =%.3f (x%.2f -> %.4f)  天数=%d' % (p['recency'], RECENCY_WEIGHT, RECENCY_WEIGHT * p['recency'], d['days_old']))
             print('pop     =%.3f (x0.08 -> %.4f)  calls=%d' % (p['pop'], 0.08 * p['pop'], d['calls']))
             print('总分    =%.4f' % p['total'])
+
+            concepts_now = build_terms(query)[0]
+            print('\n--- 逐概念（共 %d 个，coverage 分母 / field 分母都是它）---' % len(concepts_now))
+            for i, e in enumerate(explain_concepts(d, concepts_now, variants), 1):
+                if e['hit_field'] is None:
+                    desc = '未命中任何字段'
+                else:
+                    desc = '命中 %s（权重 %.1f）中的 “%s”%s' % (
+                        e['hit_field'], e['hit_weight'], e['hit_term'],
+                        '' if e['hit_exact'] else '（2-gram/子串，非整词）')
+                print('  [%d] %-24s strength=%.1f field=%.1f  %s'
+                      % (i, e['concept'], e['strength'], e['field'], desc))
+
+    if a.top:
+        ids = [d for d in rows[:a.top]]
+        pol = set(int(x) for x in a.pollution.split(',') if x.strip().isdigit())
+        print('\n=== 前 %d 名 ===' % a.top)
+        for i, d in enumerate(ids, 1):
+            flag = ' 🧪污染' if d['id'] in pol else ''
+            print('  %2d. #%-5d %.4f%s  %s' % (i, d['id'], d['p']['total'], flag, (d['title'] or '')[:34]))
+        if pol:
+            hit = sum(1 for d in ids if d['id'] in pol)
+            print('前 %d 名里污染源 %d 条；去掉它们后 #%d 位于第 %d 位'
+                  % (a.top, hit, a.explain or 0,
+                     ([d['id'] for d in rows if d['id'] not in pol].index(a.explain) + 1)
+                     if a.explain and any(d['id'] == a.explain for d in rows) else -1))
 
     if a.counterfactual:
         for d in rows:
