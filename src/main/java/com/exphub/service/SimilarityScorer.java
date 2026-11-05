@@ -1091,6 +1091,79 @@ public final class SimilarityScorer {
         return out;
     }
 
+    /**
+     * 左右并排对比里的一行：{@code left}/{@code right} 为 null 表示该侧没有对应行。
+     *
+     * @param same 两侧内容完全相同（页面据此上色：一样的不醒目、不一样的标红）
+     */
+    public record DiffRow(String left, String right, boolean same) {}
+
+    /**
+     * 逐行对齐（LCS），供「候选对比」页面左右并排显示（2026-11-05 越哥要求）。
+     *
+     * <p>为什么不能直接把两篇的行按序号硬配：行数一多就会整体错位 ——
+     * 中间插进一行，后面全部对不上，页面上看就是「满屏红的假差异」。
+     * LCS 会找到最长公共子序列，让相同的行真正对齐到同一行上。
+     *
+     * <p>切行复用 {@link #diffLinesOf}（保留所有非空行）—— 与 diff_experiences 工具同源，
+     * 否则页面上看到的差异和 MCP 回执里的数字对不上，又是一处「同一事实两个出口」。
+     */
+    public static List<DiffRow> alignLines(String contentA, String contentB) {
+        return alignLines(diffLinesOf(contentA), diffLinesOf(contentB));
+    }
+
+    static List<DiffRow> alignLines(List<String> a, List<String> b) {
+        int n = a.size();
+        int m = b.size();
+        // LCS 的 DP 表是 O(n*m)。2000 行 × 2000 行 = 400 万 int ≈ 16MB，
+        // 再大就该降级了 —— 页面卡死比「差异不够精确」更糟。
+        if ((long) n * m > 4_000_000L) {
+            return naiveAlign(a, b);
+        }
+        int[][] dp = new int[n + 1][m + 1];
+        for (int i = n - 1; i >= 0; i--) {
+            for (int j = m - 1; j >= 0; j--) {
+                dp[i][j] = a.get(i).equals(b.get(j))
+                        ? dp[i + 1][j + 1] + 1
+                        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
+        }
+        List<DiffRow> rows = new ArrayList<>(Math.max(n, m));
+        int i = 0, j = 0;
+        while (i < n && j < m) {
+            if (a.get(i).equals(b.get(j))) {
+                rows.add(new DiffRow(a.get(i), b.get(j), true));
+                i++;
+                j++;
+            } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+                rows.add(new DiffRow(a.get(i), null, false));
+                i++;
+            } else {
+                rows.add(new DiffRow(null, b.get(j), false));
+                j++;
+            }
+        }
+        while (i < n) rows.add(new DiffRow(a.get(i++), null, false));
+        while (j < m) rows.add(new DiffRow(null, b.get(j++), false));
+        return rows;
+    }
+
+    /**
+     * 超大文档的降级对齐：不找最优解，只按序号硬配，相同的标"相同"。
+     *
+     * <p>宁可粗糙也别让页面卡死。调用方会在页面顶部提示「行数过多，未做最优对齐」。
+     */
+    private static List<DiffRow> naiveAlign(List<String> a, List<String> b) {
+        List<DiffRow> rows = new ArrayList<>();
+        int n = Math.max(a.size(), b.size());
+        for (int i = 0; i < n; i++) {
+            String l = i < a.size() ? a.get(i) : null;
+            String r = i < b.size() ? b.get(i) : null;
+            rows.add(new DiffRow(l, r, l != null && l.equals(r)));
+        }
+        return rows;
+    }
+
     /** 统计一组文档的行频次（作用域内） */    public static Map<String, Integer> lineDf(Collection<Sketch> sketches) {
         Map<String, Integer> df = new LinkedHashMap<>();
         for (Sketch s : sketches) {

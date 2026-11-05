@@ -9,6 +9,7 @@ import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import com.exphub.service.ReviewCandidateService;
+import com.exphub.service.SimilarityScorer;
 import com.exphub.service.ToolStatsService;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -345,6 +346,49 @@ public class PageController extends BaseController {
         String by = user.getDisplayName() != null ? user.getDisplayName() : user.getUsername();
         reviewCandidateService.resolve(id, action, note, by);
         return "redirect:/docs?view=candidates";
+    }
+
+    /**
+     * 候选对比页（2026-11-05 越哥要的）：两篇左右并排，相同行不上色、不同行标红。
+     *
+     * <p>为什么必须有：队列里每条只给「ID + 标题 + 相似度 + 理由」，
+     * 而判重复真正要看的是「正文差在哪」。之前要么点开两个标签页自己记行，
+     * 要么靠 MCP 的 diff 回执在脑子里拼 —— 判 40 多条时根本判不动。
+     */
+    @GetMapping("/candidates/{id}/diff")
+    public String candidateDiff(HttpSession session, @PathVariable Long id, Model model) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        ReviewCandidate c = reviewCandidateService.get(id);
+        if (c == null) {
+            return "redirect:/docs?view=candidates";
+        }
+        Doc a = docService.getById(c.getDocA());
+        Doc b = docService.getById(c.getDocB());
+        // 悬空行（引用的文档已删）没有对比可看，回队列 —— 那里会标出「已不存在」
+        if (a == null || b == null) {
+            return "redirect:/docs?view=candidates";
+        }
+
+        String ca = a.getContent() == null ? "" : a.getContent();
+        String cb = b.getContent() == null ? "" : b.getContent();
+        List<SimilarityScorer.DiffRow> rows = SimilarityScorer.alignLines(ca, cb);
+        SimilarityScorer.Diff stat = SimilarityScorer.diffLines(ca, cb);
+        int diffRows = 0;
+        for (SimilarityScorer.DiffRow r : rows) {
+            if (!r.same()) diffRows++;
+        }
+
+        model.addAttribute("candidate", c);
+        model.addAttribute("docA", a);
+        model.addAttribute("docB", b);
+        model.addAttribute("rows", rows);
+        model.addAttribute("stat", stat);
+        model.addAttribute("diffRows", diffRows);
+        // 与 alignLines 的降级门槛保持一致：超了就没做最优对齐，页面上要说一声
+        model.addAttribute("tooBig", (long) stat.linesA() * stat.linesB() > 4_000_000L);
+        return "docs/diff";
     }
 
     // 删除经验（后台管理）

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>候选对比 - 经验阁 ExpHub</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .wrap { padding: 18px 22px; }
+        .topbar { background: #fff; padding: 14px 20px; border-radius: 10px; margin-bottom: 14px; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .head-line { display: flex; justify-content: space-between; align-items: center; }
+        .stat-pill { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem;
+                     background: #eef1f6; color: #455; margin-right: 6px; }
+        .stat-pill.warn { background: #fdecea; color: #c0392b; }
+
+        /* 两栏对齐表：左右各 50%，等宽字体，行高紧凑，方便一眼扫差异 */
+        .diff-wrap { max-height: calc(100vh - 300px); overflow: auto; border-radius: 0 0 12px 12px; }
+        table.diff { width: 100%; table-layout: fixed; border-collapse: collapse; }
+        table.diff th { position: sticky; top: 0; z-index: 2; background: #fff;
+                        border-bottom: 2px solid #eee; padding: 10px 14px; font-size: 0.9rem; text-align: left; }
+        table.diff td { vertical-align: top; padding: 2px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                        font-size: 0.82rem; line-height: 1.55; word-break: break-word; white-space: pre-wrap;
+                        border-bottom: 1px solid #f4f4f4; }
+        .cell-same { background: #fff; color: #333; }
+        /* 不一样的行：淡红底 + 左侧红条，扫视时直接跳出来 */
+        .cell-diff { background: #fdecea; color: #c0392b; font-weight: 600; box-shadow: inset 3px 0 0 #e94560; }
+        .cell-empty { background: #fafafa; }
+        td.left { border-right: 1px solid #eee; }
+
+        .legend { font-size: 0.8rem; color: #888; }
+        .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+                    vertical-align: -2px; margin-right: 4px; }
+        .foot-actions { background: #fff; padding: 14px 20px; border-radius: 12px; margin-top: 14px;
+                        position: sticky; bottom: 0; box-shadow: 0 -2px 12px rgba(0,0,0,0.05); }
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <div class="topbar">
+        <div class="head-line">
+            <div>
+                <a th:href="@{/docs(view='candidates')}" class="btn btn-sm btn-outline-secondary mr-2">
+                    <i class="fas fa-arrow-left mr-1"></i>回队列
+                </a>
+                <span class="badge badge-secondary">候选 #<span th:text="${candidate.id}">0</span></span>
+                <span class="text-muted ml-2" style="font-size:0.85rem;">
+                    相似度 <span th:text="${candidate.score != null ? candidate.score : '-'}">-</span>
+                    · 来源 <span th:text="${candidate.source}">-</span>
+                    · <span th:text="${candidate.createdAt}"></span>
+                </span>
+            </div>
+            <div class="legend">
+                <span><i style="background:#fff;border:1px solid #ddd;"></i>相同</span>
+                <span class="ml-2"><i style="background:#fdecea;border:1px solid #e94560;"></i>不一样</span>
+                <span class="ml-2"><i style="background:#fafafa;border:1px solid #eee;"></i>这边没有</span>
+            </div>
+        </div>
+
+        <div class="mt-2">
+            <span class="stat-pill">A <b th:text="${stat.linesA}">0</b> 行</span>
+            <span class="stat-pill">B <b th:text="${stat.linesB}">0</b> 行</span>
+            <span class="stat-pill warn">标红 <b th:text="${diffRows}">0</b> 行</span>
+            <span class="text-muted ml-2" style="font-size:0.82rem;">
+                标红行数按<b>左右对齐</b>算（LCS）；它与 diff_experiences 回执里的「共同 N 行」
+                不同源（那个按集合交集算），两个数不要互相对照。
+            </span>
+        </div>
+
+        <div class="alert alert-warning mt-2 mb-0 py-2" th:if="${tooBig}">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            两侧行数过多，<b>未做最优对齐</b>，只按序号硬配 —— 差异可能虚高，请以内容为准。
+        </div>
+        <div class="alert alert-info mt-2 mb-0 py-2" th:if="${stat.shared == 0 and !tooBig}">
+            <i class="fas fa-info-circle mr-1"></i>
+            <b>共同 0 行 —— 没有任何内容重合。</b>按规矩不许判「重复」或「取代」，应判「不同」。
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="diff-wrap">
+            <table class="diff">
+                <thead>
+                <tr>
+                    <th style="width:50%;">
+                        A · #<span th:text="${docA.id}">0</span>
+                        <span th:text="${docA.title}">A标题</span>
+                        <span class="text-muted font-weight-normal" th:text="|（v${docA.version}）|"></span>
+                    </th>
+                    <th style="width:50%;">
+                        B · #<span th:text="${docB.id}">0</span>
+                        <span th:text="${docB.title}">B标题</span>
+                        <span class="text-muted font-weight-normal" th:text="|（v${docB.version}）|"></span>
+                    </th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="r : ${rows}">
+                    <td class="left"
+                        th:classappend="${r.left == null} ? 'cell-empty' : (${r.same} ? 'cell-same' : 'cell-diff')"
+                        th:text="${r.left}"></td>
+                    <td th:classappend="${r.right == null} ? 'cell-empty' : (${r.same} ? 'cell-same' : 'cell-diff')"
+                        th:text="${r.right}"></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 看完就地判，不用回队列再找一次 -->
+    <div class="foot-actions">
+        <form th:action="@{/candidates/{id}/resolve(id=${candidate.id})}" method="post" class="d-inline">
+            <input type="text" name="note" class="form-control d-inline-block mr-2"
+                   style="width:320px;height:36px;" placeholder="判断依据（可留空，但写下来日后回看有用）">
+            <button class="btn btn-outline-danger" name="action" value="duplicate"
+                    title="两条都打 duplicate 标记，不合并正文">判为重复</button>
+            <button class="btn btn-outline-warning" name="action" value="superseded"
+                    title="较旧那条标记为被较新那条取代，只写指针">标取代</button>
+            <button class="btn btn-outline-secondary" name="action" value="distinct"
+                    title="判为不同，此后不再重新入队">不同</button>
+            <button class="btn btn-outline-light text-muted" name="action" value="skip"
+                    title="这次先不看，得分涨 0.1 会自己回来">忽略</button>
+        </form>
+        <div class="text-muted mt-2" style="font-size:0.8rem;">
+            判「重复」只是给两条各打一个标记，<b>不合并、不删除</b>。真要清掉一条请用「标取代」或回列表走待删流程。
+        </div>
+    </div>
+
+</div>
+</body>
+</html>
