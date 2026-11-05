@@ -247,6 +247,86 @@ public class ProjectService {
         return null;
     }
 
+    /**
+     * #1272 C9：中文长 query 不带空格时，项目名/别名项常常整段**嵌在** token 中间，
+     * 例如「工业大学校友会小程序架构说明」含有别名项「校友会小程序」。
+     *
+     * <p>原 {@code detectProjectInQuery} 按空白切词后只做「token 整串 == 名称 / name LIKE %token% /
+     * 别名项等值」三种比对，方向全是「token 是名称的子串」；长句反过来（名称是 token 的子串）一律落空。
+     * 这里补反向内嵌匹配，并保留三道防误召：① 只认含 CJK 的片段，纯 ASCII 结构性拒绝
+     * （#678 §5.1：{@code api} 不得命中 {@code xy-api}）；② 片段两侧不能是 ASCII 词字符；
+     * ③ 多个项目并列最长时宁可不报，也不猜。</p>
+     *
+     * <p><b>边界</b>：这是 C9「识别行可观测」的最小修复，不等同 #678 §5 的 L0-1a 三分支 ——
+     * 本方法尚未接 df 常量表，L0-1a 落地时会补 df 门槛与 ②/③ 分支判据。</p>
+     */
+    public Project detectEmbeddedProject(String token) {
+        return pickEmbeddedProject(listProjects(), token);
+    }
+
+    /** 纯函数版本：不查库、不依赖 API Key 上下文，便于离线单测直接构造项目列表。 */
+    static Project pickEmbeddedProject(List<Project> projects, String token) {
+        if (projects == null || token == null) return null;
+        String needle = normalizeAlias(token);
+        if (!containsCjk(needle) || needle.length() < MIN_ALIAS_LEN) return null;
+        Project best = null;
+        String bestItem = "";
+        boolean tie = false;
+        for (Project p : projects) {
+            for (String item : candidateItems(p)) {
+                String n = normalizeAlias(item);
+                if (n.length() < MIN_ALIAS_LEN || !containsCjk(n)) continue;
+                if (!embeddedHit(needle, n)) continue;
+                if (n.length() > bestItem.length()) {
+                    best = p;
+                    bestItem = n;
+                    tie = false;
+                } else if (n.length() == bestItem.length() && best != null
+                        && !java.util.Objects.equals(best.getId(), p.getId())) {
+                    tie = true;         // 跨项目并列最长：不猜，返回 null
+                }
+            }
+        }
+        return tie ? null : best;
+    }
+
+    /** 内嵌匹配候选片：项目名 + 编码 + 别名逐项。 */
+    static List<String> candidateItems(Project p) {
+        List<String> out = new ArrayList<>();
+        if (p == null) return out;
+        if (p.getName() != null && !p.getName().isBlank()) out.add(p.getName());
+        if (p.getProjectCode() != null && !p.getProjectCode().isBlank()) out.add(p.getProjectCode());
+        out.addAll(splitAliases(p.getAliases()));
+        return out;
+    }
+
+    /** 片段是否作为独立成分出现：两侧不能是 ASCII 字母/数字/下划线/连字符。 */
+    static boolean embeddedHit(String token, String item) {
+        if (token == null || item == null || item.isEmpty()) return false;
+        int from = 0;
+        while (true) {
+            int p = token.indexOf(item, from);
+            if (p < 0) return false;
+            boolean leftOk = p == 0 || !isAsciiWord(token.charAt(p - 1));
+            int end = p + item.length();
+            boolean rightOk = end >= token.length() || !isAsciiWord(token.charAt(end));
+            if (leftOk && rightOk) return true;
+            from = p + 1;
+        }
+    }
+
+    private static boolean isAsciiWord(char c) {
+        return c < 128 && (Character.isLetterOrDigit(c) || c == '_' || c == '-');
+    }
+
+    private static boolean containsCjk(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= '\u4e00' && c <= '\u9fff') return true;
+        }
+        return false;
+    }
+
     /** 别名归一：全角转半角（NFKC）+ 去首尾空白 + 小写。 */
     private static String normalizeAlias(String s) {
         if (s == null) {

@@ -358,7 +358,9 @@ class Mcp:
 # 基线上把自己顶到前排（实测污染源依次 #1220 → #1236 → #1268/#1272）。
 # 判基线时排除，只保留 #95 / #332 / #678 等真实候选。
 # ⚠️ 信箱（#1268/#1272）本身也是 exphub 文档，写进去同样进全文索引 —— 见 #1272 D5。
-SELF_POLLUTION_IDS = {1220, 1236, 1268, 1272, 678, 101}
+# ⚠️ 必须与 ExpHubTools.REGRESSION_POLLUTION_IDS 完全一致（SearchScopeGuardTest 有同源断言）。
+# 1274 = 施工回执② 续册，2026-11-05 #1272 C8 实测它同样进 Top2，补进集合。
+SELF_POLLUTION_IDS = {1220, 1236, 1268, 1272, 1274, 678, 101}
 
 
 def detected_project(text):

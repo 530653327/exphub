@@ -5,7 +5,12 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -65,5 +70,48 @@ class SearchScopeGuardTest {
         String src = source();
         assertTrue(src.contains("longestCjkSubstringHit"), "中文长串的子串切分入口必须在");
         assertTrue(src.contains("hitSnippetWithFallback"), "摘要/标题兜底必须在");
+    }
+
+    /** #1272 C8：污染源标注必须同时覆盖完整模式、brief 模式和页首汇总，且不许偷偷改排序。 */
+    @Test
+    void pollutionMarksVisibleInBothModes() throws Exception {
+        String src = source();
+        assertTrue(src.contains("⚠️ 回归评测污染源"),
+                "完整模式必须逐条标注「本条为污染源」");
+        assertTrue(src.contains("⚠️污染源"),
+                "brief 模式也要带标记（仍保持一条一行）");
+        assertTrue(src.contains("条回归评测污染源（下面已逐条标注）"),
+                "页首要有汇总行，别让人翻到中间才发现前几条不能用");
+        assertTrue(src.contains("REGRESSION_POLLUTION_IDS.contains(doc.getId())"),
+                "标注按 ID 判定，不能改成按标题猜");
+        assertTrue(src.contains("不排除、不改排序"),
+                "线上不许替调用方隐藏文档（这是口径注释，防止后人顺手改成 filter）");
+    }
+
+    /** #1272 C8：服务端集合与离线回归脚本的 SELF_POLLUTION_IDS 必须同源，漏一个就会两边口径打架。 */
+    @Test
+    void pollutionIdSetsAreIdentical() throws Exception {
+        Matcher java = Pattern.compile("REGRESSION_POLLUTION_IDS\\s*=\\s*Set\\.of\\(([^)]*)\\)")
+                .matcher(source());
+        assertTrue(java.find(), "取不到服务端污染源集合，守卫失效");
+        Set<Long> javaIds = idsFrom(java.group(1).replace("L", ""));
+
+        String py = Files.readString(Path.of("tools/search_regression.py"), StandardCharsets.UTF_8);
+        Matcher script = Pattern.compile("SELF_POLLUTION_IDS\\s*=\\s*\\{([^}]*)}").matcher(py);
+        assertTrue(script.find(), "取不到离线脚本 SELF_POLLUTION_IDS，守卫失效");
+        Set<Long> pyIds = idsFrom(script.group(1));
+
+        assertEquals(javaIds, pyIds,
+                "服务端标注集合与离线排除集合必须一致；#1274 曾因漏登记进了线上 Top2");
+        assertTrue(javaIds.contains(1274L), "施工回执②续册 #1274 必须在污染源集合里");
+    }
+
+    private static Set<Long> idsFrom(String body) {
+        Set<Long> out = new HashSet<>();
+        for (String part : body.split(",")) {
+            String t = part.trim();
+            if (t.matches("\\d+")) out.add(Long.parseLong(t));
+        }
+        return out;
     }
 }

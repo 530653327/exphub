@@ -44,6 +44,17 @@ public class ExpHubTools {
 
     private static final Logger log = LoggerFactory.getLogger(ExpHubTools.class);
 
+    /**
+     * #1272 C8：搜索回归评测的污染源文档（信箱 / 施工回执 / 待办 / 口径文档）。
+     *
+     * <p>这些正文抄了验收 query 原话，会自己排进前列；离线脚本
+     * {@code tools/search_regression.py} 的 {@code SELF_POLLUTION_IDS} 必须与这里完全一致
+     * （由 {@code SearchScopeGuardTest} 钉住）。线上处理方式是**只标注、不排除、不改排序**：
+     * 排除是评测口径，不该替调用方决定看不到哪条文档；真要查信箱的人照样查得到。</p>
+     */
+    static final Set<Long> REGRESSION_POLLUTION_IDS = Set.of(
+            101L, 678L, 1220L, 1236L, 1268L, 1272L, 1274L);
+
     @Autowired
     private DocService docService;
 
@@ -974,6 +985,13 @@ public class ExpHubTools {
                           : ("查询词含项目「" + detected.getName() + "」（#" + detected.getId() + "）"))
                   .append("\n\n");
             }
+            // #1272 C8：本页含污染源时，先给一行汇总，别让人翻到中间才发现前几条不能用。
+            long pollutionCount = pageDocs.stream()
+                    .filter(d -> REGRESSION_POLLUTION_IDS.contains(d.getId())).count();
+            if (pollutionCount > 0 && !briefMode) {
+                sb.append("⚠️ 本页含 ").append(pollutionCount)
+                  .append(" 条回归评测污染源（下面已逐条标注），判基线请排除\n\n");
+            }
 
             // 作用域全开时，每条结果要标出「来自哪个项目」，否则读的人分不清这条是全局结论还是项目内部结论
             java.util.Map<Long, String> projNames = scopeAll ? loadProjectNames() : java.util.Map.of();
@@ -1158,9 +1176,11 @@ public class ExpHubTools {
             String pn = projNames.get(doc.getProjectId());
             projMark = " 🗂" + (pn != null ? pn : ("#" + doc.getProjectId()));
         }
+        // #1272 C8：精简模式也必须带污染源标记（仍保持一条一行）
+        String pollutionMark = REGRESSION_POLLUTION_IDS.contains(doc.getId()) ? " ⚠️污染源" : "";
         return index + ". 【ID:" + doc.getId() + "】" + doc.getTitle()
                 + " —— " + getTemplateTypeLabel(doc.getTemplateType())
-                + " " + getStatusLabel(doc.getStatus()) + flagMark + supersededMark + projMark
+                + " " + getStatusLabel(doc.getStatus()) + flagMark + supersededMark + projMark + pollutionMark
                 + " · " + previewSummary(doc.getSummary()) + "\n";
     }
 
@@ -1341,6 +1361,9 @@ public class ExpHubTools {
             String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
             String statusLabel = getStatusLabel(doc.getStatus());
             sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
+            if (REGRESSION_POLLUTION_IDS.contains(doc.getId())) {
+                sb.append("   ⚠️ 回归评测污染源: 本条是信箱/回执/排期文档，正文含验收 query 原话，判基线请排除\n");
+            }
             sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel)
               .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
             // 来源标注：作用域全开时全局与项目内经验混排，不标来源等于让读的人猜
@@ -1403,6 +1426,19 @@ public class ExpHubTools {
                 if (candidates.size() == 1) return candidates.get(0);
             } catch (Exception e) {
                 log.debug("detectProjectInQuery: '{}' 解析失败: {}", token, e.getMessage());
+            }
+        }
+        // #1272 C9：中文长句通常不带空格，上面三种比对全是「token 是名称的子串」方向，
+        // 名称/别名嵌在长 token 中间时必然落空（实测「工业大学校友会小程序架构说明」识别为「无」）。
+        // 原路径没命中才走反向内嵌匹配，不改变任何已有命中行为。
+        for (String raw : query.split("[\\s,，、;；]+")) {
+            String token = raw.trim();
+            if (token.length() < 3) continue;
+            try {
+                Project embedded = projectService.detectEmbeddedProject(token);
+                if (embedded != null) return embedded;
+            } catch (Exception e) {
+                log.debug("detectProjectInQuery: embedded '{}' 解析失败: {}", token, e.getMessage());
             }
         }
         return null;
