@@ -42,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
@@ -216,6 +217,89 @@ def pct(vals, p):
     return vals[lo] if lo == hi else vals[lo] + (vals[hi] - vals[lo]) * (k - lo)
 
 
+# ==================== 按类型分组（#1277 C18）====================
+# 标题特征归类：templateType 只有一套官方取值，「信箱」「施工回执」是内容属性，
+# 库里没有对应枚举，只能按标题认。口径写在这里，别人复跑能对上。
+PROCESS_RULES = [
+    ('信箱', lambda d: '协作信箱' in d['title']),
+    ('回执/施工日志', lambda d: '回执' in d['title'] or '施工日志' in d['title']),
+    # 「清单」单独不算：产品文档里「部署清单」「工具清单页」是正文内容，不是过程记录
+    ('待办/进度/吐槽单', lambda d: '待办' in d['title'] or '进度' in d['title'] or '吐槽清单' in d['title']),
+]
+
+
+def print_groups(rows, top_n=30, head_n=8):
+    """按 templateType 与「过程记录」两类口径统计候选集与前 N 名的构成。"""
+    def bucket(key_fn):
+        b = {}
+        for i, d in enumerate(rows):
+            k = key_fn(d)
+            e = b.setdefault(k, dict(n=0, top=0, head=0, ids=[], best=0.0))
+            e['n'] += 1
+            e['best'] = max(e['best'], d['p']['total'])
+            if i < top_n:
+                e['top'] += 1
+                e['ids'].append(d['id'])
+            if i < head_n:
+                e['head'] += 1
+        return b
+
+    print('\n=== 候选集 %d 条 · 按 templateType ===' % len(rows))
+    print('%-18s %6s %6s %6s %8s' % ('template_type', '候选', '前%d' % top_n, '前%d' % head_n, '最高分'))
+    bt = bucket(lambda d: d['ttype'])
+    for k, e in sorted(bt.items(), key=lambda x: (-x[1]['top'], -x[1]['n'])):
+        print('%-18s %6d %6d %6d %8.4f  %s'
+              % (k, e['n'], e['top'], e['head'], e['best'],
+                 ','.join(str(x) for x in e['ids'][:12])))
+
+    print('\n=== 过程记录类（按标题特征，非官方分类）===')
+    seen = set()
+    for name, fn in PROCESS_RULES:
+        e = bucket(fn).get(True)
+        if not e:
+            print('%-10s %6d %6d %6d  -' % (name, 0, 0, 0))
+            continue
+        seen.update(e['ids'])
+        print('%-10s %6d %6d %6d  %s'
+              % (name, e['n'], e['top'], e['head'], ','.join(str(x) for x in e['ids'])))
+    union = set()
+    for _, fn in PROCESS_RULES:
+        union.update(d['id'] for d in rows if fn(d))
+    in_top = [d['id'] for d in rows[:top_n] if d['id'] in union]
+    in_head = [d['id'] for d in rows[:head_n] if d['id'] in union]
+    share_cand = 100.0 * len(union) / max(1, len(rows))
+    share_top = 100.0 * len(in_top) / max(1, top_n)
+    print('合计（去重）  %6d %6d %6d' % (len(union), len(in_top), len(in_head)))
+    print('  占候选集 %.0f%%（%d/%d）｜占前%d %.0f%%（%d/%d）｜富集 %.1f 倍'
+          % (share_cand, len(union), len(rows), top_n, share_top, len(in_top), top_n,
+             share_top / share_cand if share_cand else 0))
+    print('  占前%d %.0f%%（%d/%d）'
+          % (head_n, 100.0 * len(in_head) / max(1, head_n), len(in_head), head_n))
+
+    pp = [d for d in rows if d['ttype'] == 'project_progress']
+    print('其中 template_type=project_progress：候选 %d 条，前%d %d 条%s'
+          % (len(pp), top_n, sum(1 for d in rows[:top_n] if d['ttype'] == 'project_progress'),
+             '（全库 project_progress 大多挂在 project_id 下，被 WHERE 排除）' if not pp else ''))
+
+
+def save_snapshot(path, query, rows, api_key_used):
+    """固定快照：把候选集与 calls 定格，之后所有前后对比都在这份上跑（#1277 C20）。"""
+    payload = dict(query=query, saved_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                   candidate_limit=CANDIDATE_LIMIT, key_used=bool(api_key_used), rows=rows)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False)
+    print('\n快照已存: %s（%d 条，%.1f KB）'
+          % (path, len(rows), os.path.getsize(path) / 1024.0))
+
+
+def load_snapshot(path):
+    with open(path, encoding='utf-8') as f:
+        o = json.load(f)
+    print('读快照: %s（%s 生成，%d 条，query=%r）'
+          % (path, o.get('saved_at', '?'), len(o['rows']), o.get('query')))
+    return o
+
+
 # ==================== 取候选集 ====================
 def fetch_candidates(query, api_key):
     concepts, variants = build_terms(query)
@@ -238,7 +322,8 @@ def fetch_candidates(query, api_key):
              % (orq, api_key, api_key, ck, CANDIDATE_LIMIT))
 
     q = ("SELECT id, IFNULL(title,''), IFNULL(aliases,''), IFNULL(summary,''), IFNULL(tags,''), "
-         "REPLACE(IFNULL(content,''),'\\n',' '), DATEDIFF(NOW(), updated_at), IFNULL(call_count,0) "
+         "REPLACE(IFNULL(content,''),'\\n',' '), DATEDIFF(NOW(), updated_at), IFNULL(call_count,0), "
+         "IFNULL(template_type,'') "
          "FROM docs WHERE " + where + ";")
     out, err = sql(q)
     if err.strip():
@@ -248,10 +333,10 @@ def fetch_candidates(query, api_key):
         if not line.strip():
             continue
         f = line.split('\t')
-        if len(f) < 8:
+        if len(f) < 9:
             continue
         rows.append(dict(id=int(f[0]), title=f[1], aliases=f[2], summary=f[3], tags=f[4],
-                         content=f[5], days_old=int(f[6]), calls=int(f[7])))
+                         content=f[5], days_old=int(f[6]), calls=int(f[7]), ttype=f[8] or '(空)'))
     return rows, variants, orq, ck
 
 
@@ -291,15 +376,21 @@ def main():
     ap.add_argument('--top', type=int, default=0, help='打印前 N 名的 ID 与标题（配合 --pollution 看霸榜）')
     ap.add_argument('--pollution', default='',
                     help='逗号分隔的污染源 ID，打印前 N 名时标记并统计占比')
+    ap.add_argument('--groups', action='store_true',
+                    help='按 templateType / 过程记录类统计候选集与前 N 名的构成')
+    ap.add_argument('--snapshot-out', default=None, help='把候选集与 calls 定格到文件（后续对比都用它）')
+    ap.add_argument('--snapshot-in', default=None, help='从快照读候选集，不再查库（固定口径复跑）')
     ap.add_argument('--verify', action='store_true', help='与线上真实顺序逐位对账（需 MCP_KEY）')
     a = ap.parse_args()
 
     query = a.query
     if a.query_file:
         query = open(a.query_file, encoding='utf-8').read().strip()
-    if not query or query == '-':
+    if not query and a.snapshot_in:
+        pass                      # query 从快照里取，别读 stdin（非交互 ssh 下会挂住）
+    elif not query or query == '-':
         query = sys.stdin.read().strip()
-    if not query:
+    if not query and not a.snapshot_in:
         print('缺 query')
         return 2
 
@@ -309,7 +400,13 @@ def main():
         print('⚠️ 未设置 MCP_KEY：scope 条件无法复刻（会退化成 api_key="" 的过滤），仅供粗看。')
         api_key = ''
 
-    rows, variants, orq, ck = fetch_candidates(query, api_key)
+    if a.snapshot_in:
+        snap = load_snapshot(a.snapshot_in)
+        query = query or snap['query']
+        variants = build_terms(query)[1]
+        rows, orq, ck = snap['rows'], '(来自快照)', '(来自快照)'
+    else:
+        rows, variants, orq, ck = fetch_candidates(query, api_key)
     if not rows:
         print('候选集为空，检查 query / 连接')
         return 1
@@ -322,6 +419,9 @@ def main():
     print('orq=%s' % orq)
     print('cleanKeyword=%r' % ck)
     print('候选集=%d 条' % len(rows))
+
+    if a.snapshot_out and not a.snapshot_in:
+        save_snapshot(a.snapshot_out, query, rows, api_key)
 
     if a.verify and api_key:
         live = live_ids(query, api_key)
@@ -351,6 +451,9 @@ def main():
         print('\ncoverage=1.0 的 %d 条（满分成员）:' % len(full))
         for d in full[:10]:
             print('  #%-5d field=%.2f  %s' % (d['id'], d['p']['field'], (d['title'] or '')[:38]))
+
+    if a.groups:
+        print_groups(rows, top_n=(a.top or 30))
 
     if a.explain is not None:
         d = next((x for x in rows if x['id'] == a.explain), None)
