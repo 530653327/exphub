@@ -161,6 +161,15 @@ CASES_RELEVANCE = [
          project_id=None, expect_top3=[],
          note="#678 §3 已把第 5 组移出相关性验收集，定性「域外层」："
               "正确行为 = 少返回 + 明确提示项目域可能有，不考核 Top3，只登记形态"),
+    # C5 = 召回层体检，与 C1 同 query 但**问的是另一个问题**：
+    #   C1 问「#95 排第几」（排序层），C5 问「#95 在不在候选集内」（召回层）。
+    # 这两件事必须分开量，否则「被截断」和「排得低」看起来一样（#1272 C22 就是这么误判的）。
+    # C5 用**未排除污染源**的原始序列：候选位次是检索链路的事实，不该被评测口径改写。
+    dict(cid="C5", query="代码怎么发布到线上服务器", scope="all",
+         project_id=None, expect_top3=[],
+         candidate_probe=95, expect_in_candidate=True,
+         note="#1272 C22 要求的召回层判据：候选 200 条里必须含 #95。"
+              "不含 = 被 CANDIDATE_LIMIT 截断（召回问题）；含但靠后 = 排序问题，两回事。"),
 ]
 
 
@@ -460,6 +469,29 @@ def extract_hit_ids(text):
     return out
 
 
+def extract_pollution_ids(text):
+    """读服务端自己打的污染源标注对应的 ID（完整模式 `⚠️ 回归评测污染源(内容)` 在标题下一行，
+    brief 模式 `⚠️污染源` 与标题同一行，两种都要认）。
+
+    为什么不自己再算一遍：#1272 C14 的结论是「判据抓内容、不要人工维护 ID 表」。
+    服务端已按 PollutionMarkers 判过并逐条标注，脚本读标注就是**单一判据源**；
+    两边各维护一份清单必然漂移 —— 2026-11-05 就漏过 #677，又在 C1 的 Top1 漏过 #748
+    （#748 服务端标了，脚本的硬编码表里没有，导致 Top1 被当成正常文档）。
+    """
+    marked, cur = set(), None
+    for line in (text or "").splitlines():
+        s = line.strip()
+        m = re.match(r"^\d+\. 【ID:(\d+)】(.*)$", s)
+        if m:
+            cur = int(m.group(1))
+            if "污染源" in m.group(2):
+                marked.add(cur)
+            continue
+        if cur is not None and "回归评测污染源" in s:
+            marked.add(cur)
+    return marked
+
+
 def snapshot_warning(snap, max_age_days):
     raw = (snap.get("captured_at") or "")[:10]
     try:
@@ -487,10 +519,36 @@ def run_relevance(transport, url, key, assert_mode, baseline_mode):
     executed = 0
     try:
         for c in CASES_RELEVANCE:
+            # C5 形态：翻完整候选集，问「目标文档在不在候选内、位次多少」。
+            # 与 Top3 判定分开：召回层与排序层的失败形态不同，混在一起就分不清
+            # 「被截断」和「排得低」（#1272 C22）。
+            if c.get("candidate_probe") is not None:
+                probe = c["candidate_probe"]
+                seq = []
+                for off in (0, 50, 100, 150):
+                    t = cli.call("search_experience",
+                                 {"query": c["query"], "limit": 50,
+                                  "offset": off, "scope": c["scope"]})
+                    seq.extend(extract_hit_ids(t))
+                pos = (seq.index(probe) + 1) if probe in seq else None
+                ok = (pos is not None) == c.get("expect_in_candidate", True)
+                executed += 1
+                if not ok and not baseline_mode:
+                    bad += 1
+                label = "BASELINE" if baseline_mode else fmt(ok)
+                print(f"\n[{c['cid']}] {label}   scope={c['scope']}  query={c['query']!r}")
+                print(f"      候选集 -> 共 {len(seq)} 条（含污染源，未排除）")
+                print(f"      召回位置 -> #{probe}: "
+                      + (f"第 {pos} 位" if pos else "**不在候选集内（被截断）**"))
+                print(f"      口径 : {c['note']}")
+                continue
+
             args = {"query": c["query"], "limit": 50, "scope": c["scope"]}
             text = cli.call("search_experience", args)
             ids = extract_hit_ids(text)
-            exclude = set(c.get("exclude", [])) | SELF_POLLUTION_IDS
+            # 判据以服务端标注为准（单一源），硬编码表只作兜底 —— 它已经漏过 #677 和 #748。
+            server_marked = extract_pollution_ids(text)
+            exclude = set(c.get("exclude", [])) | SELF_POLLUTION_IDS | server_marked
             ranked = [i for i in ids if i not in exclude]
             top5 = ranked[:5]
             targets = {i: (ranked.index(i) + 1 if i in ranked else None)
@@ -505,7 +563,10 @@ def run_relevance(transport, url, key, assert_mode, baseline_mode):
             label = "BASELINE" if baseline_mode else fmt(ok)
             print(f"\n[{c['cid']}] {label}   scope={c['scope']}  query={c['query']!r}")
             print(f"      Top5 -> {top5 or '(无命中)'}")
-            print(f"      已排除自污染 ID -> {sorted(exclude)}")
+            # 服务端标注里有、兜底表里没有的 ID，就是「硬编码表又漏了」的直接证据。
+            missed = sorted(server_marked - SELF_POLLUTION_IDS - set(c.get("exclude", [])))
+            print(f"      已排除 -> 服务端标注 {len(server_marked)} 条"
+                  + (f"（兜底表漏了 {missed}）" if missed else "（兜底表无遗漏）"))
             if targets:
                 print("      期望文档排名 -> " + ", ".join(
                     f"#{i}: {'第 ' + str(p) + ' 位' if p else '未进前 50'}"
