@@ -25,7 +25,8 @@
 
 所以这里把两类算例固化成可重复跑的：
 
-  A 组（6 条）= #677 §14.2 的线上实测基线：跑**线上真实系统**，看现状。
+  A 组（7 条）= #677 §14.2 的线上实测基线 + #1272 C9 新增的中文长句用例 A7：
+                  跑**线上真实系统**，看现状。
   B 组（7 条）= #678 §5.4 定稿表的规则验算：跑**规则引用实现**（离线，不依赖部署）。
   C 组（4 条）= 搜索相关性 Top3 验收集：跑线上，输出实际排名当修复前基线。
 
@@ -92,17 +93,23 @@ DEFAULT_SSE = "https://cloudim.club/exphub/mcp/sse"     # 旧端点，做对照�
 # 「拆解宝（报废车回收模块）」→ 首跑出现一条假 FAIL。名字会变、id 不会。
 CASES_LIVE = [
     dict(cid="A1", query="拆解宝的报废车回收",
-         expect_id=3, note="CJK 无空格 contain；14.2 实测现状=漏召"),
+         expect_id=3, note="CJK 无空格 contain；修复前基线=漏召，C9 反向内嵌后应 PASS"),
     dict(cid="A2", query="回金算的入库单",
-         expect_id=2, note="CJK 无空格 contain；现状=漏召"),
+         expect_id=2, note="CJK 无空格 contain；修复前基线=漏召，C9 后应 PASS"),
     dict(cid="A3", query="忆阁DeepSeek余额",
-         expect_id=6, note="CJK+ASCII 混排无空格；现状=漏召"),
+         expect_id=6, note="CJK+ASCII 混排无空格；修复前基线=漏召，C9 后仍 FAIL："
+                           "「忆阁」仅 2 字，低于 MIN_ALIAS_LEN=3，留待 L0-1a 定案"),
     dict(cid="A4", query="拆解宝 报废车回收",
-         expect_id=3, note="有空格，靠精确 token 命中；现状=OK"),
+         expect_id=3, note="有空格，靠精确 token 命中；修复前基线=OK"),
     dict(cid="A5", query="hjs",
-         expect_id=2, note="3 字符短别名，df 7.9%；现状=OK，按长度>=4 会失血"),
+         expect_id=2, note="3 字符短别名，df 7.9%；修复前基线=OK，按长度>=4 会失血"),
     dict(cid="A6", query="API 接口",
-         expect_id=None, note="防误召：不得识别为任何项目；现状=被项目5劫持"),
+         expect_id=None, note="防误召：不得识别为任何项目；修复前基线=被项目5劫持"),
+    # #1272 C9：阁主线上实测「长句含完整别名却识别为无」，这条必须进回归集，
+    # 否则下次只能靠人工回读。期望值在修之前就写死（标注者≠改码者）。
+    dict(cid="A7", query="工业大学校友会小程序架构说明",
+         expect_id=5, note="#1272 C9 新增：中文长句内嵌完整别名「校友会小程序」；"
+                           "修复前识别行=无，修复后应给出 #5"),
 ]
 
 # ==================== B 组：#678 §5.4 定稿表（7 条）====================
@@ -585,9 +592,9 @@ def run_live(snap, assert_mode, transport, url, key):
             print(f"      线上 -> {pid_label(projects, got_pid)}")
             print(f"      说明 : {c['note']}")
         if not any("🔎 项目识别:" in t for t in texts):
-            print("\n⚠️ A 组当前**不可测**：6 条回执里连一行「🔎 项目识别:」都没有。")
+            print(f"\n⚠️ A 组当前**不可测**：{len(CASES_LIVE)} 条回执里连一行「🔎 项目识别:」都没有。")
             print("   2026-11-05 S2.1 已在 ExpHubTools 恢复该行（非 brief 模式）。")
-            print("   仍缺说明部署没生效、或跑的是 brief / 0 结果分支；上面 5 条 FAIL")
+            print("   仍缺说明部署没生效、或跑的是 brief / 0 结果分支；上面的 FAIL 全是假 FAIL")
             print("   全是**假 FAIL**，不是线上退化，别拿来当基线。")
             return None
     finally:
