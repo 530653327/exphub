@@ -335,6 +335,44 @@ public class DocService {
     }
 
     /**
+     * 只取「被主排名排除的那几类」里命中的文档（#1290 C71-3 的过程记录补位）。
+     *
+     * <p>用途：主排名干净了，但答案只在施工日志里的问题不能因此查不到。
+     * 这里故意不复用一种 search 的排除开关（那个是 true），而是召回后<b>只留</b>被排除的类型，
+     * 保证显示条件与排除条件严格互补：主排名里有的，这一段不会重复；
+     * 主排名里没有的（project_progress / todo_list），这里兜住。
+     */
+    public List<Doc> findProcessHits(String keyword, Long projectId, String includeStatus, int limit) {
+        AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
+        String apiKey = (assistant != null) ? assistant.getApiKey() : null;
+        if (projectId != null && !canAccessProject(projectId, apiKey)) {
+            return new ArrayList<>();
+        }
+        boolean all = projectId == null;
+        String ownerKey = all ? apiKey : null;
+        List<String> statusList = parseStatusList(includeStatus);
+        SearchTerms terms = buildSearchTerms(keyword);
+        if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Doc> candidates = docMapper.searchByFulltext(terms.toOrQuery(),
+                toCleanKeyword(keyword == null ? "" : keyword), apiKey, projectId, null, statusList,
+                0, CANDIDATE_LIMIT, all, ownerKey, false);
+        List<Doc> ranked = rankAndFilter(candidates, terms, false);
+        List<Doc> out = new ArrayList<>();
+        for (Doc d : ranked) {
+            String t = d.getTemplateType();
+            if (t != null && EXCLUDED_FROM_RANKING.contains(t)) {
+                out.add(d);
+                if (out.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
      * 项目侧命中文档数（L0-1b 的「项目「X」内还有 N 条」用）。
      *
      * <p>口径：与搜索第 2 级<b>同一套宽松 OR 召回</b>（{@code buildSearchTerms} 展开后的 query），

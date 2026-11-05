@@ -1035,6 +1035,10 @@ public class ExpHubTools {
             }
             // 项目侧命中：全部全局结果之后单独一段（末尾提示），不吃 offset/limit，只给标题+摘要。
             sb.append(renderProjectSegment(detected, projectTotal, projectTop, query));
+            // 过程记录补位（#1290 C71-3）：主排名把 project_progress / todo_list 排掉了，
+            // 但「昨天部署踩什么坑」这类问题的答案恰恰只在施工日志里。
+            // 主排名干净 ≠ 让它消失：单独列一小段，不给摘要、不参与排名，带读法。
+            sb.append(renderProcessHits(query, scopeAll, projectId, templateType, statusFilter));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.searchExperience: FAILED", e);
@@ -1051,6 +1055,56 @@ public class ExpHubTools {
 
     /** 全局搜索末尾「项目内还有 N 条」最多列几条（L0-1b）。只列标题+摘要，不列正文。 */
     static final int PROJECT_SEGMENT_MAX = 5;
+
+    /** 过程记录补位最多列几条（只给 ID + 标题 + 读法，不给摘要，避免又变成一份排名）。 */
+    static final int PROCESS_HINT_MAX = 3;
+
+    /**
+     * 过程记录补位段（#1290 C71-3）。
+     *
+     * <p>背景：主排名把 {@code project_progress} / {@code todo_list} 排掉了（它们有专属入口），
+     * 但「昨天部署踩什么坑」「上次那个报错怎么解的」这类问题，答案本来就只存在于施工日志里。
+     * 实测：排掉之后 #95 从 26 升到 15，但「昨天部署踩了什么坑」的前 5 条全是知识文档，
+     * 真正记着那件事的施工回执一条都没出现 —— 那就是「砍过头」。
+     *
+     * <p>所以加这一段：不算排名、不给摘要、只报「过程记录里也命中 N 条」+ ID/标题/读法。
+     * 显示条件与排除条件严格互补：只在 scope=all 且没显式指定 templateType 时出现
+     * （显式指定时它们本来就在主排名里，再列一遍就成了重复）。
+     */
+    private String renderProcessHits(String query, boolean scopeAll, Long projectId,
+                                     String templateType, String statusFilter) {
+        if (!scopeAll || (templateType != null && !templateType.trim().isEmpty())) {
+            return "";
+        }
+        try {
+            var hits = docService.findProcessHits(query, projectId, statusFilter, PROCESS_HINT_MAX);
+            if (hits == null || hits.isEmpty()) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("\n📝 过程记录里也命中 ").append(hits.size())
+              .append(" 条（施工日志/待办，不进主排名、不是知识条目）：\n");
+            for (Doc d : hits) {
+                String title = d.getTitle() == null ? "" : d.getTitle().replace("\n", " ");
+                if (title.length() > 40) {
+                    title = title.substring(0, 40) + "…";
+                }
+                String type = "todo_list".equals(d.getTemplateType()) ? "待办" : "过程记录";
+                sb.append("- 【ID:").append(d.getId()).append("】").append(title)
+                  .append(" ｜ ").append(type)
+                  .append(" ｜ 读法：get_experience_detail(id=").append(d.getId()).append(")");
+                if ("todo_list".equals(d.getTemplateType())) {
+                    sb.append(" 或 check_my_todos");
+                }
+                sb.append("\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            // 补位是锦上添花，失败绝不能影响主结果
+            log.debug("ExpHubTools.renderProcessHits 失败，已跳过: {}", e.getMessage());
+            return "";
+        }
+    }
 
     /**
      * 全局搜索末尾的项目侧命中段（L0-1b，2026-10-30）。
