@@ -36,13 +36,16 @@ import score_distribution as sd           # 复用切词/候选集/打分，口�
 # 被主排名排除、只能走补位段的类型
 EXCLUDED_TYPES = {'project_progress', 'todo_list'}
 
-# (query, 正解 ID 列表, 一句话说明)
+# (query, 正解 ID 列表, 一句话说明, 是否计入「提升」)
+# 第 3 组：原正解 #712 已于 2026-11-06 按阁主 C70-2 归档（COMPLETED，默认搜索不返回），
+# 题目本身失效。按 C83 重写为「文档库整理 SOP」#713 —— 归档之后这类问题的正解变成 SOP。
+# 但它基线就通过，**只能用于防退化，不能用于证明提升**，故单列为不计分组。
 CASES = [
-    ('代码怎么发布到线上服务器 部署', [95], 'ExpHub 部署手册'),
-    ('昨天部署踩了什么坑', [1236, 1274], '施工回执（过程记录，走补位）'),
-    ('scan_similar_docs 报错', [712], '工具的报错与复发取证'),
-    ('积分兑换提现异常', [361], '提交错仓库那次事故'),
-    ('AGENTS.md 怎么分片', [233], 'AGENTS 分片规范'),
+    ('代码怎么发布到线上服务器 部署', [95], 'ExpHub 部署手册', True),
+    ('昨天部署踩了什么坑', [1236, 1274], '施工回执（过程记录，走补位）', True),
+    ('scan_similar_docs 报错', [713], '文档库整理 SOP（原 #712 已归档，C83 重写）', False),
+    ('积分兑换提现异常', [361], '提交错仓库那次事故', True),
+    ('AGENTS.md 怎么分片', [233], 'AGENTS 分片规范', True),
 ]
 
 
@@ -78,8 +81,10 @@ def main():
     print('|---|---|---|---|---|---|')
 
     passed = 0
+    counted_pass = 0
+    counted_total = 0
     pa_hits = []          # (query, docId, 位次)
-    for idx, (q, expect, note) in enumerate(CASES, 1):
+    for idx, (q, expect, note, counted) in enumerate(CASES, 1):
         rows, variants, _orq, _ck = sd.fetch_candidates(q, key)
         if not rows:
             print('| %d | %s | %s | 候选为空 | - | ❌ |' % (idx, q, expect))
@@ -99,16 +104,24 @@ def main():
         main_rank = next((i + 1 for i, x in enumerate(main_ids) if x in expect), None)
         proc_rank = next((i + 1 for i, x in enumerate(proc_ids) if x in expect), None)
 
+        ok = False
         if main_rank is not None and main_rank <= 3:
-            verdict, passed = '✅ 主排名前3', passed + 1
+            verdict, ok = '✅ 主排名前3', True
         elif main_rank is None and proc_rank is not None:
-            verdict, passed = '✅ 补位命中', passed + 1
+            verdict, ok = '✅ 补位命中', True
         else:
             verdict = '❌'
-        print('| %d | %s | %s | %s | %s | %s |'
+        if ok:
+            passed += 1
+            if counted:
+                counted_pass += 1
+        if counted:
+            counted_total += 1
+        print('| %d | %s | %s | %s | %s | %s%s |'
               % (idx, q, '/'.join('#%d' % x for x in expect),
                  main_rank if main_rank else '—',
-                 proc_rank if proc_rank else '—', verdict))
+                 proc_rank if proc_rank else '—', verdict,
+                 '' if counted else '（不计入提升）'))
 
         # C75：project_agents 在前 N 名里的分布
         for i, d in enumerate(rows[:a.top], 1):
@@ -127,6 +140,9 @@ def main():
 
     print()
     print('**5 组里通过 %d 组**（判据：正解进前 3，或属于过程记录且进补位段前 3）' % passed)
+    print('**其中计入「提升」的 %d 组里通过 %d 组**（另有 1 组防退化，基线即通过，不算提升）'
+          % (counted_total, counted_pass))
+    print('⚠️ 这是基线，不是成绩。任何改动后的数都要跟它比，并逐组报「哪组从不过变过、哪组从过变不过」。')
     print()
     if pa_hits:
         print('=== C75 · project_agents 出现在前 %d 名的记录 ===' % a.top)
