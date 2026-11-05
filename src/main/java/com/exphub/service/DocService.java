@@ -216,8 +216,9 @@ public class DocService {
         // 作用域全开时默认排除「过程记录 / 待办」这两类（2026-11-05 起逐步收紧，#1290 C67）：
         // 它们都有专属入口（get_project_progress / check_my_todos），在搜索里争前排只会挤掉真知识。
         // 显式传 templateType=project_progress / todo_list 时不排除 —— 那时人家就是来找它们的。
-        // ⚠️ 不能用「只判 project_progress」：扩到 todo_list 后，显式查 todo_list 会被自己的排除条件反杀。
-        boolean excludeProgress = all && !EXCLUDED_FROM_RANKING.contains(tt);
+        // ⚠️ 必须先判 tt != null：Set.of(...) 是不可变集合，contains(null) 直接抛 NPE
+        // （本轮真实踩到：部署后所有搜索 500，只因默认调用 tt 为空）
+        boolean excludeProgress = all && (tt == null || !EXCLUDED_FROM_RANKING.contains(tt));
 
         // 无实质内容的查询词（null、空白、纯标点、纯停用词）直接返回空，不再走全库兜底。
         // 旧逻辑：空词 → searchWithLike → concepts 为空 → 不加关键词条件全库分页返回，

@@ -70,6 +70,17 @@ class ScopeProgressFilterTest {
     }
 
     @Test
+    @DisplayName("守卫：tt 为空时不得进集合判断（Set.of.contains(null) 会抛 NPE）")
+    void nullTemplateTypeMustNotReachSetContains() throws IOException {
+        // 2026-11-06 真实事故：把判据改成 EXCLUDED_FROM_RANKING.contains(tt) 后部署，
+        // 默认搜索（tt 为空）全部 500 —— 因为 Set.of(...) 是不可变集合，contains(null) 抛 NPE。
+        // mvn test 612 全绿，因为没有任何测试以「默认参数」真的走一遍 search()。
+        String svc = read("src/main/java/com/exphub/service/DocService.java");
+        assertTrue(svc.contains("tt == null || !EXCLUDED_FROM_RANKING.contains(tt)"),
+                "必须先判 tt != null，再进集合判断");
+    }
+
+    @Test
     @DisplayName("守卫：0 结果兜底（findSimilar）不得排除过程记录，否则「昨天踩什么坑」永远查不到")
     void similarFallbackMustKeepProgress() throws IOException {
         // #1290 C71-3：主排名排掉过程记录后，答案只存在于施工日志里的问题会变成 0 结果。

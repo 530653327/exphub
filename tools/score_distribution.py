@@ -315,7 +315,7 @@ def fetch_candidates(query, api_key):
     where = ("MATCH(title,content,aliases,summary,tags) AGAINST('%s' IN BOOLEAN MODE) "
              "AND ( (project_id IS NULL AND (visibility='PUBLIC' OR api_key='%s')) "
              "      OR project_id IN (SELECT id FROM projects WHERE api_key='%s') ) "
-             "AND NOT (project_id IS NOT NULL AND template_type='project_progress') "
+             "AND (template_type IS NULL OR template_type NOT IN ('project_progress','todo_list')) "
              "AND status IN ('ACTIVE') "
              "ORDER BY MATCH(title,content,aliases,summary,tags) AGAINST('%s' IN NATURAL LANGUAGE MODE) DESC, "
              "call_count DESC LIMIT %d"
