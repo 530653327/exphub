@@ -391,6 +391,46 @@ public class PageController extends BaseController {
         return "docs/diff";
     }
 
+    /**
+     * 对比页上「直接删掉这条」（2026-11-05 越哥要求）。
+     *
+     * <p>为什么允许在这里真删：这个场景是「看完左右对比、确认两条一样，删掉多余那条」。
+     * 判 duplicate 只是给两条各打一个标记，两条都还在，搜索照样各出一半内容 ——
+     * 对「明显重复」来说等于没解决。
+     *
+     * <p>两道限制，都不是替他加门槛，而是防止这个路由变成万能删除器：
+     * <ul>
+     *   <li>只能删当前候选的 A 或 B 侧，不接受任意 ID；</li>
+     *   <li>页面按钮带原生 confirm，明确写「不可恢复、历史版本一起删」。</li>
+     * </ul>
+     *
+     * <p>删完候选会自动消失：{@link DocService#delete} 会清掉指向该文档的 PENDING 候选
+     * （已判过的记录保留，那是判断历史）。
+     */
+    @PostMapping("/candidates/{id}/delete/{side}")
+    public String deleteCandidateSide(HttpSession session, @PathVariable Long id,
+                                      @PathVariable String side) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        ReviewCandidate c = reviewCandidateService.get(id);
+        if (c == null) return "redirect:/docs?view=candidates";
+        Long docId;
+        if ("A".equalsIgnoreCase(side)) {
+            docId = c.getDocA();
+        } else if ("B".equalsIgnoreCase(side)) {
+            docId = c.getDocB();
+        } else {
+            return "redirect:/docs?view=candidates";
+        }
+        if (docService.getById(docId) == null) {
+            return "redirect:/docs?view=candidates";
+        }
+        // 级联由 DocService 负责：主表 + 版本快照 + 指向它的 PENDING 候选 + 调用日志
+        docService.delete(docId);
+        return "redirect:/docs?view=candidates";
+    }
+
     // 删除经验（后台管理）
     @PostMapping("/docs/{id}/delete")
     public String deleteDoc(HttpSession session, @PathVariable Long id) {

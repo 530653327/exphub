@@ -89,14 +89,37 @@
                 <thead>
                 <tr>
                     <th style="width:50%;">
-                        A · #<span th:text="${docA.id}">0</span>
-                        <span th:text="${docA.title}">A标题</span>
-                        <span class="text-muted font-weight-normal" th:text="|（v${docA.version}）|"></span>
+                        <span class="d-flex justify-content-between align-items-center">
+                            <span>
+                                A · #<span th:text="${docA.id}">0</span>
+                                <span th:text="${docA.title}">A标题</span>
+                                <span class="text-muted font-weight-normal" th:text="|（v${docA.version}）|"></span>
+                            </span>
+                            <!-- 确认两条一样就删掉多余那条：判「重复」只是打标，两条都还在 -->
+                            <form th:action="@{/candidates/{id}/delete/{side}(id=${candidate.id}, side='A')}"
+                                  method="post" class="ml-2 mb-0"
+                                  th:onsubmit="|return confirm('删掉 A #${docA.id}？\n\n不可恢复：正文、历史版本快照、这条候选都会一起删掉。\n如果只是想标注重复，请用下面的「判为重复」。')|">
+                                <button class="btn btn-sm btn-outline-danger py-0" type="submit">
+                                    <i class="fas fa-trash mr-1"></i>删掉这条
+                                </button>
+                            </form>
+                        </span>
                     </th>
                     <th style="width:50%;">
-                        B · #<span th:text="${docB.id}">0</span>
-                        <span th:text="${docB.title}">B标题</span>
-                        <span class="text-muted font-weight-normal" th:text="|（v${docB.version}）|"></span>
+                        <span class="d-flex justify-content-between align-items-center">
+                            <span>
+                                B · #<span th:text="${docB.id}">0</span>
+                                <span th:text="${docB.title}">B标题</span>
+                                <span class="text-muted font-weight-normal" th:text="|（v${docB.version}）|"></span>
+                            </span>
+                            <form th:action="@{/candidates/{id}/delete/{side}(id=${candidate.id}, side='B')}"
+                                  method="post" class="ml-2 mb-0"
+                                  th:onsubmit="|return confirm('删掉 B #${docB.id}？\n\n不可恢复：正文、历史版本快照、这条候选都会一起删掉。\n如果只是想标注重复，请用下面的「判为重复」。')|">
+                                <button class="btn btn-sm btn-outline-danger py-0" type="submit">
+                                    <i class="fas fa-trash mr-1"></i>删掉这条
+                                </button>
+                            </form>
+                        </span>
                     </th>
                 </tr>
                 </thead>
@@ -128,7 +151,9 @@
                     title="这次先不看，得分涨 0.1 会自己回来">忽略</button>
         </form>
         <div class="text-muted mt-2" style="font-size:0.8rem;">
-            判「重复」只是给两条各打一个标记，<b>不合并、不删除</b>。真要清掉一条请用「标取代」或回列表走待删流程。
+            判「重复」只是给两条各打一个标记，<b>不合并、不删除</b>，搜索时两条照样各出一半。
+            确认内容一样就直接用标题旁的<b>「删掉这条」</b>——真删、不可恢复，历史版本一起清。
+            拿不准时用「标取代」或「不同」。
         </div>
     </div>
 
