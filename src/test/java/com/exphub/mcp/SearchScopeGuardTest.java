@@ -1,5 +1,6 @@
 package com.exphub.mcp;
 
+import com.exphub.entity.Doc;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -83,9 +84,72 @@ class SearchScopeGuardTest {
         assertTrue(src.contains("条回归评测污染源（下面已逐条标注）"),
                 "页首要有汇总行，别让人翻到中间才发现前几条不能用");
         assertTrue(src.contains("REGRESSION_POLLUTION_IDS.contains(doc.getId())"),
-                "标注按 ID 判定，不能改成按标题猜");
+                "ID 兜底不能丢");
+        assertTrue(src.contains("PollutionMarkers.matches(doc)"),
+                "C14 之后主判据必须是内容判定");
         assertTrue(src.contains("不排除、不改排序"),
                 "线上不许替调用方隐藏文档（这是口径注释，防止后人顺手改成 filter）");
+    }
+
+    /**
+     * #1272 C14 的行为断言（不是读源码）：ID 不在表里的文档，只要正文含验收原话就必须被标「内容」；
+     * 表内但正文干净的仍标「ID」；两者都不沾的不标。这条直接钉住阁主实测漏掉的 #677 那一类。
+     */
+    @Test
+    void contentMarkerCatchesUnknownDocIds() {
+        Doc byContent = new Doc();
+        byContent.setId(999999L);
+        byContent.setContent("某篇方案文档的验收表里写着：忆阁DeepSeek余额，然后一堆结论");
+        assertEquals("内容", ExpHubTools.pollutionReason(byContent),
+                "新文档抄了验收原话就自动入污染源，不需要手工补 ID");
+
+        Doc byId = new Doc();
+        byId.setId(1272L);
+        byId.setContent("干净正文，没有验收原话");
+        assertEquals("ID", ExpHubTools.pollutionReason(byId), "ID 表降级为兜底，仍生效");
+
+        Doc clean = new Doc();
+        clean.setId(999998L);
+        clean.setContent("干净正文，没有验收原话");
+        assertEquals(null, ExpHubTools.pollutionReason(clean), "正常文档不许被误标");
+    }
+
+    /**
+     * #1272 C14 选项 1 的「可验证步骤」：回归脚本里每条长验收 query 都必须在 markers 清单里。
+     * 新增算例忘了加清单 → 测试红，不靠人记得补 ID 表。
+     */
+    @Test
+    void markerListCoversRegressionQueries() throws Exception {
+        String py = Files.readString(Path.of("tools/search_regression.py"), StandardCharsets.UTF_8);
+        java.util.List<String> lines = Files.readAllLines(
+                Path.of("src/main/resources/pollution_markers.txt"), StandardCharsets.UTF_8);
+        Set<String> markers = new HashSet<>();
+        for (String line : lines) {
+            String s = line.trim();
+            if (!s.isEmpty() && !s.startsWith("#")) markers.add(s);
+        }
+        assertTrue(markers.size() >= 10, "标记词清单疑似没加载/被清空");
+        assertTrue(markers.contains("忆阁DeepSeek余额"),
+                "#677 的命中片段含这句，漏了就复现 C14");
+
+        Matcher m = Pattern.compile("query=\"([^\"]+)\"").matcher(py);
+        int checked = 0;
+        while (m.find()) {
+            String q = m.group(1);
+            if (q.length() >= 7 && containsCjk(q)) {
+                checked++;
+                assertTrue(markers.contains(q),
+                        "验收 query「" + q + "」没进 pollution_markers.txt，新增用例漏登记会静默失效");
+            }
+        }
+        assertTrue(checked >= 10, "从回归脚本提取到的长 query 太少，守卫可能失效");
+    }
+
+    private static boolean containsCjk(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) >= '\u4e00' && s.charAt(i) <= '\u9fff') return true;
+        }
+        return false;
     }
 
     /** #1272 C8：服务端集合与离线回归脚本的 SELF_POLLUTION_IDS 必须同源，漏一个就会两边口径打架。 */

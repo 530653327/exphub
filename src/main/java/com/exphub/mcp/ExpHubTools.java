@@ -45,15 +45,28 @@ public class ExpHubTools {
     private static final Logger log = LoggerFactory.getLogger(ExpHubTools.class);
 
     /**
-     * #1272 C8：搜索回归评测的污染源文档（信箱 / 施工回执 / 待办 / 口径文档）。
+     * #1272 C8 / C14：污染源判定的**兜底** ID 表（信箱 / 施工回执 / 待办 / 口径 / 方案文档）。
      *
-     * <p>这些正文抄了验收 query 原话，会自己排进前列；离线脚本
-     * {@code tools/search_regression.py} 的 {@code SELF_POLLUTION_IDS} 必须与这里完全一致
-     * （由 {@code SearchScopeGuardTest} 钉住）。线上处理方式是**只标注、不排除、不改排序**：
-     * 排除是评测口径，不该替调用方决定看不到哪条文档；真要查信箱的人照样查得到。</p>
+     * <p>C14 之后主判据已改为 {@link PollutionMarkers} 的内容判定：只要正文含验收 query 原话，
+     * 不管 ID 在不在表里都会标。本表只覆盖「暂未含原话但确属回执类」的文档，
+     * <b>集合齐不齐不再是正确性前提</b> —— 阁主实测漏掉的 #677 已补进表，但真正修好它的是内容判定。</p>
+     *
+     * <p>离线脚本 {@code tools/search_regression.py} 的 {@code SELF_POLLUTION_IDS} 仍须与这里一致
+     * （由 {@code SearchScopeGuardTest} 钉住），那是**判基线时的排除口径**，与线上标注口径分开。</p>
+     *
+     * <p>线上处理方式是**只标注、不排除、不改排序**：排除是评测口径，不该替调用方决定看不到哪条文档；
+     * 真要查信箱的人照样查得到。</p>
      */
     static final Set<Long> REGRESSION_POLLUTION_IDS = Set.of(
-            101L, 678L, 1220L, 1236L, 1268L, 1272L, 1274L);
+            101L, 677L, 678L, 1220L, 1236L, 1268L, 1272L, 1274L);
+
+    /** 污染源判定：内容优先，ID 表兜底。回执里带上命中来源，方便线上自证是哪条判据起作用。 */
+    static String pollutionReason(Doc doc) {
+        if (doc == null) return null;
+        if (PollutionMarkers.matches(doc)) return "内容";
+        if (REGRESSION_POLLUTION_IDS.contains(doc.getId())) return "ID";
+        return null;
+    }
 
     @Autowired
     private DocService docService;
@@ -987,7 +1000,7 @@ public class ExpHubTools {
             }
             // #1272 C8：本页含污染源时，先给一行汇总，别让人翻到中间才发现前几条不能用。
             long pollutionCount = pageDocs.stream()
-                    .filter(d -> REGRESSION_POLLUTION_IDS.contains(d.getId())).count();
+                    .filter(d -> pollutionReason(d) != null).count();
             if (pollutionCount > 0 && !briefMode) {
                 sb.append("⚠️ 本页含 ").append(pollutionCount)
                   .append(" 条回归评测污染源（下面已逐条标注），判基线请排除\n\n");
@@ -1176,8 +1189,9 @@ public class ExpHubTools {
             String pn = projNames.get(doc.getProjectId());
             projMark = " 🗂" + (pn != null ? pn : ("#" + doc.getProjectId()));
         }
-        // #1272 C8：精简模式也必须带污染源标记（仍保持一条一行）
-        String pollutionMark = REGRESSION_POLLUTION_IDS.contains(doc.getId()) ? " ⚠️污染源" : "";
+        // #1272 C8/C14：精简模式也必须带污染源标记（仍保持一条一行），并标明判据来源
+        String reason = pollutionReason(doc);
+        String pollutionMark = reason != null ? " ⚠️污染源(" + reason + ")" : "";
         return index + ". 【ID:" + doc.getId() + "】" + doc.getTitle()
                 + " —— " + getTemplateTypeLabel(doc.getTemplateType())
                 + " " + getStatusLabel(doc.getStatus()) + flagMark + supersededMark + projMark + pollutionMark
@@ -1361,8 +1375,10 @@ public class ExpHubTools {
             String typeLabel = getTemplateTypeLabel(doc.getTemplateType());
             String statusLabel = getStatusLabel(doc.getStatus());
             sb.append(i++).append(". 【ID:").append(doc.getId()).append("】").append(doc.getTitle()).append("\n");
-            if (REGRESSION_POLLUTION_IDS.contains(doc.getId())) {
-                sb.append("   ⚠️ 回归评测污染源: 本条是信箱/回执/排期文档，正文含验收 query 原话，判基线请排除\n");
+            String reason = pollutionReason(doc);
+            if (reason != null) {
+                sb.append("   ⚠️ 回归评测污染源(").append(reason)
+                  .append("): 本条含验收 query 原话或是信箱/回执/排期文档，判基线请排除\n");
             }
             sb.append("   类型: ").append(typeLabel).append(" | 状态: ").append(statusLabel)
               .append(" | 分类: ").append(doc.getCategory()).append(" | 查看: ").append(doc.getCallCount()).append("次\n");
@@ -1428,19 +1444,8 @@ public class ExpHubTools {
                 log.debug("detectProjectInQuery: '{}' 解析失败: {}", token, e.getMessage());
             }
         }
-        // #1272 C9：中文长句通常不带空格，上面三种比对全是「token 是名称的子串」方向，
-        // 名称/别名嵌在长 token 中间时必然落空（实测「工业大学校友会小程序架构说明」识别为「无」）。
-        // 原路径没命中才走反向内嵌匹配，不改变任何已有命中行为。
-        for (String raw : query.split("[\\s,，、;；]+")) {
-            String token = raw.trim();
-            if (token.length() < 3) continue;
-            try {
-                Project embedded = projectService.detectEmbeddedProject(token);
-                if (embedded != null) return embedded;
-            } catch (Exception e) {
-                log.debug("detectProjectInQuery: embedded '{}' 解析失败: {}", token, e.getMessage());
-            }
-        }
+        // #1272 C9 的长句识别已由 L0-1a 的 ③ 分支（token ⊃ 别名项 + 边界 + df）在
+        // resolveProject 内部统一处理，不再保留独立的内嵌兜底（两套判据会漂移）。
         return null;
     }
 

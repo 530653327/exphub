@@ -1,0 +1,17 @@
+# 回归评测污染源标记词（#1272 C14）
+# 判据：文档 title / summary / content 任一字段**整串包含**下列任一原话 → 自动标为污染源。
+# 这些是 tools/search_regression.py 里长度 >=7 且含 CJK 的验收 query；
+# SearchScopeGuardTest.markerListCoversRegressionQueries 会把脚本用例与本文逐条比对，
+# 新增用例忘了加这里 → 测试红。不要手工往服务端 ID 表里补新文档。
+拆解宝的报废车回收
+回金算的入库单
+忆阁DeepSeek余额
+hjs的入库单
+拆解宝 报废车回收
+工业大学校友会小程序架构说明
+用 api 接口
+拆解宝（报废车回收模块）
+代码怎么发布到线上服务器
+DeepSeek 余额 用量 API 接口
+部署流程 deploy.sh
+DeepSeek 峰谷定价 缓存命中 价格

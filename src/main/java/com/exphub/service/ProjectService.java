@@ -14,10 +14,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -29,12 +27,6 @@ import java.util.stream.Collectors;
 public class ProjectService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
-
-    /**
-     * L0-1：别名项参与项目判定的最小长度（归一化后）。
-     * <p>api / ai 这类通用短词作为别名时会把整片项目域带进全局搜索，一律不参与判定。</p>
-     */
-    private static final int MIN_ALIAS_LEN = 3;
 
     @Autowired
     private ProjectMapper projectMapper;
@@ -198,13 +190,16 @@ public class ProjectService {
     }
 
     /**
-     * 别名按项精确比对：逗号（含全角/顿号/分号）切项 → 归一 → 相等。
-     * 单个项目可能命中多项，这里按项目去重；长度不足 {@link #MIN_ALIAS_LEN} 的别名项直接不参与。
+     * L0-1a（#678 §5.3）：别名判定改走 {@link AliasMatcher} 的三分支 + df 常量表。
+     * 候选片 = 别名逐项 + project_code + name，与回归脚本 detect_by_rule 的 items 一致。
+     *
+     * <p>旧实现只做「整串等值」，中文无空格长句（token ⊃ 项）一律漏召；#1272 C9 曾为此加过
+     * 一层独立内嵌兜底，L0-1a 落地后由 ③ 分支统一承担，不再保留第二套判据。</p>
      */
     private List<Project> matchAlias(String q, String key) {
         List<Project> out = new ArrayList<>();
-        String needle = normalizeAlias(q);
-        if (needle.length() < MIN_ALIAS_LEN) {
+        List<String> tokens = AliasMatcher.tokens(q);
+        if (tokens.isEmpty()) {
             return out;
         }
         QueryWrapper<Project> w = new QueryWrapper<>();
@@ -212,8 +207,10 @@ public class ProjectService {
             w.eq("api_key", key);
         }
         w.eq("status", "ACTIVE");
+        DfTable df = DfTable.loaded();
         for (Project p : projectMapper.selectList(w)) {
-            String item = matchedAliasItem(p.getAliases(), q);
+            List<String> items = AliasMatcher.items(p.getAliases(), p.getName(), p.getProjectCode());
+            String item = AliasMatcher.firstMatch(items, tokens, df);
             if (item != null) {
                 // 用英文：服务器 nohup/systemd 下 LANG 未设置，中文日志会写成 '?'
                 log.info("resolveProject: hit field=aliases project={}({}) item=\"{}\"",
@@ -225,130 +222,16 @@ public class ProjectService {
     }
 
     /**
-     * 别名是否命中这个查询词。命中返回**别名项原文**（日志要能看出命中的是哪一项），不命中返回 null。
-     *
-     * <p>整串 LIKE 的坑：{@code api} 是 {@code xy-api} 的子串 → 一条通用词就能把整个项目域带进来。
-     * 这里按项切分后做**等值**比对，子串关系一律不算命中；长度不足 {@link #MIN_ALIAS_LEN} 的别名项不参与。</p>
+     * 兼容入口（旧单测与日志用）：命中返回别名项原文，不命中返回 null。
+     * 判定已统一到 {@link AliasMatcher}，这里不再有第二套规则。
      */
     static String matchedAliasItem(String aliases, String query) {
-        String needle = normalizeAlias(query);
-        if (needle.length() < MIN_ALIAS_LEN) {
-            return null;
-        }
-        for (String item : splitAliases(aliases)) {
-            String n = normalizeAlias(item);
-            if (n.length() < MIN_ALIAS_LEN) {
-                continue;
-            }
-            if (n.equals(needle)) {
-                return item;
-            }
-        }
-        return null;
+        return AliasMatcher.firstMatch(AliasMatcher.items(aliases, null, null),
+                AliasMatcher.tokens(query), DfTable.loaded());
     }
 
-    /**
-     * #1272 C9：中文长 query 不带空格时，项目名/别名项常常整段**嵌在** token 中间，
-     * 例如「工业大学校友会小程序架构说明」含有别名项「校友会小程序」。
-     *
-     * <p>原 {@code detectProjectInQuery} 按空白切词后只做「token 整串 == 名称 / name LIKE %token% /
-     * 别名项等值」三种比对，方向全是「token 是名称的子串」；长句反过来（名称是 token 的子串）一律落空。
-     * 这里补反向内嵌匹配，并保留三道防误召：① 只认含 CJK 的片段，纯 ASCII 结构性拒绝
-     * （#678 §5.1：{@code api} 不得命中 {@code xy-api}）；② 片段两侧不能是 ASCII 词字符；
-     * ③ 多个项目并列最长时宁可不报，也不猜。</p>
-     *
-     * <p><b>边界</b>：这是 C9「识别行可观测」的最小修复，不等同 #678 §5 的 L0-1a 三分支 ——
-     * 本方法尚未接 df 常量表，L0-1a 落地时会补 df 门槛与 ②/③ 分支判据。</p>
-     */
-    public Project detectEmbeddedProject(String token) {
-        return pickEmbeddedProject(listProjects(), token);
-    }
-
-    /** 纯函数版本：不查库、不依赖 API Key 上下文，便于离线单测直接构造项目列表。 */
-    static Project pickEmbeddedProject(List<Project> projects, String token) {
-        if (projects == null || token == null) return null;
-        String needle = normalizeAlias(token);
-        if (!containsCjk(needle) || needle.length() < MIN_ALIAS_LEN) return null;
-        Project best = null;
-        String bestItem = "";
-        boolean tie = false;
-        for (Project p : projects) {
-            for (String item : candidateItems(p)) {
-                String n = normalizeAlias(item);
-                if (n.length() < MIN_ALIAS_LEN || !containsCjk(n)) continue;
-                if (!embeddedHit(needle, n)) continue;
-                if (n.length() > bestItem.length()) {
-                    best = p;
-                    bestItem = n;
-                    tie = false;
-                } else if (n.length() == bestItem.length() && best != null
-                        && !java.util.Objects.equals(best.getId(), p.getId())) {
-                    tie = true;         // 跨项目并列最长：不猜，返回 null
-                }
-            }
-        }
-        return tie ? null : best;
-    }
-
-    /** 内嵌匹配候选片：项目名 + 编码 + 别名逐项。 */
-    static List<String> candidateItems(Project p) {
-        List<String> out = new ArrayList<>();
-        if (p == null) return out;
-        if (p.getName() != null && !p.getName().isBlank()) out.add(p.getName());
-        if (p.getProjectCode() != null && !p.getProjectCode().isBlank()) out.add(p.getProjectCode());
-        out.addAll(splitAliases(p.getAliases()));
-        return out;
-    }
-
-    /** 片段是否作为独立成分出现：两侧不能是 ASCII 字母/数字/下划线/连字符。 */
-    static boolean embeddedHit(String token, String item) {
-        if (token == null || item == null || item.isEmpty()) return false;
-        int from = 0;
-        while (true) {
-            int p = token.indexOf(item, from);
-            if (p < 0) return false;
-            boolean leftOk = p == 0 || !isAsciiWord(token.charAt(p - 1));
-            int end = p + item.length();
-            boolean rightOk = end >= token.length() || !isAsciiWord(token.charAt(end));
-            if (leftOk && rightOk) return true;
-            from = p + 1;
-        }
-    }
-
-    private static boolean isAsciiWord(char c) {
-        return c < 128 && (Character.isLetterOrDigit(c) || c == '_' || c == '-');
-    }
-
-    private static boolean containsCjk(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c >= '\u4e00' && c <= '\u9fff') return true;
-        }
-        return false;
-    }
-
-    /** 别名归一：全角转半角（NFKC）+ 去首尾空白 + 小写。 */
-    private static String normalizeAlias(String s) {
-        if (s == null) {
-            return "";
-        }
-        return Normalizer.normalize(s, Normalizer.Form.NFKC).trim().toLowerCase(Locale.ROOT);
-    }
-
-    /** 别名拆项：半角/全角逗号、顿号、分号都当分隔符，逐项 trim 后丢弃空项。 */
-    private static List<String> splitAliases(String aliases) {
-        List<String> out = new ArrayList<>();
-        if (aliases == null || aliases.isEmpty()) {
-            return out;
-        }
-        for (String raw : aliases.split("[,，、;；]")) {
-            String item = raw.trim();
-            if (!item.isEmpty()) {
-                out.add(item);
-            }
-        }
-        return out;
-    }
+    // #1272 C9 的独立内嵌兜底已于 L0-1a 并入 AliasMatcher 的 ③ 分支（token ⊃ 项），
+    // 不再保留第二套判据；df 常量表与 ASCII ② 结构性拒绝在这里统一生效。
 
     // ==================== AGENTS.md 分片维护 ====================
 

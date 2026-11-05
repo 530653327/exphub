@@ -31,6 +31,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DF_SNAPSHOT = os.path.join(HERE, "df_snapshot.json")
+# L0-1a：服务端判定读的是 classpath 里那份，重抓必须同步，否则线上用旧语料
+RES_SNAPSHOT = os.path.join(os.path.dirname(HERE), "src", "main", "resources", "df_snapshot.json")
 
 # #677 12.5 的泛词常量 + 回归脚本 B 组/A 组会用到的 token
 GENERIC = [
@@ -183,10 +185,17 @@ def main():
     if a.dry_run:
         print("--dry-run：未写回文件")
         return 0
+    payload = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     with open(DF_SNAPSHOT, "w", encoding="utf-8") as fh:
-        json.dump(result, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
+        fh.write(payload)
     print("已写回", DF_SNAPSHOT)
+    if os.path.exists(RES_SNAPSHOT):
+        with open(RES_SNAPSHOT, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        print("已同步服务端资源", RES_SNAPSHOT,
+              "（AliasMatcherTest.dfSnapshotIsInSyncWithTools 会钉住两份一致）")
+    else:
+        print("⚠️ 未找到", RES_SNAPSHOT, "—— 服务端仍会读到旧语料，请手动同步")
     return 0
 
 

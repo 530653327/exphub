@@ -21,9 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 根因不是别名本身有问题，而是判定用了 {@code aliases LIKE '%api%'} ——
  * {@code api} 是别名 {@code xy-api} 的<b>子串</b>，一条通用词就把整个项目域拖进了全局搜索。</p>
  *
- * <p><b>口径</b>：按逗号切项后做<b>等值</b>比对（归一：NFKC 全半角 + trim + 小写），子串关系一律不算命中；
- * 归一后长度 &lt; {@code MIN_ALIAS_LEN}(3) 的别名项不参与判定。
- * name / project_code 两条路径本轮不动，由 {@link #nameAndCodePathsUntouched()} 钉死。</p>
+ * <p><b>口径（2026-11-05 L0-1a 后）</b>：判定已统一到 {@link AliasMatcher} 的 #678 §5.3 三分支
+ * （① 相等 / ② 项含 CJK token / ③ token 含项）+ df&lt;30% 门槛；长度只留 ≥2 的下限。
+ * 因此「CJK 子串不算命中」这条旧断言<b>已作废</b>：② 就是为了放行「工业大学」这类正向用例。
+ * 仍然成立且本文件继续钉死的是：<b>纯 ASCII 子串不许走 ②</b>（api 不得命中 xy-api）、
+ * 以及 name / project_code 的 SQL 路径保持原样。</p>
  */
 class ProjectAliasMatchTest {
 
@@ -60,7 +62,10 @@ class ProjectAliasMatchTest {
     void multiAliasMixedOrder() {
         assertEquals("校友会小程序", ProjectService.matchedAliasItem(TJPU, "校友会小程序"));
         assertEquals("TJPU校友会", ProjectService.matchedAliasItem(TJPU, "TJPU校友会"));
-        assertNull(ProjectService.matchedAliasItem(TJPU, "校友会"), "子串不算命中");
+        // L0-1a 起 ② 分支对含 CJK 的 token 开放，B6「工业大学」就是这条正向用例。
+        // df(校友会)=2.0% <30%，所以「校友会」作为「天津工业大学校友会」的子串应当命中。
+        assertEquals("天津工业大学校友会", ProjectService.matchedAliasItem(TJPU, "校友会"),
+                "CJK 子串按 #678 §5.3 ② 命中；旧断言「子串不算命中」已随 L0-1a 作废");
     }
 
     @Test
@@ -85,12 +90,16 @@ class ProjectAliasMatchTest {
     }
 
     @Test
-    @DisplayName("全角逗号 / 顿号 / 分号也能切项")
+    @DisplayName("全角逗号 / 顿号 / 分号也能切项（切项本身不查 df）")
     void altSeparatorsSplit() {
         String s = "甲项目，乙项目、丙项目;丁项目";
-        assertEquals("乙项目", ProjectService.matchedAliasItem(s, "乙项目"));
-        assertEquals("丙项目", ProjectService.matchedAliasItem(s, "丙项目"));
-        assertEquals("丁项目", ProjectService.matchedAliasItem(s, "丁项目"));
+        // 本用例只验「别名怎么切项」。命中与否还要过 df 门槛，
+        // 而「乙项目」这类桩词根本不在 df 快照里（缺数不放行），
+        // 所以改测 AliasMatcher.items 这个纯函数，不再拿 matchedAliasItem 的命中结果充当切项证据。
+        var items = AliasMatcher.items(s, null, null);
+        assertTrue(items.contains("乙项目"));
+        assertTrue(items.contains("丙项目"));
+        assertTrue(items.contains("丁项目"));
     }
 
     @Test
