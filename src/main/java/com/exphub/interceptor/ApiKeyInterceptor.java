@@ -51,14 +51,21 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         String uri = request.getRequestURI();
         String contextPath = request.getContextPath();
         log.debug("ApiKeyInterceptor.preHandle: uri={}, contextPath={}, method={}", uri, contextPath, request.getMethod());
-        
+
+        // getRequestURI() 含 context-path（本机是 /exphub），而 WebMvc 的 addPathPatterns
+        // 匹配的是去掉 context-path 之后的路径。MCP 判断必须用后者：否则新的无状态端点
+        // /exphub/mcp/http 会被当成普通后台请求，落到末尾的 403「API调用已关闭」。
+        String path = (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath))
+                ? uri.substring(contextPath.length()) : uri;
+
         // 放行认证接口和信息服务
         if (uri.startsWith("/api/auth/") || uri.equals("/api/info")) {
             return true;
         }
 
         // MCP 请求必须验证 API Key，不能被 Session 登录状态短路
-        if (uri.startsWith("/mcp/") || uri.endsWith("/mcp/sse") || uri.contains("/mcp/message")) {
+        if (path.startsWith("/mcp/") || path.equals("/mcp")
+                || uri.endsWith("/mcp/sse") || uri.contains("/mcp/message")) {
             log.info("MCP request detected: uri={}, checking API Key", uri);
             return validateApiKey(request, response);
         }
