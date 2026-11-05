@@ -610,7 +610,7 @@ public class DocService {
      * 判据必须是「集合包含」，不能只写死 project_progress —— 扩到 todo_list 后，
      * 显式查 todo_list 会被自己的排除条件反杀（本轮真实踩到，测试已覆盖）。
      */
-    private static final Set<String> EXCLUDED_FROM_RANKING = Set.of("project_progress", "todo_list");
+    public static final Set<String> EXCLUDED_FROM_RANKING = Set.of("project_progress", "todo_list");
 
     /**
      * 严格命中「直接采用」的门槛（2026-10-30 L0-2 修数字漂移）。

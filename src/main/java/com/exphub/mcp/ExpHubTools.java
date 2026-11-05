@@ -986,11 +986,18 @@ public class ExpHubTools {
             if (scopeAll) {
                 // 2026-11-05：两个 scope 对「进度流水」的处置不同，回执必须说清 ——
                 // 同一句 query 在 all 和 project 下第一条不一样，不写原因就会被当成工具坏了
-                // 2026-11-06（#1290 C49）：排除条件改成单条件后，全局的过程记录也排了。
-                // 原文案写「不含项目内进度流水」已经不准 —— 文案必须跟着口径走，否则读者
-                // 会以为「全局的进度还在结果里」，反过来怀疑新条件没生效。
-                sb.append("｜作用域 all（全局 + 你名下项目，**不含过程记录 project_progress 与待办 todo_list**；"
-                        + "要读它们用 get_project_progress / check_my_todos）");
+                // 2026-11-06（#1290 C49/C71）：排除条件改成单条件、并扩到 todo_list。
+                // ⚠️ 显式传了这两类 templateType 时**不排除**，文案不能再说「不含」——
+                // 否则读的人会以为「我明明按类型查，怎么还是被排了」，进而怀疑工具坏了（本节第三次踩同类）。
+                boolean explicitExcludedType = templateType != null
+                        && DocService.EXCLUDED_FROM_RANKING.contains(templateType.trim());
+                if (explicitExcludedType) {
+                    sb.append("｜作用域 all（全局 + 你名下项目，**你显式按类型过滤 ")
+                      .append(templateType.trim()).append("，本档不排除该类**）");
+                } else {
+                    sb.append("｜作用域 all（全局 + 你名下项目，**不含过程记录 project_progress 与待办 todo_list**；"
+                            + "要读它们用 get_project_progress / check_my_todos，或在结果末尾的「过程记录里也命中」找）");
+                }
             } else if (projectId != null) {
                 sb.append("｜作用域 project（仅该项目，**含进度流水**）");
             }
