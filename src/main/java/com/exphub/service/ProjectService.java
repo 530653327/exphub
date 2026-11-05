@@ -305,10 +305,30 @@ public class ProjectService {
     }
 
     /**
+     * 章节号必填校验（抽成纯函数便于单测）。
+     *
+     * <p>为什么必须挡（2026-11-05 实测踩到，一次产生了 3 条脏数据）：
+     * {@code chapterNo} 为空时，标题会被拼成「<b>第 null 章</b>」；更糟的是
+     * {@link #getAgentsChapter} 按章号查不到已有记录，于是<b>每次调用都再新建一条</b>，
+     * 同一章在库里躺好几份。实测 #1163 / #1164 / #1184 都是这么来的
+     * （#1184 后来被人手工改成「（重复章节，内容已合并至第 1 章）」，但脏数据本身还在）。
+     */
+    static String requireChapterNo(String chapterNo) {
+        if (chapterNo == null || chapterNo.trim().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "章节号不能为空：为空会建出「第 null 章」，而且因为按章号查不到已有章节，"
+                            + "每次调用都会再新建一条重复章节。请传 chapterNo（如 \"1\"）。");
+        }
+        return chapterNo.trim();
+    }
+
+    /**
      * 更新（或创建）章节。已存在则走 DocService.update 触发版本快照
      */
     public Doc updateAgentsChapter(Long projectId, String chapterNo, String chapterTitle,
                                    String content, String loadStrategy, Integer sortOrder, String summary) {
+        // 空章号是「静默建重复章节」的入口，必须在最前面挡住，不能等到拼标题时才发现
+        chapterNo = requireChapterNo(chapterNo);
         // E13：写入端剥离渲染痕迹。原先只有 ExpHubTools 的经验增删改/导入调用了剥离，
         // service 层的项目路径（章节 / MAIN / 进度）是漏网的，实测已踩脏 4 篇（252/293/515/585）
         content = sanitize(content);
