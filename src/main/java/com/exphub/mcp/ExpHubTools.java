@@ -965,6 +965,16 @@ public class ExpHubTools {
             }
             sb.append("：\n\n");
 
+            // 2026-11-05 S2.1（#1272 C6 / #1236 S1 遗留）：scope=all 下不再输出末尾项目段，
+            // 回归脚本 A 组因此解析不到「识别到哪个项目」，6 条全变假 FAIL。
+            // 给一行稳定、可解析的识别回执；brief 模式保持「一条一行」，不加东西。
+            if (!briefMode && projectId == null) {
+                sb.append("🔎 项目识别: ")
+                  .append(detected == null ? "无"
+                          : ("查询词含项目「" + detected.getName() + "」（#" + detected.getId() + "）"))
+                  .append("\n\n");
+            }
+
             // 作用域全开时，每条结果要标出「来自哪个项目」，否则读的人分不清这条是全局结论还是项目内部结论
             java.util.Map<Long, String> projNames = scopeAll ? loadProjectNames() : java.util.Map.of();
 
@@ -1175,12 +1185,25 @@ public class ExpHubTools {
         int bestLen = 0;
         for (String raw : query.split("[\\s,，、;；/]+")) {
             String t = raw.trim();
-            // 单字太泛（「的」「为」满篇都是），至少 2 字才当命中词
+            // 单字太泛（「的」「为」满篇都是），至少 2 字才当命中词。
+            // 2026-11-05 复核：这条是**设计取舍不是缺陷** —— 放行单字会把片段定位到
+            // 「这是一个包含很多东西的正文」里的第一个「的」，比不给片段更误导（见 HitSnippetTest）。
             if (t.length() < 2) continue;
+            String matched = t;
             int pos = content.indexOf(t);
+            // 2026-11-05 S2.1（#1272 C1）：中文长 query 不加空格是常态，
+            // 整串 indexOf 必然落空 → 命中片段对中文最典型的用法结构性失效。
+            // 退化为「从长到短取连续子串」，优先长片段（越具体越能定位），最低 2 字。
+            if (pos < 0 && t.length() > 2 && containsCjk(t)) {
+                int[] sub = longestCjkSubstringHit(content, t);
+                if (sub != null) {
+                    pos = sub[0];
+                    matched = t.substring(sub[1], sub[1] + sub[2]);
+                }
+            }
             if (pos >= 0 && (bestPos < 0 || pos < bestPos)) {
                 bestPos = pos;
-                bestLen = t.length();
+                bestLen = matched.length();
             }
         }
         if (bestPos < 0) return null;
@@ -1193,6 +1216,49 @@ public class ExpHubTools {
 
         String piece = content.substring(start, end).replaceAll("\\s+", " ").trim();
         return (start > 0 ? "…" : "") + piece + (end < content.length() ? "…" : "");
+    }
+
+    /** 常见的虚词二字组：中文长 query 降到 2 字兜底时，别拿它们当定位锚点。 */
+    private static final java.util.Set<String> WEAK_BIGRAMS = java.util.Set.of(
+            "怎么", "什么", "如何", "可以", "这个", "那个", "我们", "你们", "他们",
+            "因为", "所以", "但是", "以及", "关于", "通过", "进行", "使用", "一个", "一些");
+
+    private static boolean containsCjk(String s) {
+        return s.codePoints().anyMatch(cp -> cp >= 0x4E00 && cp <= 0x9FFF);
+    }
+
+    /**
+     * 中文长 token 里找「正文中最靠前且最长」的连续子串。
+     * 长度从 6 递减到 2，某一档有命中就停（长片段更具体）；同档取正文最靠前的位置。
+     *
+     * @return {posInContent, startInToken, length}；一个都没命中返回 null
+     */
+    private static int[] longestCjkSubstringHit(String content, String token) {
+        for (int len = Math.min(token.length(), 6); len >= 2; len--) {
+            int best = -1, bestStart = -1;
+            for (int i = 0; i + len <= token.length(); i++) {
+                String sub = token.substring(i, i + len);
+                if (len == 2 && WEAK_BIGRAMS.contains(sub)) continue;
+                int p = content.indexOf(sub);
+                if (p >= 0 && (best < 0 || p < best)) {
+                    best = p;
+                    bestStart = i;
+                }
+            }
+            if (best >= 0) return new int[]{best, bestStart, len};
+        }
+        return null;
+    }
+
+    /**
+     * 2026-11-05 S2.1（#1272 C1）：命中词只出现在标题/摘要时，原来直接不给片段。
+     * 依次退到摘要、标题，至少让列表阶段能看到「它为什么被召回」。
+     */
+    static String hitSnippetWithFallback(String content, String summary, String title, String query) {
+        String s = hitSnippet(content, query);
+        if (s == null) s = hitSnippet(summary, query);
+        if (s == null) s = hitSnippet(title, query);
+        return s;
     }
 
     /** 章号展示：空章号不能直接拼 null（`append(null)` 会打出「null」，看着像系统坏了） */
@@ -1286,7 +1352,7 @@ public class ExpHubTools {
             // 命中片段（2026-11-05 · #1220 第②条）：只给标题+摘要时，判断「要不要读」只能靠猜，
             // 于是退化成整篇 get_experience_detail（7 天 2173 次读 vs 1228 次搜 = 1.77 倍）。
             // 这里直接从 content 抠出命中词周围的原句，让「读不读」在列表阶段就能定。
-            String snippet = hitSnippet(doc.getContent(), query);
+            String snippet = hitSnippetWithFallback(doc.getContent(), doc.getSummary(), doc.getTitle(), query);
             if (snippet != null) {
                 sb.append("   命中: ").append(snippet).append("\n");
             }

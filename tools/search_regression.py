@@ -12,6 +12,8 @@
   --transport sse 可回退旧端点做对照。
 - df 快照带过期检查：10-26 抓的 N_global=316，今天全库 ACTIVE 已 1115，
   旧 df 不能当现状用；超期只告警、不静默放行。
+- 2026-11-05 S2.1：C 组统一排除 `SELF_POLLUTION_IDS`（回执/信箱文档抄了
+  验收 query 原话会把自己顶到前排）；A 组改按「🔎 项目识别:」行判可测。
 
 为什么要有这个脚本
 ------------------
@@ -27,7 +29,8 @@
   B 组（7 条）= #678 §5.4 定稿表的规则验算：跑**规则引用实现**（离线，不依赖部署）。
   C 组（4 条）= 搜索相关性 Top3 验收集：跑线上，输出实际排名当修复前基线。
 
-A 组现在**预期有多条 FAIL**（这是基线，不是脚本坏了）。修完 L0-1a 后跑
+A 组在 2026-11-05 S2.1 之前是「不可测」（scope 改造删掉了项目识别提示）。
+现在服务端恢复「🔎 项目识别:」行，A 组重新可测；修完 L0-1a 后跑
 `--mode live --assert` 应全绿。B 组是规则的可执行定义；若因 df 快照缺词
 而红，那是**数据缺口**，不是规则错 —— 别为了测试转绿去放宽「缺数不放行」。
 
@@ -351,7 +354,16 @@ class Mcp:
             pass
 
 
+# 2026-11-05 S2.1：回执自污染文档。这些正文里抄过验收 query 原话，会在 C 组
+# 基线上把自己顶到前排（实测污染源依次 #1220 → #1236 → #1268/#1272）。
+# 判基线时排除，只保留 #95 / #332 / #678 等真实候选。
+# ⚠️ 信箱（#1268/#1272）本身也是 exphub 文档，写进去同样进全文索引 —— 见 #1272 D5。
+SELF_POLLUTION_IDS = {1220, 1236, 1268, 1272, 678, 101}
+
+
 def detected_project(text):
+    # 服务端 2026-11-05 S2.1 起输出「🔎 项目识别: 查询词含项目「X」（#N）」；
+    # 旧格式也兼容；「🔎 项目识别: 无」返回 None。
     m = re.search(r"查询词含项目「([^」]+)」", text)
     return m.group(1) if m else None
 
@@ -463,7 +475,7 @@ def run_relevance(transport, url, key, assert_mode, baseline_mode):
             args = {"query": c["query"], "limit": 50, "scope": c["scope"]}
             text = cli.call("search_experience", args)
             ids = extract_hit_ids(text)
-            exclude = set(c.get("exclude", []))
+            exclude = set(c.get("exclude", [])) | SELF_POLLUTION_IDS
             ranked = [i for i in ids if i not in exclude]
             top5 = ranked[:5]
             targets = {i: (ranked.index(i) + 1 if i in ranked else None)
@@ -478,6 +490,7 @@ def run_relevance(transport, url, key, assert_mode, baseline_mode):
             label = "BASELINE" if baseline_mode else fmt(ok)
             print(f"\n[{c['cid']}] {label}   scope={c['scope']}  query={c['query']!r}")
             print(f"      Top5 -> {top5 or '(无命中)'}")
+            print(f"      已排除自污染 ID -> {sorted(exclude)}")
             if targets:
                 print("      期望文档排名 -> " + ", ".join(
                     f"#{i}: {'第 ' + str(p) + ' 位' if p else '未进前 50'}"
@@ -569,12 +582,11 @@ def run_live(snap, assert_mode, transport, url, key):
             print(f"      期望 -> {pid_label(projects, c['expect_id'])}")
             print(f"      线上 -> {pid_label(projects, got_pid)}")
             print(f"      说明 : {c['note']}")
-        if not any(("查询词含项目" in t or "项目识别" in t) for t in texts):
-            print("\n⚠️ A 组当前**不可测**：6 条回执里一条项目识别提示都没有。")
-            print("   2026-11-05 的 scope 改造后，线上回执不再输出「查询词含项目「X」」；")
-            print("   detected_project() 只能解析到 None，上面 5 条 FAIL 全是**假 FAIL**，")
-            print("   不是线上退化。→ S2.1 施工 L0-1a 时先恢复可观测性")
-            print("   （回执给一行可解析的识别结果），再重跑本组。")
+        if not any("🔎 项目识别:" in t for t in texts):
+            print("\n⚠️ A 组当前**不可测**：6 条回执里连一行「🔎 项目识别:」都没有。")
+            print("   2026-11-05 S2.1 已在 ExpHubTools 恢复该行（非 brief 模式）。")
+            print("   仍缺说明部署没生效、或跑的是 brief / 0 结果分支；上面 5 条 FAIL")
+            print("   全是**假 FAIL**，不是线上退化，别拿来当基线。")
             return None
     finally:
         cli.close()
