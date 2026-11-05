@@ -490,10 +490,14 @@ def main():
             print('  %2d. #%-5d %.4f%s  %s' % (i, d['id'], d['p']['total'], flag, (d['title'] or '')[:34]))
         if pol:
             hit = sum(1 for d in ids if d['id'] in pol)
-            print('前 %d 名里污染源 %d 条；去掉它们后 #%d 位于第 %d 位'
-                  % (a.top, hit, a.explain or 0,
-                     ([d['id'] for d in rows if d['id'] not in pol].index(a.explain) + 1)
-                     if a.explain and any(d['id'] == a.explain for d in rows) else -1))
+            # 没传 --explain 时别硬算位次：会打印「#0 位于第 -1 位」这种看似报错的数字
+            if a.explain and any(d['id'] == a.explain for d in rows):
+                rest = [d['id'] for d in rows if d['id'] not in pol]
+                print('前 %d 名里污染源 %d 条；去掉它们后 #%d 位于第 %d 位'
+                      % (a.top, hit, a.explain, rest.index(a.explain) + 1))
+            else:
+                print('前 %d 名里污染源 %d 条（要看去掉后的位次，加 --explain <ID>）'
+                      % (a.top, hit))
 
     if a.counterfactual:
         for d in rows:
