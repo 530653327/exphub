@@ -213,12 +213,11 @@ public class DocService {
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
         List<String> statusList = parseStatusList(includeStatus);
 
-        // 作用域全开时默认排除「项目内的进度流水」（2026-11-05 实测回归）：
-        // 进度记录是施工日志，不是答案，而它的数量远超项目经验（exphub #1 是 34 条进度 vs 8 条经验）。
-        // 实测：「部署流程 deploy.sh」在 scope=global 下 #95 排第 1；切到 all 后
-        // #729 / #698 两条忆阁进度流水挤进前 4，把 #95 顶到第 2。
-        // 显式传 templateType=project_progress 时不排除 —— 那时人家就是来找进度的。
-        boolean excludeProgress = all && !"project_progress".equals(tt);
+        // 作用域全开时默认排除「过程记录 / 待办」这两类（2026-11-05 起逐步收紧，#1290 C67）：
+        // 它们都有专属入口（get_project_progress / check_my_todos），在搜索里争前排只会挤掉真知识。
+        // 显式传 templateType=project_progress / todo_list 时不排除 —— 那时人家就是来找它们的。
+        // ⚠️ 不能用「只判 project_progress」：扩到 todo_list 后，显式查 todo_list 会被自己的排除条件反杀。
+        boolean excludeProgress = all && !EXCLUDED_FROM_RANKING.contains(tt);
 
         // 无实质内容的查询词（null、空白、纯标点、纯停用词）直接返回空，不再走全库兜底。
         // 旧逻辑：空词 → searchWithLike → concepts 为空 → 不加关键词条件全库分页返回，
@@ -315,7 +314,11 @@ public class DocService {
         boolean all = scopeAll && projectId == null;
         String ownerKey = all ? apiKey : null;
         String tt = (templateType != null && !templateType.trim().isEmpty()) ? templateType.trim() : null;
-        boolean excludeProgress = all && !"project_progress".equals(tt);
+        // 兜底**不排除**过程记录（#1290 C71-3 验收要求）：
+        // 主排名把 project_progress / todo_list 排掉了，但「昨天部署踩什么坑」这类问题的答案
+        // 恰恰只存在于施工日志里。若兜底也排掉，就是「砍过头」—— 用户会得到「查无此经验」，
+        // 然后重复建一条新的。所以主排名干净、0 结果时的相近经验仍含过程记录（渲染层带类型标签）。
+        boolean excludeProgress = false;
         List<String> statusList = parseStatusList(includeStatus);
         SearchTerms terms = buildSearchTerms(keyword);
         if (terms.concepts.isEmpty() || terms.expanded.isEmpty()) {
@@ -460,7 +463,10 @@ public class DocService {
             // 等价于「只排项目内的」，全局的过程流水永远排不掉。现在与 DocMapper 一致：只看类型。
             // IS NULL 那一支不能省：<> 对 NULL 求值为 NULL，裸 ne 会把 template_type 为空的文档一起排掉。
             if (excludeProjectProgress) {
-                wrapper.and(w -> w.isNull("template_type").or().ne("template_type", "project_progress"));
+                // 2026-11-06 扩到 todo_list（#1290 C67/C71）：待办有专属入口 check_my_todos，
+                // 它在搜索里争前排只会挤掉真知识，而入口一点不受影响（check_my_todos 按类型直查，不走这里）。
+                wrapper.and(w -> w.isNull("template_type")
+                        .or().notIn("template_type", "project_progress", "todo_list"));
             }
         } else {
             if (apiKey != null && projectId == null) {
@@ -550,6 +556,22 @@ public class DocService {
 
     /** 候选池上限：先宽松召回，再在内存里按覆盖率/字段权重重排 */
     private static final int CANDIDATE_LIMIT = 200;
+
+    /**
+     * 主排名默认排除的类型（#1290 C67 / C71）。
+     *
+     * <p>这两类都有专属入口，不靠 search 被找到：
+     * <ul>
+     *   <li>{@code project_progress} → {@code get_project_progress}</li>
+     *   <li>{@code todo_list} → {@code check_my_todos}</li>
+     * </ul>
+     * 它们数量多、标题常照抄问题原话，进主排名会把真答案挤下去。
+     *
+     * <p>显式传 {@code templateType} 为其中之一时不排除（否则那条路就死了）。
+     * 判据必须是「集合包含」，不能只写死 project_progress —— 扩到 todo_list 后，
+     * 显式查 todo_list 会被自己的排除条件反杀（本轮真实踩到，测试已覆盖）。
+     */
+    private static final Set<String> EXCLUDED_FROM_RANKING = Set.of("project_progress", "todo_list");
 
     /**
      * 严格命中「直接采用」的门槛（2026-10-30 L0-2 修数字漂移）。

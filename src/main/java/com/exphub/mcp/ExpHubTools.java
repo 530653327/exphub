@@ -989,7 +989,8 @@ public class ExpHubTools {
                 // 2026-11-06（#1290 C49）：排除条件改成单条件后，全局的过程记录也排了。
                 // 原文案写「不含项目内进度流水」已经不准 —— 文案必须跟着口径走，否则读者
                 // 会以为「全局的进度还在结果里」，反过来怀疑新条件没生效。
-                sb.append("｜作用域 all（全局 + 你名下项目，**不含过程记录 project_progress**）");
+                sb.append("｜作用域 all（全局 + 你名下项目，**不含过程记录 project_progress 与待办 todo_list**；"
+                        + "要读它们用 get_project_progress / check_my_todos）");
             } else if (projectId != null) {
                 sb.append("｜作用域 project（仅该项目，**含进度流水**）");
             }

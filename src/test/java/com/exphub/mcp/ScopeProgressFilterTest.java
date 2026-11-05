@@ -37,8 +37,8 @@ class ScopeProgressFilterTest {
         assertEquals(2, countOf(mapper, "<if test='excludeProjectProgress'>"),
                 "排除条件必须同时出现在搜索与计数两条 SQL 里（只改一边会让「匹配 N 条」与实际不符）");
 
-        String cond = "AND (template_type IS NULL OR template_type &lt;&gt; 'project_progress')";
-        assertEquals(2, countOf(mapper, cond), "两条 SQL 各需一份排除条件");
+        String cond = "AND (template_type IS NULL OR template_type NOT IN ('project_progress','todo_list'))";
+        assertEquals(2, countOf(mapper, cond), "两条 SQL 各需一份排除条件（2026-11-06 扩到 todo_list）");
     }
 
     @Test
@@ -48,28 +48,43 @@ class ScopeProgressFilterTest {
         // 裸写会把所有 template_type 为空的文档静默排掉。库里现在没有 NULL 行，所以这个错
         // 在线上不会立刻显形 —— 正是那种「测试全绿、半年后炸」的形态。
         String mapper = read("src/main/java/com/exphub/mapper/DocMapper.java");
-        assertTrue(mapper.contains("template_type IS NULL OR template_type &lt;&gt; 'project_progress'"),
-                "排除条件必须带 IS NULL 分支");
+        assertTrue(mapper.contains("template_type IS NULL OR template_type NOT IN ('project_progress','todo_list')"),
+                "排除条件必须带 IS NULL 分支（NOT IN 对 NULL 同样求值为 NULL，不是 TRUE）");
 
         String svc = read("src/main/java/com/exphub/service/DocService.java");
-        assertTrue(svc.contains("isNull(\"template_type\").or().ne(\"template_type\", \"project_progress\")"),
-                "LIKE 兜底同理：必须先 isNull 再 ne，且与 DocMapper 同口径（只看类型，不看 project_id）");
+        assertTrue(svc.contains("isNull(\"template_type\")"),
+                "LIKE 兜底同理：必须先 isNull 再 notIn，且与 DocMapper 同口径（只看类型，不看 project_id）");
     }
 
     @Test
-    @DisplayName("守卫：显式搜 templateType=project_progress 时不排除（否则那条路就死了）")
+    @DisplayName("守卫：显式搜 templateType=project_progress / todo_list 时不排除（否则那条路就死了）")
     void explicitProgressSearchIsNotExcluded() throws IOException {
         String svc = read("src/main/java/com/exphub/service/DocService.java");
-        assertTrue(svc.contains("excludeProgress = all && !\"project_progress\".equals(tt)"),
-                "排除条件必须挂在「没显式要进度」这个前提上，否则 templateType=project_progress 永远搜不到东西");
+        // 2026-11-06：排除集合扩到 todo_list 后，判据必须先重构成「集合包含」。
+        // 若还写死 !"project_progress".equals(tt)，显式查 todo_list 会被自己的排除条件反杀 ——
+        // 本轮的预计错误就是这样：扩完一个类型，另一个类型的入口静默变空。
+        assertTrue(svc.contains("EXCLUDED_FROM_RANKING.contains(tt)"),
+                "排除条件必须挂「没显式要这个类型」这个前提上，且用集合判断，不能写死单个类型");
+        assertTrue(svc.contains("Set.of(\"project_progress\", \"todo_list\")"),
+                "排除集合要同时含 project_progress 与 todo_list");
+    }
+
+    @Test
+    @DisplayName("守卫：0 结果兜底（findSimilar）不得排除过程记录，否则「昨天踩什么坑」永远查不到")
+    void similarFallbackMustKeepProgress() throws IOException {
+        // #1290 C71-3：主排名排掉过程记录后，答案只存在于施工日志里的问题会变成 0 结果。
+        // 兜底若跟着排，用户得到的是「查无此经验」，然后重复建一条新的 —— 砍过头。
+        String svc = read("src/main/java/com/exphub/service/DocService.java");
+        assertTrue(svc.contains("boolean excludeProgress = false;"),
+                "findSimilar 必须不排除过程记录（主排名干净、兜底仍能捞到）");
     }
 
     @Test
     @DisplayName("守卫：LIKE 兜底与全文检索口径一致")
     void likeFallbackUsesSameRule() throws IOException {
         String svc = read("src/main/java/com/exphub/service/DocService.java");
-        assertTrue(svc.contains("ne(\"template_type\", \"project_progress\")"),
-                "LIKE 兜底也要排除项目进度，否则换个档位结果就变了（同一个查询两个答案）");
+        assertTrue(svc.contains("notIn(\"template_type\", \"project_progress\", \"todo_list\")"),
+                "LIKE 兜底也要排除过程记录与待办，否则换个档位结果就变了（同一个查询两个答案）");
     }
 
     private static int countOf(String haystack, String needle) {

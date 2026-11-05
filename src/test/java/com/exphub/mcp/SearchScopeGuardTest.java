@@ -44,8 +44,8 @@ class SearchScopeGuardTest {
         // 2026-11-06：排除条件从「只排项目内的」改成「只看类型」后，文案同步改为「过程记录」。
         // 断言必须用**完整 append 串**，否则注释里提一句旧文案就越过了守卫 —— 这个坑本轮真实踩到：
         // 改完文案后测试仍全绿，因为 `contains("不含项目内进度流水")` 被注释里的那句喂饱了。
-        assertTrue(src.contains("｜作用域 all（全局 + 你名下项目，**不含过程记录 project_progress**）"),
-                "scope=all 的回执必须写明排除过程记录（不能只排项目内的）");
+        assertTrue(src.contains("**不含过程记录 project_progress 与待办 todo_list**"),
+                "scope=all 的回执必须写明排除过程记录与待办（不能只排项目内的）");
         assertTrue(src.contains("含进度流水"), "scope=project 的回执必须写明不排除");
     }
 
