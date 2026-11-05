@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""项目识别（detectProjectInQuery / resolveProject）回归脚本。
+"""项目识别 + 搜索相关性回归脚本。
+
+2026-11-05 扩充（烛龙，#101 排期 S1）
+-------------------------------------
+- B 组按 #678 §5.4 定稿表扩到 7 条；B4 期望按 §5.2 裁定改为「命中项目 5」，
+  SPEC-CONFLICT 撤销；② 分支补「纯 ASCII token 结构性拒绝」（§5.1）。
+- 新增 C 组：搜索相关性验收集，按 scope 三档分域、每条带 project_id、
+  **期望 Top3 预注册**（#677 13.7）。期望值写死在代码里，不许跑完再改。
+- 传输默认改无状态 /mcp/http（2026-11-05 上线，重启不必重连）；
+  --transport sse 可回退旧端点做对照。
+- df 快照带过期检查：10-26 抓的 N_global=316，今天全库 ACTIVE 已 1115，
+  旧 df 不能当现状用；超期只告警、不静默放行。
 
 为什么要有这个脚本
 ------------------
@@ -13,26 +24,33 @@
 所以这里把两类算例固化成可重复跑的：
 
   A 组（6 条）= #677 §14.2 的线上实测基线：跑**线上真实系统**，看现状。
-  B 组（4 条）= #678 §1 的规则验算：跑**规则引用实现**（本项目内，不依赖部署），
-                 用来验证「定案规则本身」判得对不对。
+  B 组（7 条）= #678 §5.4 定稿表的规则验算：跑**规则引用实现**（离线，不依赖部署）。
+  C 组（4 条）= 搜索相关性 Top3 验收集：跑线上，输出实际排名当修复前基线。
 
 A 组现在**预期有多条 FAIL**（这是基线，不是脚本坏了）。修完 L0-1a 后跑
-`--mode live --assert` 应全绿；B 组在规则实现上应恒绿（它就是规则的可执行定义）。
+`--mode live --assert` 应全绿。B 组是规则的可执行定义；若因 df 快照缺词
+而红，那是**数据缺口**，不是规则错 —— 别为了测试转绿去放宽「缺数不放行」。
 
 用法
 ----
   # 只跑规则验算（离线，不需要服务器）
   python3 tools/search_regression.py --mode rule
 
-  # 跑线上基线（需要 MCP_KEY / MCP_URL）
-  export MCP_KEY=...  MCP_URL=https://cloudim.club/exphub/mcp/sse
+  # 跑线上基线（需要 MCP_KEY；默认走无状态 /mcp/http）
+  export MCP_KEY=...
   python3 tools/search_regression.py --mode live
 
-  # 两边都跑 + 对照（默认）
+  # 只跑搜索相关性验收集，输出每条实际 Top5
+  python3 tools/search_regression.py --mode relevance
+
+  # 全跑（默认）
   python3 tools/search_regression.py
 
   # 修复后当门禁用：任一算例不符合预期 -> 退出码 1
   python3 tools/search_regression.py --mode live --assert
+
+  # 回退旧 SSE 端点做对照
+  python3 tools/search_regression.py --mode relevance --transport sse
 
   # 重新生成 df 快照时要跑的 SQL（不连库，只打印）
   python3 tools/search_regression.py --print-df-sql
@@ -56,9 +74,13 @@ import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DF_SNAPSHOT = os.path.join(HERE, "df_snapshot.json")
+
+DEFAULT_HTTP = "https://cloudim.club/exphub/mcp/http"   # 2026-11-05 无状态端点
+DEFAULT_SSE = "https://cloudim.club/exphub/mcp/sse"     # 旧端点，做对照用
 
 # ==================== A 组：#677 §14.2 线上基线 ====================
 # 期望值 = 修复后「正确」的行为（不是现状）。现状多为 FAIL，这正是基线。
@@ -80,20 +102,52 @@ CASES_LIVE = [
          expect_id=None, note="防误召：不得识别为任何项目；现状=被项目5劫持"),
 ]
 
-# ==================== B 组：#678 §1 规则验算 ====================
+# ==================== B 组：#678 §5.4 定稿表（7 条）====================
 # 关系：① A==T  ② A⊃T  ③ T⊃A
+# 2026-11-05：B4 按 §5.2 裁定改为「命中项目 5」，SPEC-CONFLICT 撤销；
+# 扩到 B1~B7（§5.4），② 分支补 ASCII 结构性拒绝（§5.1）。
 CASES_RULE = [
     dict(cid="B1", query="hjs", relation="①",
-         expect_id=2, note="df(hjs)=7.9% < 30%，不限长度"),
+         expect_id=2, note="df(hjs)=7.6% < 30%，相等不限长度（§5.3）"),
     dict(cid="B2", query="hjs的入库单", relation="③",
-         expect_id=2, note="hjs 起头 + 后接 CJK「的」= 边界成立；df 7.9%"),
+         expect_id=2, note="hjs 起头 + 后接 CJK「的」= 边界成立；df 7.6%"),
     dict(cid="B3", query="用 api 接口", relation="②",
-         expect_id=None, note="token=api；项=xy-api。df(api)=35.4% >= 30% -> 拒绝"),
-    dict(cid="B4", query="xy-api", relation="②（spec 原文如此，实测走 ①）",
-         expect_id=None,
-         note="⚠ SPEC-CONFLICT：#678 §1 表里把本项写成走 ② 且因「前接 - 边界失败」被拒；"
-              "但 xy-api 本身就是项目 5 的别名项，token 与项相等 -> 走 ①，df=0.6% -> 命中。"
-              "本条期望值待阁主裁定：输入 xy-api 应否命中项目 5"),
+         expect_id=None, note="token=api 纯 ASCII -> ② 结构性拒绝（§5.1），不再只靠 df 单挡"),
+    dict(cid="B4", query="xy-api", relation="①",
+         expect_id=5, note="§5.2 裁定：xy-api 本身是项目 5 别名项，走 ① 相等，df 0.6% -> 命中"),
+    dict(cid="B5", query="xy", relation="②",
+         expect_id=None, note="纯 ASCII 走 ② 被结构性拒绝；§5.4 注明这是新增漏召面，"
+                              "属预期但非无损，待越哥追认"),
+    dict(cid="B6", query="工业大学", relation="②",
+         expect_id=5, note="② 的 CJK 正向用例；没有它 ② 就只验了拒绝"),
+    dict(cid="B7", query="拆解宝（报废车回收模块）", relation="①",
+         expect_id=3, note="全名相等，走 ①"),
+]
+
+# ==================== C 组：搜索相关性验收集 ====================
+# 纪律（#677 13.7）：每条用例带 project_id、期望 Top3 预注册、标注者 ≠ 改码者。
+# 「域分三段」按 2026-11-05 的 scope 三档重定（#678 §6.3），不抄 13.7 的二分：
+#   global = 硬隔离（project_id IS NULL）/ all = 混排（默认）/ project = 指定项目
+# 期望值在改代码之前写死，跑完不许改；只想看现状就传 --baseline（不判 FAIL）。
+CASES_RELEVANCE = [
+    dict(cid="C1", query="代码怎么发布到线上服务器", scope="all",
+         project_id=None, expect_top3=[95], exclude=[1220, 1236],
+         note="#1236 验收口径：#95 进前 3。修复前实测前 50 名都进不去；"
+              "⚠️ 自污染源已从 #1220 转到 #1236（后者正文也写了这句原话，"
+              "2026-11-05 实测排第 1），判定时排除 #1220 与 #1236；"
+              "#677 九.7「别把验收 query 原话写进文档」要重新守住"),
+    dict(cid="C2", query="DeepSeek 余额 用量 API 接口", scope="global",
+         project_id=None, expect_top3=[332],
+         note="#677 13.1 替代验收：Top3 出现 #332 且不再出现项目 5 的 AGENTS 章节；"
+              "修复前 #332 第 17 位、默认只返回 12 条、噪声 84%"),
+    dict(cid="C3", query="部署流程 deploy.sh", scope="all",
+         project_id=None, expect_top3=[95], exclude=[1220, 1236],
+         note="#1236 实测：scope=all 排除进度流水后 #95 回到第 1；"
+              "同样要先排除含原话自污染的 #1220 / #1236（回归对照项）"),
+    dict(cid="C4", query="DeepSeek 峰谷定价 缓存命中 价格", scope="all",
+         project_id=None, expect_top3=[],
+         note="#678 §3 已把第 5 组移出相关性验收集，定性「域外层」："
+              "正确行为 = 少返回 + 明确提示项目域可能有，不考核 Top3，只登记形态"),
 ]
 
 
@@ -183,9 +237,14 @@ def detect_by_rule(query, projects, snap):
                     ok, why = True, "相等"
                 elif item.lower().find(tok.lower()) >= 0:
                     rel, term = "②", tok
-                    ok, why = _boundary_both_sides(item.lower(), tok.lower(), False)
-                    if ok and len(tok) < 2:
-                        ok, why = False, "token 长度 <2"
+                    # #678 §5.1：②「项含 token」只对含 CJK 的 token 开放；
+                    # 纯 ASCII token 结构性拒绝，不再只靠 df 单挡（df 会随语料漂移）。
+                    if not CJK.search(tok):
+                        ok, why = False, "纯 ASCII token 不许走 ②（结构性拒绝）"
+                    else:
+                        ok, why = _boundary_both_sides(item.lower(), tok.lower(), False)
+                        if ok and len(tok) < 2:
+                            ok, why = False, "token 长度 <2"
                 elif tok.lower().find(item.lower()) >= 0:
                     rel, term = "③", item
                     ok, why = _boundary_both_sides(tok.lower(), item.lower(), True)
@@ -297,6 +356,141 @@ def detected_project(text):
     return m.group(1) if m else None
 
 
+# ==================== 无状态 /mcp/http 客户端（2026-11-05）====================
+
+class McpStateless:
+    """一次 POST 一个 JSON-RPC 请求，不握手、不带 session。
+
+    响应可能是 application/json，也可能是 text/event-stream 的 `data: {...}`；
+    两种都解析。服务端不返回 Mcp-Session-Id，重启后旧连接照样能用。
+    """
+
+    def __init__(self, url, key):
+        self.url = url
+        self.key = key
+        self._id = 0
+
+    def _post(self, payload):
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            self.url, data=data,
+            headers={"authorization-key": self.key,
+                     "Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read().decode("utf-8", "replace")
+        objs = []
+        for line in raw.splitlines():
+            s = line.strip()
+            if s.startswith("data:"):
+                s = s[5:].strip()
+            if not s.startswith("{"):
+                continue
+            try:
+                objs.append(json.loads(s))
+            except Exception:
+                continue
+        if not objs:
+            try:
+                objs = [json.loads(raw)]
+            except Exception:
+                raise RuntimeError("无法解析 MCP 响应（前 200 字）: " + repr(raw[:200]))
+        return objs
+
+    def call(self, tool, args, wait=60):
+        self._id += 1
+        mid = self._id
+        objs = self._post({"jsonrpc": "2.0", "id": mid, "method": "tools/call",
+                           "params": {"name": tool, "arguments": args}})
+        for obj in objs:
+            if obj.get("id") != mid:
+                continue
+            if "error" in obj:
+                raise RuntimeError("MCP error: " + json.dumps(obj["error"], ensure_ascii=False))
+            content = (obj.get("result") or {}).get("content") or []
+            if content:
+                return content[0].get("text", "")
+            return json.dumps(obj, ensure_ascii=False)
+        raise RuntimeError(f"等不到 id={mid} 的响应")
+
+    def close(self):
+        pass
+
+
+def make_client(transport, url, key):
+    return McpStateless(url, key) if transport == "http" else Mcp(url, key)
+
+
+def extract_hit_ids(text):
+    """按回执出现顺序取文档 ID（去重）。brief 与非 brief 都是「【ID:N】」格式。"""
+    seen, out = set(), []
+    for m in re.finditer(r"【ID:(\d+)】", text or ""):
+        i = int(m.group(1))
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
+def snapshot_warning(snap, max_age_days):
+    raw = (snap.get("captured_at") or "")[:10]
+    try:
+        d = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return f"⚠️ df 快照 captured_at={raw!r} 格式不认识，按过期处理"
+    age = (datetime.now().date() - d).days
+    if age > max_age_days:
+        return (f"⚠️ df 快照已 {age} 天（{raw}，N_global={snap['n_global']}）："
+                f"文档量已变，df 不能当现状用；重抓前别拿它断言线上行为")
+    return None
+
+
+def run_relevance(transport, url, key, assert_mode, baseline_mode):
+    """C 组：按 scope 分域、Top3 预注册。--baseline 只采集排名、不判 FAIL。"""
+    print()
+    print("=" * 96)
+    print(f"C 组 · 搜索相关性（scope 分域 / Top3 预注册）  传输={transport}  {url}")
+    print("=" * 96)
+    if not key:
+        print("[SKIPPED] 未设置 MCP_KEY，C 组**一条都没跑**（不是通过）。")
+        return None
+    cli = make_client(transport, url, key)
+    bad = 0
+    executed = 0
+    try:
+        for c in CASES_RELEVANCE:
+            args = {"query": c["query"], "limit": 50, "scope": c["scope"]}
+            text = cli.call("search_experience", args)
+            ids = extract_hit_ids(text)
+            exclude = set(c.get("exclude", []))
+            ranked = [i for i in ids if i not in exclude]
+            top5 = ranked[:5]
+            targets = {i: (ranked.index(i) + 1 if i in ranked else None)
+                       for i in c["expect_top3"]}
+            if c["expect_top3"]:
+                ok = any(p is not None and p <= 3 for p in targets.values())
+            else:
+                ok = True       # 域外层只登记形态，不考核 Top3（#678 §3）
+            executed += 1
+            if not ok and not baseline_mode:
+                bad += 1
+            label = "BASELINE" if baseline_mode else fmt(ok)
+            print(f"\n[{c['cid']}] {label}   scope={c['scope']}  query={c['query']!r}")
+            print(f"      Top5 -> {top5 or '(无命中)'}")
+            if targets:
+                print("      期望文档排名 -> " + ", ".join(
+                    f"#{i}: {'第 ' + str(p) + ' 位' if p else '未进前 50'}"
+                    for i, p in targets.items()))
+            else:
+                hint = "有域提示" if "项目「" in (text or "") else "未见域提示"
+                print(f"      域外层形态 -> 返回 {len(ids)} 条 / {hint}（不判 FAIL）")
+            print(f"      口径 : {c['note']}")
+    finally:
+        cli.close()
+    return bad
+
+
 # ==================== 输出 ====================
 def fmt(ok):
     return "PASS" if ok else "FAIL"
@@ -346,9 +540,7 @@ def run_rule(snap, projects, assert_mode):
     return bad
 
 
-def run_live(snap, assert_mode):
-    key = os.environ.get("MCP_KEY")
-    url = os.environ.get("MCP_URL", "https://cloudim.club/exphub/mcp/sse")
+def run_live(snap, assert_mode, transport, url, key):
     if not key:
         # ⚠️ 不许静默跳过：跳过了就不能说「全部符合期望」。
         # 这正是同族病（回执说做了、实际没做）—— 本条自身也曾这样错过一次。
@@ -357,13 +549,18 @@ def run_live(snap, assert_mode):
     projects = snap["projects"]
     print()
     print("=" * 96)
-    print(f"A 组 · 线上基线（#677 §14.2，实测 {url}）")
+    print(f"A 组 · 线上基线（#677 §14.2，实测 {url}，传输={transport}）")
     print("=" * 96)
-    cli = Mcp(url, key)
+    cli = make_client(transport, url, key)
     bad = 0
+    texts = []
     try:
         for c in CASES_LIVE:
-            text = cli.call("search_experience", {"query": c["query"], "limit": 3})
+            # 固定 scope=global：2026-11-05 起 scope=all 不再输出尾行项目段
+            # （#1236「renderProjectSegment 不再输出」），项目识别在 global 档才看得见。
+            text = cli.call("search_experience",
+                            {"query": c["query"], "limit": 3, "scope": "global"})
+            texts.append(text)
             got_pid = name_to_pid(projects, detected_project(text))
             ok = (got_pid == c["expect_id"])
             if not ok:
@@ -372,6 +569,13 @@ def run_live(snap, assert_mode):
             print(f"      期望 -> {pid_label(projects, c['expect_id'])}")
             print(f"      线上 -> {pid_label(projects, got_pid)}")
             print(f"      说明 : {c['note']}")
+        if not any(("查询词含项目" in t or "项目识别" in t) for t in texts):
+            print("\n⚠️ A 组当前**不可测**：6 条回执里一条项目识别提示都没有。")
+            print("   2026-11-05 的 scope 改造后，线上回执不再输出「查询词含项目「X」」；")
+            print("   detected_project() 只能解析到 None，上面 5 条 FAIL 全是**假 FAIL**，")
+            print("   不是线上退化。→ S2.1 施工 L0-1a 时先恢复可观测性")
+            print("   （回执给一行可解析的识别结果），再重跑本组。")
+            return None
     finally:
         cli.close()
     return bad
@@ -389,9 +593,15 @@ WHERE d.status='ACTIVE' AND d.project_id IS NULL
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["rule", "live", "all"], default="all")
+    ap.add_argument("--mode", choices=["rule", "live", "relevance", "all"], default="all")
     ap.add_argument("--assert", dest="assert_mode", action="store_true",
                     help="任一条不符合期望则退出码 1（修复后当门禁用）")
+    ap.add_argument("--baseline", action="store_true",
+                    help="只采集现状排名、不判 FAIL（修复前基线采集用）")
+    ap.add_argument("--transport", choices=["http", "sse"], default="http",
+                    help="http=无状态 /mcp/http（默认）；sse=旧端点对照")
+    ap.add_argument("--max-age-days", type=int, default=7,
+                    help="df 快照超过几天就告警（默认 7）")
     ap.add_argument("--print-df-sql", action="store_true")
     a = ap.parse_args()
 
@@ -401,7 +611,13 @@ def main():
 
     snap = load_df()
     print(f"df 快照: {snap['captured_at']}  N_global={snap['n_global']}  词表 {len(snap['df_global'])} 项")
+    warn = snapshot_warning(snap, a.max_age_days)
+    if warn:
+        print(warn)
     projects = snap["projects"]
+
+    key = os.environ.get("MCP_KEY")
+    url = os.environ.get("MCP_URL") or (DEFAULT_HTTP if a.transport == "http" else DEFAULT_SSE)
 
     bad = 0
     skipped = []
@@ -410,17 +626,26 @@ def main():
         bad += run_rule(snap, projects, a.assert_mode)
         executed += len(CASES_RULE)
     if a.mode in ("live", "all"):
-        r = run_live(snap, a.assert_mode)
+        r = run_live(snap, a.assert_mode, a.transport, url, key)
         if r is None:
             skipped.append(f"A 组 {len(CASES_LIVE)} 条（线上基线）")
         else:
             bad += r
             executed += len(CASES_LIVE)
+    if a.mode in ("relevance", "all"):
+        r = run_relevance(a.transport, url, key, a.assert_mode, a.baseline)
+        if r is None:
+            skipped.append(f"C 组 {len(CASES_RELEVANCE)} 条（搜索相关性）")
+        else:
+            bad += r
+            executed += len(CASES_RELEVANCE)
 
     print()
     print("=" * 96)
     if skipped:
         print(f"⚠️ 未执行：{'、'.join(skipped)} —— 本次结果**不覆盖**这些算例")
+    if a.baseline:
+        print("本次为基线采集：只记录现状排名，不判定 PASS/FAIL。")
     if bad:
         print(f"结果：{bad} 条不符合期望（已执行 {executed} 条）"
               + ("（--assert 生效）" if a.assert_mode else "（基线阶段这是预期内的，加 --assert 才会退出码 1）"))
