@@ -957,7 +957,11 @@ public class ExpHubTools {
                 sb.append("，本次返回第 ").append(fromIdx + 1).append("-").append(toIdx).append(" 条");
             }
             if (scopeAll) {
-                sb.append("｜作用域 all（全局 + 你名下项目）");
+                // 2026-11-05：两个 scope 对「进度流水」的处置不同，回执必须说清 ——
+                // 同一句 query 在 all 和 project 下第一条不一样，不写原因就会被当成工具坏了
+                sb.append("｜作用域 all（全局 + 你名下项目，**不含项目内进度流水**）");
+            } else if (projectId != null) {
+                sb.append("｜作用域 project（仅该项目，**含进度流水**）");
             }
             sb.append("：\n\n");
 
