@@ -455,9 +455,12 @@ public class DocService {
                     w.or().in("project_id", myProjects);
                 }
             });
-            // 与全文检索口径一致：项目内的进度流水默认不参与（它们是施工日志，不是答案）
+            // 与全文检索口径一致：过程流水默认不参与（它们是施工日志，不是答案）。
+            // 2026-11-06 改单条件（#1290 C49）：原来写成 isNull(project_id).or().ne(template_type, pp)，
+            // 等价于「只排项目内的」，全局的过程流水永远排不掉。现在与 DocMapper 一致：只看类型。
+            // IS NULL 那一支不能省：<> 对 NULL 求值为 NULL，裸 ne 会把 template_type 为空的文档一起排掉。
             if (excludeProjectProgress) {
-                wrapper.and(w -> w.isNull("project_id").or().ne("template_type", "project_progress"));
+                wrapper.and(w -> w.isNull("template_type").or().ne("template_type", "project_progress"));
             }
         } else {
             if (apiKey != null && projectId == null) {
