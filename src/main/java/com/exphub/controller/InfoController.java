@@ -3,6 +3,7 @@ package com.exphub.controller;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.User;
 import com.exphub.interceptor.ApiKeyInterceptor;
+import com.exphub.mcp.McpToolRegistry;
 import com.exphub.service.DocTemplateService;
 import com.exphub.service.DocService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,9 @@ public class InfoController {
 
     @Autowired
     private DocTemplateService templateService;
+
+    @Autowired
+    private McpToolRegistry toolRegistry;
 
     /**
      * 获取服务信息和使用指南
@@ -68,7 +72,12 @@ public class InfoController {
         ));
 
         // 重要提示
-        info.put("important", "请务必先阅读 ID=4 的《ExpHub 经验阁系统使用指南 v3》，了解完整的 25 个 MCP 工具和 8 种模板的正确用法！");
+        // 工具数原来写死「25 个」，实际早就是 47 个（#1272 C3-2）——
+        // 接入口写死数字必然过期，改成从注册表读，永远和 tools/list 一致。
+        info.put("important", String.format(
+            "请务必先阅读 ID=4 的《ExpHub 经验阁系统使用指南 v3》，了解完整的 %d 个 MCP 工具的正确用法"
+            + "（实时清单以 tools/list 为准，本处数量随工具增删自动变化）！",
+            toolRegistry.size()));
 
         return info;
     }
