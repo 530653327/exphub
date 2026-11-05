@@ -3535,13 +3535,13 @@ public class ExpHubTools {
 
     /** 处理一条候选 */
     @Tool(name = "reopen_candidate",
-          description = "【撤回已判候选】把一条已判（duplicate / distinct / superseded / skip）的候选改回 PENDING，"
-                  + "让它重新参与扫描与入队。⚠️ **只回退候选状态**，当初打在文档上的标记 / 取代指针不会撤销"
-                  + "（那两项用 set_flags、clear_superseded）。用于判错了想重来 —— "
-                  + "distinct 的语义是「永久不再入队」，没有这个工具就只能改库。"
-                  + "（语义变更 2026-10-29：撤回前的判定整段存入判定流水，候选的 note 字段被清空；用 list_candidate_history 查历史）")
+          description = "【撤回已判候选】把已判（duplicate / distinct / superseded / skip）的候选改回 PENDING，让它重新参与扫描与入队。"
+                  + "**支持批量**：传 candidateIds=\"51,52,53\"（上限 50 条）—— 判错一次要救几十条时，逐条撤等于不撤。"
+                  + "⚠️ **只回退候选状态**，当初打在文档上的标记 / 取代指针不会撤销（那用 set_flags(ids=\"...\", flags=\"\") 、clear_superseded）。"
+                  + "（语义变更 2026-11-05：新增批量；2026-10-29：撤回前的判定整段存入判定流水）")
     public String reopenCandidate(
-            @ToolParam(description = "必填。候选 ID（list_review_candidates 返回的「候选 #N」里的 N）") Long candidateId,
+            @ToolParam(description = "候选 ID（「候选 #N」里的 N）。单条用；批量改用 candidateIds", required = false) Long candidateId,
+            @ToolParam(description = "可选。**批量**撤回：候选 ID 列表，逗号分隔，如 \"51,52,53\"（上限 50）。与 candidateId 二选一", required = false) String candidateIds,
             @ToolParam(description = "可选。撤回原因：为什么当初判错了。会与原判定说明一起并入 note，原判定不丢", required = false) String note,
             @ToolParam(description = "可选。**谁改的**——操作人署名", required = false) String updatedName) {
         try {
@@ -3549,10 +3549,51 @@ public class ExpHubTools {
             if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
-            if (candidateId == null) {
-                return "❌ 必须传 candidateId（候选 #N 里的 N）。不知道 ID 就先 list_review_candidates(status=ALL)。";
-            }
             String by = resolveAuthor(updatedName, assistant);
+
+            // ===== 批量撤回（2026-11-05）=====
+            if (candidateIds != null && !candidateIds.trim().isEmpty()) {
+                java.util.List<Long> ids;
+                try {
+                    ids = parseIds(candidateIds, "candidateIds");
+                } catch (IllegalArgumentException e) {
+                    return "❌ " + e.getMessage();
+                }
+                if (ids.size() > BATCH_REOPEN_MAX) {
+                    return "❌ 一次最多 " + BATCH_REOPEN_MAX + " 条（本次 " + ids.size()
+                            + " 条）。分两次撤 —— 上限放宽是因为撤销是救火动作，但也要留个体量上限。";
+                }
+                int ok = 0, skipped = 0, failed = 0;
+                StringBuilder sb = new StringBuilder();
+                sb.append("↩️ **批量撤回 ").append(ids.size()).append(" 条**\n\n");
+                for (Long cid : ids) {
+                    ReviewCandidateService.ResolveResult r = reviewCandidateService.reopen(cid, note, by);
+                    if (r.ok()) {
+                        ok++;
+                        sb.append("- ✅ #").append(cid).append(" 已退回 PENDING\n");
+                    } else {
+                        // 「本来就是 PENDING」不算失败，是跳过 —— 否则批量救火时报一堆红，人以为没救成
+                        ReviewCandidate cur = reviewCandidateService.get(cid);
+                        if (cur != null && ReviewCandidate.PENDING.equals(cur.getStatus())) {
+                            skipped++;
+                            sb.append("- ⏭ #").append(cid).append(" 本来就是 PENDING，跳过\n");
+                        } else {
+                            failed++;
+                            sb.append("- ❌ #").append(cid).append(" ").append(r.message()).append("\n");
+                        }
+                    }
+                }
+                sb.append("\n**合计**：成功 ").append(ok).append("｜跳过 ").append(skipped).append("｜失败 ").append(failed)
+                  .append("\n**操作人**: ").append(by)
+                  .append("\n⚠️ 文档上的标记 / 取代指针**没有撤销**：")
+                  .append("清标记用 `set_flags(ids=\"...\", flags=\"\")`，撤取代用 `clear_superseded`。");
+                return sb.toString();
+            }
+
+            if (candidateId == null) {
+                return "❌ 必须传 candidateId（单条）或 candidateIds（批量，逗号分隔）。"
+                        + "不知道 ID 就先 list_review_candidates(status=ALL)。";
+            }
             ReviewCandidateService.ResolveResult r = reviewCandidateService.reopen(candidateId, note, by);
             if (!r.ok()) {
                 callLogService.incrementFailCalls();
@@ -3567,6 +3608,9 @@ public class ExpHubTools {
             return "撤回失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
+
+    /** 批量撤回的上限。比批量判定的 20 宽 —— 撤销是救火动作，但也不能无限。 */
+    static final int BATCH_REOPEN_MAX = 50;
 
     @Tool(name = "list_candidate_history",
           description = "【查一条候选的判定流水】谁在什么时候判成什么、说了什么。**只读**。"

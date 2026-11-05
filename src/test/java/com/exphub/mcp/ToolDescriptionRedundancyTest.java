@@ -318,8 +318,10 @@ class ToolDescriptionRedundancyTest {
         //            search_experience 加 scope（all/global/project），参数 177 → 179。
         // 2026-11-05 #1220 P1：46 → 47，新增 batch_get（批量读，3 个参数）；
         //            resolve_candidate 加 candidateIds（批量判定），参数 179 → 183。
+        // 同日补救：reopen_candidate 加 candidateIds（批量撤销），参数 183 → 184。
+        //            判错一次要救几十条时，只能逐条撤等于不撤 —— 撤销通道比判定通道更该好用。
         assertEquals(47, toolCount, "工具数变了（46 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(183, paramCount, "参数数变了（179 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(184, paramCount, "参数数变了（183 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════
