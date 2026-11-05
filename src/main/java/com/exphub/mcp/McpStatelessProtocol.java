@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.stereotype.Component;
@@ -34,10 +35,13 @@ public class McpStatelessProtocol {
 
     private final ToolCallbackProvider toolCallbackProvider;
     private final ObjectMapper mapper;
+    private final String version;
 
-    public McpStatelessProtocol(ToolCallbackProvider toolCallbackProvider, ObjectMapper mapper) {
+    public McpStatelessProtocol(ToolCallbackProvider toolCallbackProvider, ObjectMapper mapper,
+                                @Value("${exphub.version:2.2.1}") String version) {
         this.toolCallbackProvider = toolCallbackProvider;
         this.mapper = mapper;
+        this.version = version;
     }
 
     /**
@@ -99,7 +103,7 @@ public class McpStatelessProtocol {
                 r.set("capabilities", caps);
                 ObjectNode info = mapper.createObjectNode();
                 info.put("name", "exphub");
-                info.put("version", "1.0.0");
+                info.put("version", version);
                 r.set("serverInfo", info);
             }
             case "ping" -> {

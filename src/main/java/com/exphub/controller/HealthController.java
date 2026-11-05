@@ -33,7 +33,8 @@ public class HealthController {
     @Autowired
     private DocMapper docMapper;
 
-    @Value("${spring.ai.mcp.server.version:1.0.0}")
+    /** 产品版本单一来源：exphub.version（MCP serverInfo 也读同一个值） */
+    @Value("${exphub.version:2.2.1}")
     private String appVersion;
 
     @Value("${exphub.mcp.sse-heartbeat-seconds:30}")

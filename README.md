@@ -4,6 +4,11 @@
 
 > 🌐 门户网站：[https://cloudim.club](https://cloudim.club) — 注册即获专属 API Key，立即接入 MCP。
 
+当前产品版本 **2.2.1**（2026-11-05 起）。`/health` 与 MCP `serverInfo` 都报这个版本，
+改版本号只改 `src/main/resources/application.yml` 的 `exphub.version` 一处。
+注意它不等于 `pom.xml` 的 Maven artifact 版本（1.0.0）——后者决定 jar 文件名，
+被 systemd service 和部署脚本写死，不要随便动。
+
 ---
 
 ## 💡 为什么需要 ExpHub？

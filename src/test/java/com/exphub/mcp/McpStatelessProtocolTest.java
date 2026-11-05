@@ -30,7 +30,8 @@ class McpStatelessProtocolTest {
         ToolCallback boom = callback("boom", "会抛异常", text -> {
             throw new IllegalStateException("模拟工具内部报错");
         });
-        protocol = new McpStatelessProtocol((ToolCallbackProvider) () -> new ToolCallback[]{echo, boom}, mapper);
+        protocol = new McpStatelessProtocol(
+                (ToolCallbackProvider) () -> new ToolCallback[]{echo, boom}, mapper, "2.2.1");
     }
 
     @Test
@@ -41,6 +42,8 @@ class McpStatelessProtocolTest {
         assertEquals("2025-06-18", r.path("protocolVersion").asText());
         assertTrue(r.path("capabilities").has("tools"), "必须声明 tools 能力，否则客户端不会调 tools/list");
         assertEquals("exphub", r.path("serverInfo").path("name").asText());
+        assertEquals("2.2.1", r.path("serverInfo").path("version").asText(),
+                "MCP serverInfo 必须报产品版本，不能还写旧的 1.0.0");
         assertFalse(r.toString().contains("sessionId"), "响应体不许出现会话 ID（无状态是重启无感的前提）");
         assertFalse(r.toString().contains("Mcp-Session"), "响应体不许出现会话相关字段");
     }
