@@ -1195,6 +1195,11 @@ public class ExpHubTools {
         return (start > 0 ? "…" : "") + piece + (end < content.length() ? "…" : "");
     }
 
+    /** 章号展示：空章号不能直接拼 null（`append(null)` 会打出「null」，看着像系统坏了） */
+    static String chapterNoLabel(String chapterNo) {
+        return (chapterNo == null || chapterNo.isBlank()) ? "（无章号）" : chapterNo;
+    }
+
     /** 章号是字符串（"1"、"15"），按字典序排会得到 1,10,11,2…，这里转成数字比较；转不了排最后 */
     private static int chapterNoValue(String chapterNo) {
         if (chapterNo == null) return Integer.MAX_VALUE;
@@ -4572,8 +4577,12 @@ public class ExpHubTools {
             // ⚠️ 2026-11-05 实测踩到：all 是按 updated_at 倒序的，直接拿来列章节会出现
             //    「15 高频踩坑速查｜1 项目概述｜2 …」—— 最近改过的那章跳到第一位。
             //    章节清单必须按 sort_order + 章号排，这跟「最近更新」是两个维度。
+            // 2026-11-05 二次修正：章号为空的脏章节（#1164/#1184 那种）要**排到最后**。
+            //    只按 sort_order 排的话，它们 sort_order 往往也是 0，会和正常章节混在中间，
+            //    显示成「null xxx」，看着像系统坏了。
             chapters.sort(java.util.Comparator
-                    .comparingInt((Doc c) -> c.getSortOrder() == null ? Integer.MAX_VALUE : c.getSortOrder())
+                    .comparingInt((Doc c) -> chapterNoValue(c.getChapterNo()) == Integer.MAX_VALUE ? 1 : 0)
+                    .thenComparingInt(c -> c.getSortOrder() == null ? Integer.MAX_VALUE : c.getSortOrder())
                     .thenComparingInt(c -> chapterNoValue(c.getChapterNo())));
 
             // ===== AGENTS.md =====
@@ -4598,7 +4607,7 @@ public class ExpHubTools {
                     for (Doc c : chapters) {
                         if (shown >= 12) { sb.append(" …等 ").append(chapters.size()).append(" 章"); break; }
                         if (shown > 0) sb.append("｜");
-                        sb.append(c.getChapterNo()).append(" ").append(c.getChapterTitle());
+                        sb.append(chapterNoLabel(c.getChapterNo())).append(" ").append(c.getChapterTitle());
                         shown++;
                     }
                     sb.append("\n");
