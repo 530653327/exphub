@@ -115,6 +115,16 @@ def is_noise(lit):
 
 
 def main():
+    # 服务器上 locale 常是 C/POSIX，直接 print 中文会 UnicodeEncodeError。
+    # Python 3.6 没有 sys.stdout.reconfigure，所以再兜一层 TextIOWrapper。
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        try:
+            import io
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        except Exception:
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument('--all', action='store_true', help='连中危与安全项一起列')
     ap.add_argument('--file', default='', help='只分析文件名包含该串的测试')
