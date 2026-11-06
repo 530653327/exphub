@@ -52,7 +52,7 @@ STOPWORDS = {'的', '了', '和', '与', '及', '或', '怎么', '如何', '什�
 CJK = re.compile(r'[\u4e00-\u9fa5]')
 ENV_FILE = '/etc/exphub/.env'
 CANDIDATE_LIMIT = 200          # 与 DocService.CANDIDATE_LIMIT 一致
-RECENCY_WEIGHT = 0.12          # 与 DocService.score 一致
+RECENCY_WEIGHT = 0.0           # 与 DocService.W_RECENCY 一致（2026-11-06 从 0.12 降为 0，#1309 C94）
 MCP_URL = 'https://cloudim.club/exphub/mcp/http'
 
 

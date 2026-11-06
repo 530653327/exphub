@@ -625,6 +625,19 @@ public class DocService {
     private static final double CONTENT_ONLY_FACTOR = 0.75;
 
     /**
+     * 时效（recency）在总分里的权重。
+     *
+     * <p><b>2026-11-06 从 0.12 降为 0（#1309 C93/C94）。</b>理由不是「把 #95 顶上去」，
+     * 而是一条实测：把 recency 与 popularity 都拿掉后，第 15 名和第 16 名都是 0.6208，
+     * <b>完全同分</b>。也就是说这两项现在根本没在区分「谁更懂这件事」，
+     * 只在比「谁更新、谁被查得多」—— 那是噪声，不是信号。
+     *
+     * <p>压回它该待的位置：<b>只在总分完全相同时用来决胜</b>（见 {@code rankAndFilter} 的比较器）。
+     * 要回退只改这一个数。
+     */
+    private static final double W_RECENCY = 0.0;
+
+    /**
      * 严格命中「直接采用」的门槛（2026-10-30 L0-2 修数字漂移）。
      *
      * <p>这里原来写的是 {@code strictTotal >= size} —— size 是调用方传的 limit。
@@ -671,10 +684,13 @@ public class DocService {
     private static class ScoredDoc {
         final Doc doc;
         final double score;
+        /** 只用于「总分完全相同」时的决胜（#1309 C94），不参与计分。 */
+        final double recency;
 
-        ScoredDoc(Doc doc, double score) {
+        ScoredDoc(Doc doc, double score, double recency) {
             this.doc = doc;
             this.score = score;
+            this.recency = recency;
         }
     }
 
@@ -748,7 +764,7 @@ public class DocService {
     }
 
     /**
-     * 按覆盖率 + 字段权重 + 时效 + 热度排序。
+     * 按覆盖率 + 字段权重 + 热度排序（时效只在完全同分时决胜，见 {@link #W_RECENCY}）。
      * @param applyThreshold true=只保留达到最低覆盖率的结果（正常搜索）；
      *                       false=全部保留，用于“相近经验”兜底
      */
@@ -770,9 +786,15 @@ public class DocService {
             }
             if (matched == 0) continue;
             if (applyThreshold && !passesThreshold(matched, terms.variants.size())) continue;
-            scored.add(new ScoredDoc(doc, score(doc, terms.variants, conceptScore)));
+            scored.add(new ScoredDoc(doc, score(doc, terms.variants, conceptScore),
+                    recencyScore(doc.getUpdatedAt())));
         }
-        scored.sort((a, b) -> Double.compare(b.score, a.score));
+        // 主键是分数；完全同分时才用「谁更新」决胜（#1309 C94：recency 从加项降为决胜项）。
+        // 诚实说明：分数是连续值，实际几乎不会碰到完全相等 —— 等价于 recency 彻底退出打分。
+        scored.sort((a, b) -> {
+            int byScore = Double.compare(b.score, a.score);
+            return byScore != 0 ? byScore : Double.compare(b.recency, a.recency);
+        });
         List<Doc> ranked = new ArrayList<>(scored.size());
         for (ScoredDoc s : scored) ranked.add(s.doc);
         return ranked;
@@ -806,7 +828,7 @@ public class DocService {
         int calls = doc.getCallCount() == null ? 0 : doc.getCallCount();
         double popularity = Math.min(1.0, Math.log1p(calls) / Math.log1p(50));
 
-        return 0.55 * coverage + 0.25 * fieldScore + 0.12 * recency + 0.08 * popularity;
+        return 0.55 * coverage + 0.25 * fieldScore + W_RECENCY * recency + 0.08 * popularity;
     }
 
     /** 一个概念的最佳字段权重：概念内任一 2-gram 命中该字段即算命中 */
