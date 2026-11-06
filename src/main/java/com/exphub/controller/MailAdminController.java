@@ -2,8 +2,10 @@ package com.exphub.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.exphub.entity.MailCursor;
 import com.exphub.entity.MailMessage;
 import com.exphub.entity.User;
+import com.exphub.mapper.MailCursorMapper;
 import com.exphub.mapper.MailMessageMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -17,7 +19,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 后台「协作信箱」查看页（2026-11-06 越哥要的）。
@@ -37,6 +43,9 @@ public class MailAdminController extends BaseController {
 
     @Autowired
     private MailMessageMapper mailMapper;
+
+    @Autowired
+    private MailCursorMapper cursorMapper;
 
     @GetMapping
     public String list(HttpSession session,
@@ -85,17 +94,27 @@ public class MailAdminController extends BaseController {
         List<String> roles = mailMapper.distinctRoles();
         model.addAttribute("roles", roles);
 
-        // 顶部计数：总消息 /  threads / 今日 / 未处理
+        // 已读状态按「收件人游标」判，不按 ack。
+        // ack 是模型手工调的，它不调就永远显示「未处理」—— 那不是状态，是噪声。
+        // 游标是服务端在读线程时自动推进的，才是「对方到底看没看」的真实信号。
+        Map<String, Long> cursorMap = cursorMap();
+        Map<Long, Boolean> readState = new HashMap<>();
+        for (MailMessage m : result.getRecords()) {
+            long last = cursorMap.getOrDefault(m.getToRole() + "|" + m.getThreadId(), 0L);
+            readState.put(m.getId(), last >= m.getId());
+        }
+        model.addAttribute("readState", readState);
+
+        // 顶部计数：总消息 /  threads / 今日 / 未读（按游标）
         long total = mailMapper.selectCount(null);
         long threads = mailMapper.countThreads();
         long today = mailMapper.selectCount(new QueryWrapper<MailMessage>()
                 .ge("created_at", LocalDate.now().atStartOfDay()));
-        long unprocessed = mailMapper.selectCount(new QueryWrapper<MailMessage>()
-                .isNull("processed_at"));
+        long unread = unreadCount(cursorMap);
         model.addAttribute("totalMessages", total);
         model.addAttribute("totalThreads", threads);
         model.addAttribute("todayMessages", today);
-        model.addAttribute("unprocessedMessages", unprocessed);
+        model.addAttribute("unreadMessages", unread);
 
         return "mail/list";
     }
@@ -127,7 +146,39 @@ public class MailAdminController extends BaseController {
         model.addAttribute("thread", thread);
         model.addAttribute("threadSize", thread.size());
         model.addAttribute("threadId", current.getThreadId());
+
+        // 每封信「收件人读没读」，同样看游标而不是 ack
+        Map<String, Long> cursorMap = cursorMap();
+        Map<Long, Boolean> readState = new HashMap<>();
+        for (MailMessage m : thread) {
+            long last = cursorMap.getOrDefault(m.getToRole() + "|" + m.getThreadId(), 0L);
+            readState.put(m.getId(), last >= m.getId());
+        }
+        model.addAttribute("readState", readState);
         return "mail/detail";
+    }
+
+    /** role|threadId -> 已读到的消息 ID。 */
+    private Map<String, Long> cursorMap() {
+        Map<String, Long> map = new HashMap<>();
+        for (MailCursor c : cursorMapper.selectList(null)) {
+            if (c.getRole() != null && c.getThreadId() != null && c.getLastReadId() != null) {
+                map.put(c.getRole() + "|" + c.getThreadId(), c.getLastReadId());
+            }
+        }
+        return map;
+    }
+
+    /** 未被收件人读到的消息数（按游标，不按 ack）。 */
+    private long unreadCount(Map<String, Long> cursorMap) {
+        List<MailMessage> all = mailMapper.selectList(new QueryWrapper<MailMessage>()
+                .select("id", "to_role", "thread_id"));
+        long n = 0;
+        for (MailMessage m : all) {
+            long last = cursorMap.getOrDefault(m.getToRole() + "|" + m.getThreadId(), 0L);
+            if (last < m.getId()) n++;
+        }
+        return n;
     }
 
     private String trimToNull(String s) {
