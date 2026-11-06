@@ -72,11 +72,11 @@ class MailboxSmokeTest {
     }
 
     @Test
-    @DisplayName("smoke: 缺 thread_id 直接拒，不猜线程")
+    @DisplayName("smoke: 缺 threadId 直接拒，不猜线程")
     void mailThreadRequiresThreadId() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
         String r = tools.mailThread(null, null, null, null, null);
-        assertEquals("❌ 要 thread_id。从 mail_start 的信封列表里抄，别自己编。", r);
+        assertEquals("❌ 要 threadId。从 mail_start 的信封列表里抄，别自己编。", r);
         verifyNoInteractions(mailboxService);
     }
 }

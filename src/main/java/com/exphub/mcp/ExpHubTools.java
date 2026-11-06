@@ -5937,7 +5937,7 @@ public class ExpHubTools {
             List<com.exphub.service.MailboxService.Envelope> list =
                     mailboxService.inbox(me, q, lim, searchMode);
             if (list.isEmpty()) {
-                sb.append(searchMode ? "📭 没搜到匹配的信封。换个词，或直接报 thread_id 用 mail_thread 展开。\n"
+                sb.append(searchMode ? "📭 没搜到匹配的信封。换个词，或直接报 threadId 用 mail_thread 展开。\n"
                                      : "📭 没有新信。要翻旧信传 q（搜主题/发件人/类型）。\n");
                 return sb.toString();
             }
@@ -5951,8 +5951,8 @@ public class ExpHubTools {
                 if (e.claimed) sb.append(" · 已认领(").append(e.claimedBy).append(")");
                 sb.append("\n  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
             }
-            sb.append("\n> 展开某根：`mail_thread(thread_id=\"").append(list.get(0).threadId).append("\")`\n");
-            sb.append("> 未读只是计数；推信只看游标（服务端记，别自己记）。标处理过用 `mail_thread(..., ack_ids=\"消息ID\")`。\n");
+            sb.append("\n> 展开某根：`mail_thread(threadId=\"").append(list.get(0).threadId).append("\")`\n");
+            sb.append("> 未读只是计数；推信只看游标（服务端记，别自己记）。标处理过用 `mail_thread(..., ackIds=\"消息ID\")`。\n");
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.mailStart: FAILED", e);
@@ -5961,8 +5961,8 @@ public class ExpHubTools {
     }
 
     @Tool(name = "mail_send",
-          description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 in_reply_to，线程自动推导（没有 thread_id 参数）。"
-                      + "消息只追加不可改，要纠错发一条 type=fix 引用原信。client_msg_id 做幂等，工具超时重试不会发两封。"
+          description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 inReplyTo，线程自动推导（没有 threadId 参数）。"
+                      + "消息只追加不可改，要纠错发一条 type=fix 引用原信。clientMsgId 做幂等，工具超时重试不会发两封。"
                       + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。")
     public String mailSend(
             @ToolParam(description = "收件角色代号，如 baize / gezhu") String to,
@@ -6000,7 +6000,7 @@ public class ExpHubTools {
     @Tool(name = "mail_thread",
           description = "展开一根线程。默认只给**游标之后的新消息**（最多 10 条），full=true 才从头分页回溯。"
                       + "读完服务端自动推游标 —— 同样的参数不用再调一次，不会重复给同一批。"
-                      + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ack_ids 只记「处理过」，不参与去重。")
+                      + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ackIds 只记「处理过」，不参与去重。")
     public String mailThread(
             @ToolParam(description = "线程号，从 mail_start 的信封列表里抄") String threadId,
             @ToolParam(description = "可选。true=从线程头开始（分页回溯）；默认 false 只给游标之后的新消息", required = false) Boolean full,
@@ -6013,7 +6013,7 @@ public class ExpHubTools {
                 return "❌ 读不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE + "` 头。";
             }
             if (threadId == null || threadId.isBlank()) {
-                return "❌ 要 thread_id。从 mail_start 的信封列表里抄，别自己编。";
+                return "❌ 要 threadId。从 mail_start 的信封列表里抄，别自己编。";
             }
             boolean backfill = Boolean.TRUE.equals(full);
             int def = backfill ? 30 : 10;
