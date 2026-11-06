@@ -30,24 +30,22 @@ public class StatsController {
     @Autowired
     private AiAssistantService assistantService;
 
-    // 总览统计
+    // 总览统计（2026-11-06 第一批：与仪表盘页面共用同一口径，避免接口/页面交叉造数）
     @GetMapping("/overview")
     public R<Map<String, Object>> overview() {
         Map<String, Object> data = callLogService.getOverview();
-        
-        // 文档总数
-        long totalDocs = docMapper.selectCount(null);
+
+        // 知识型文档数（排除过程流水 project_progress/todo_list + 非 ACTIVE/COMPLETED）
+        long totalDocs = docService.countKnowledgeDocs();
         data.put("totalDocs", totalDocs);
-        
-        // 今日新增
-        // (简化：查询更新时间为今天的文档)
-        
-        // 助手总数
-        data.put("totalAssistants", assistantService.count());
-        
-        // 有问题文档
-        data.put("problemDocs", docService.countProblemDocs());
-        
+
+        // 活跃助手（enabled 且在用，排除空壳）
+        data.put("totalAssistants", assistantService.countActive());
+
+        // 有问题文档（BROKEN/待删/取代/flag/超期 综合口径）
+        data.put("problemDocs", docService.countProblemDocs(90));
+        data.put("problemDocsByType", docService.countProblemDocsByType(90));
+
         return R.ok(data);
     }
 

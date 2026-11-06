@@ -68,18 +68,26 @@ public class PageController extends BaseController {
         addContextPath(model, request);
         model.addAttribute("active", "dashboard");
         model.addAttribute("pageTitle", "仪表盘");
+        model.addAttribute("currentUserName", user.getDisplayName() != null && !user.getDisplayName().isEmpty()
+                ? user.getDisplayName() : user.getUsername());
 
-        // 统计数据
+        // 统计数据（2026-11-06 第一批口径修正）
         Map<String, Object> stats = callLogService.getOverview();
-        long totalDocs = docMapper.selectCount(null);
-        long problemDocs = docService.countProblemDocs();
+        long totalDocs = docService.countKnowledgeDocs();   // 真实知识文档，排除过程流水/废弃
+        long problemDocs = docService.countProblemDocs(90); // WHOLE 真问题：超期/取代/flag/待删/BROKEN
 
         model.addAttribute("totalDocs", totalDocs);
-        model.addAttribute("totalCalls", stats.get("totalCalls"));
+        model.addAttribute("totalCalls", stats.get("totalCalls"));        // 兼容旧字段名（现实中几乎没人用）
+        model.addAttribute("totalBiz", stats.get("totalBiz"));
+        model.addAttribute("totalTool", stats.get("totalTool"));
         model.addAttribute("todayCalls", stats.get("todayCalls"));
+        model.addAttribute("todayBiz", stats.get("todayBiz"));
+        model.addAttribute("todayTool", stats.get("todayTool"));
         model.addAttribute("successRate", String.format("%.1f", ((Double) stats.get("successRate")) * 100));
+        model.addAttribute("toolSuccessRate", String.format("%.1f", ((Double) stats.get("toolSuccessRate")) * 100));
         model.addAttribute("problemDocs", problemDocs);
-        model.addAttribute("totalAssistants", assistantService.count());
+        model.addAttribute("problemDocsByType", docService.countProblemDocsByType(90));
+        model.addAttribute("totalAssistants", assistantService.countActive());
 
         // 热门文档
         List<Doc> hotDocs = docMapper.selectList(

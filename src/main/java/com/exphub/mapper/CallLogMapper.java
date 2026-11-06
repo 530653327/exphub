@@ -13,16 +13,34 @@ import java.util.Map;
 public interface CallLogMapper extends BaseMapper<CallLog> {
 
     @Select("SELECT DATE(created_at) as date, " +
-            "COUNT(*) as total, " +
+            "SUM(CASE WHEN action = 'TOOL' THEN 1 ELSE 0 END) as toolCalls, " +
+            "SUM(CASE WHEN action != 'TOOL' THEN 1 ELSE 0 END) as bizCalls, " +
             "SUM(CASE WHEN action = 'SEARCH' THEN 1 ELSE 0 END) as searchCalls, " +
             "SUM(CASE WHEN action = 'CREATE' THEN 1 ELSE 0 END) as createCalls, " +
             "SUM(CASE WHEN action = 'UPDATE' THEN 1 ELSE 0 END) as updateCalls, " +
             "SUM(CASE WHEN action = 'DELETE' THEN 1 ELSE 0 END) as deleteCalls " +
             "FROM call_logs " +
-            "WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY) " +
+            "WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL (#{days} - 1) DAY) " +
             "GROUP BY DATE(created_at) " +
             "ORDER BY date ASC")
     List<Map<String, Object>> getCallTrend(@Param("days") int days);
+
+    /**
+     * 仪表盘业务动作汇总（action != 'TOOL'）。
+     * 返回: totalBiz / totalTool / totalAll / todayBiz / todayTool / bizSuccess / bizFail / bizTotal。
+     * 成功率按 call_logs 里业务动作的 success 字段实算（不再取 ai_assistants 的累计桶）。
+     */
+    @Select("SELECT " +
+            "SUM(CASE WHEN action != 'TOOL' THEN 1 ELSE 0 END) AS totalBiz, " +
+            "SUM(CASE WHEN action = 'TOOL' THEN 1 ELSE 0 END) AS totalTool, " +
+            "COUNT(*) AS totalAll, " +
+            "SUM(CASE WHEN action != 'TOOL' AND DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS todayBiz, " +
+            "SUM(CASE WHEN action = 'TOOL' AND DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS todayTool, " +
+            "SUM(CASE WHEN action != 'TOOL' AND success = 1 THEN 1 ELSE 0 END) AS bizSuccess, " +
+            "SUM(CASE WHEN action != 'TOOL' AND success = 0 THEN 1 ELSE 0 END) AS bizFail, " +
+            "SUM(CASE WHEN action = 'TOOL' AND success = 1 THEN 1 ELSE 0 END) AS toolSuccess " +
+            "FROM call_logs")
+    Map<String, Object> getOverviewStats();
 
     // ===== 工具维度统计（action='TOOL'，由 ToolCallAspect 写入）=====
 

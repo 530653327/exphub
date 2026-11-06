@@ -60,7 +60,7 @@
     <div class="main-content">
         <div class="topbar">
             <h4 class="mb-0">仪表盘</h4>
-            <span class="text-muted">欢迎回来，管理员</span>
+            <span class="text-muted">欢迎回来，<span th:text="${currentUserName}">管理员</span></span>
         </div>
 
         <div class="row mb-4">
@@ -69,7 +69,7 @@
                     <i class="fas fa-book-open icon"></i>
                     <div>
                         <div class="number" th:text="${totalDocs}">0</div>
-                        <div class="label">经验文档</div>
+                        <div class="label">经验文档（知识型）</div>
                     </div>
                 </div>
             </div>
@@ -77,8 +77,9 @@
                 <div class="stat-card bg-gradient-success">
                     <i class="fas fa-history icon"></i>
                     <div>
-                        <div class="number" th:text="${totalCalls}">0</div>
-                        <div class="label">总调用次数</div>
+                        <div class="number" th:text="${totalBiz}">0</div>
+                        <div class="label">业务动作（搜索/增删改）</div>
+                        <div class="small" th:text="'工具埋点 ' + ${totalTool}">0</div>
                     </div>
                 </div>
             </div>
@@ -86,8 +87,9 @@
                 <div class="stat-card bg-gradient-danger">
                     <i class="fas fa-bolt icon"></i>
                     <div>
-                        <div class="number" th:text="${todayCalls}">0</div>
-                        <div class="label">今日调用</div>
+                        <div class="number" th:text="${todayBiz}">0</div>
+                        <div class="label">今日业务动作</div>
+                        <div class="small" th:text="'工具 ' + ${todayTool}">0</div>
                     </div>
                 </div>
             </div>
@@ -96,7 +98,7 @@
                     <i class="fas fa-robot icon"></i>
                     <div>
                         <div class="number" th:text="${totalAssistants}">0</div>
-                        <div class="label">AI助手</div>
+                        <div class="label">活跃AI助手（在用）</div>
                     </div>
                 </div>
             </div>
@@ -107,8 +109,8 @@
                 <div class="stat-card" style="background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);">
                     <i class="fas fa-chart-pie icon"></i>
                     <div>
-                        <div class="number" th:text="${successRate} + '%'">0%</div>
-                        <div class="label">成功率</div>
+                        <div class="number" th:text="${toolSuccessRate} + '%'">0%</div>
+                        <div class="label">工具调用成功率</div>
                     </div>
                 </div>
             </div>
@@ -117,7 +119,16 @@
                     <i class="fas fa-exclamation-triangle icon"></i>
                     <div>
                         <div class="number" th:text="${problemDocs}">0</div>
-                        <div class="label">有问题文档</div>
+                        <div class="label">有待处理文档（超期/取代/flag/待删/BROKEN）</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4" th:if="${problemDocs > 0}">
+                <div class="stat-card" style="background: linear-gradient(135deg, #6c757d 0%, #adb5bd 100%);">
+                    <i class="fas fa-clipboard-list icon"></i>
+                    <div>
+                        <span class="d-block small" style="font-size:0.9rem; line-height:1.6;"
+                              th:text="'超期未验证 ' + ${problemDocsByType['STALE']} + ' · 被取代 ' + ${problemDocsByType['SUPERSEDED']} + ' · flag ' + ${problemDocsByType['FLAGGED']} + ' · 待删 ' + ${problemDocsByType['PENDING_DELETE']} + ' · BROKEN ' + ${problemDocsByType['BROKEN']}">-</span>
                     </div>
                 </div>
             </div>
@@ -135,6 +146,7 @@
         <div class="card mt-4">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <h5 class="mb-0"><i class="fas fa-fire text-danger mr-2"></i>热门经验 Top10</h5>
+                <span class="text-muted small">按「详情查看次数」排序（搜索曝光自 2026-10-21 起不再计入）</span>
             </div>
             <div class="card-body p-0">
                 <table class="table mb-0">
@@ -143,9 +155,7 @@
                             <th style="width: 40px;">#</th>
                             <th>标题</th>
                             <th>作者</th>
-                            <th>调用</th>
-                            <th>成功率</th>
-                            <th>评分</th>
+                            <th>详情查看</th>
                             <th>状态</th>
                         </tr>
                     </thead>
@@ -156,17 +166,10 @@
                             <td th:text="${doc.authorName}">-</td>
                             <td th:text="${doc.callCount}">0</td>
                             <td>
-                                <span th:if="${doc.callCount > 0}" th:text="${#numbers.formatDecimal(doc.successCount * 100.0 / doc.callCount, 1, 1)} + '%'">0%</span>
-                                <span th:if="${doc.callCount == 0}">-</span>
-                            </td>
-                            <td>
-                                <span th:if="${doc.ratingCount > 0}" th:text="${#numbers.formatDecimal(doc.rating, 1, 1)} + ' ⭐'">-</span>
-                                <span th:if="${doc.ratingCount == 0}" class="text-muted">-</span>
-                            </td>
-                            <td>
                                 <span th:if="${doc.status == 'ACTIVE'}" class="badge badge-active">正常</span>
                                 <span th:if="${doc.status == 'BROKEN'}" class="badge badge-broken">有问题</span>
                                 <span th:if="${doc.status == 'DEPRECATED'}" class="badge badge-deprecated">已废弃</span>
+                                <span th:if="${doc.status == 'PENDING_DELETE'}" class="badge badge-broken">待删</span>
                             </td>
                         </tr>
                     </tbody>
@@ -180,19 +183,17 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script>
         $(function() {
-            // 获取 contextPath（从页面已有的资源路径推断）
-            var path = window.location.pathname;
-            var ctx = path.substring(0, path.indexOf('/', 1)) || '';
-            if (ctx === '/exphub') ctx = '/exphub';
+            // 使用后端注入的 contextPath，避免 pathname 推断 / 硬编码 /exphub
+            var ctx = /*[[${contextPath}]]*/ '/exphub';
 
             $.get(ctx + '/api/stats/call-trend', { days: 7 }, function(res) {
                 if (res.code !== 0 || !res.data) return;
                 var data = res.data;
                 var labels = data.map(function(d) { return d.date; });
-                var totals = data.map(function(d) { return d.total; });
                 var searches = data.map(function(d) { return d.searchCalls; });
                 var creates = data.map(function(d) { return d.createCalls; });
                 var updates = data.map(function(d) { return d.updateCalls; });
+                var tools = data.map(function(d) { return d.toolCalls; });
 
                 var ctx2d = document.getElementById('trendChart').getContext('2d');
                 new Chart(ctx2d, {
@@ -219,6 +220,14 @@
                             {
                                 label: '更新',
                                 data: updates,
+                                borderColor: '#e94560',
+                                backgroundColor: 'rgba(233,69,96,0.1)',
+                                fill: true,
+                                tension: 0.3
+                            },
+                            {
+                                label: '工具埋点',
+                                data: tools,
                                 borderColor: '#f093fb',
                                 backgroundColor: 'rgba(240,147,251,0.1)',
                                 fill: true,
@@ -237,7 +246,7 @@
                             y: {
                                 beginAtZero: true,
                                 ticks: {
-                                    stepSize: 1
+                                    precision: 0
                                 }
                             }
                         }

@@ -324,28 +324,63 @@ public class CallLogService {
         return stats;
     }
 
+    /**
+     * 仪表盘总览统计（2026-11-06 第一批口径修正）。
+     *
+     * <p>修正前的问题与现状：
+     * <ul>
+     *   <li>totalCalls/todayCalls 混入 action='TOOL' 埋点：工具 11952 条占全表的 65.8%，
+     *       「总调用」被撑大三倍多 → 拆成 totalBiz/totalTool/totalAll 与 todayBiz/todayTool。</li>
+     *   <li>successRate 之前取 ai_assistants 的累计桶（success 5886 / fail 6），
+     *       但 fail 只在工具方法抛异常时 +1，工具几乎都 catch 返回错误串不抛 → 成功率恒 99.9% 假数。
+     *       且 total_calls(6050) 与 success_calls(5886) 自身不自洽（差 164）。</li>
+     *   <li>业务动作（SEARCH/CREATE/UPDATE/DELETE）的 success 列全是 NULL——埋点压根没记成败，
+     *       所以业务成功率**无法**从 call_logs 实算。只有 TOOL 埋点写了真实的 success(0/1)，
+     *       故成功率卡改为「工具调用成功率」，来源可追溯。</li>
+     * </ul>
+     */
     public Map<String, Object> getOverview() {
         Map<String, Object> stats = getStats();
+        Map<String, Object> o = callLogMapper.getOverviewStats();
 
-        // 今日调用次数
-        QueryWrapper<CallLog> todayWrapper = new QueryWrapper<>();
-        todayWrapper.apply("DATE(created_at) = CURDATE()");
-        long todayCalls = callLogMapper.selectCount(todayWrapper);
-        stats.put("todayCalls", todayCalls);
+        long totalBiz = toLong(o.get("totalBiz"));
+        long totalTool = toLong(o.get("totalTool"));
+        long todayBiz = toLong(o.get("todayBiz"));
+        long todayTool = toLong(o.get("todayTool"));
+        long bizSuccess = toLong(o.get("bizSuccess"));
+        long bizFail = toLong(o.get("bizFail"));
 
-        // 成功率（基于助手的成功/失败调用统计）
-        double successRate = 0.0;
-        List<AiAssistant> assistants = assistantMapper.selectList(null);
-        long totalSuccess = assistants.stream().mapToLong(a -> nvl(a.getSuccessCalls())).sum();
-        long totalFail = assistants.stream().mapToLong(a -> nvl(a.getFailCalls())).sum();
-        long total = totalSuccess + totalFail;
-        if (total > 0) {
-            successRate = (double) totalSuccess / total;
+        stats.put("totalBiz", totalBiz);
+        stats.put("totalTool", totalTool);
+        // 兼容旧字段名，避免 Dashboard 以外调用方（如 /api/stats/overview）读不到
+        stats.put("todayCalls", todayBiz + todayTool);
+        stats.put("todayBiz", todayBiz);
+        stats.put("todayTool", todayTool);
+
+        // 工具调用成功率：唯一有真实 success 数据的口径（TOOL 埋点 success=0/1）
+        // 取 getToolOverview().total/successCalls 实算，避免上面 SQL 里再维护一套口径。
+        double toolSuccessRate = 0.0;
+        try {
+            Map<String, Object> to = callLogMapper.getToolOverview();
+            long tTotal = toLong(to.get("total"));
+            double tSuccess = toLong(to.get("successCalls"));
+            if (tTotal > 0) {
+                toolSuccessRate = (tSuccess == 0 ? 0.0 : tSuccess) / tTotal;
+            }
+        } catch (Exception e) {
+            log.warn("读取工具成功率失败（已忽略）: {}", e.getMessage());
         }
-        stats.put("successRate", successRate);
 
-        stats.put("problemDocs", docMapper.selectCount(new QueryWrapper<Doc>().eq("status", "BROKEN")));
+        stats.put("successRate", toolSuccessRate);
+        stats.put("toolSuccessRate", toolSuccessRate);
+        stats.put("bizSuccess", bizSuccess);
+        stats.put("bizFail", bizFail);
+
         return stats;
+    }
+
+    private static long toLong(Object v) {
+        return v == null ? 0L : ((Number) v).longValue();
     }
 
     public List<Map<String, Object>> getTopAssistants(int limit) {

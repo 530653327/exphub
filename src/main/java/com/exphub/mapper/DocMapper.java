@@ -7,12 +7,34 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Map;
 
 @Mapper
 public interface DocMapper extends BaseMapper<Doc> {
 
     @Select("SELECT DISTINCT category FROM docs WHERE category IS NOT NULL AND category != '' ORDER BY category")
     List<String> getCategories();
+
+    /**
+     * 仪表盘「有问题文档」真实口径（2026-11-06 第一批修正）。
+     * 原实现只数 status='BROKEN'（线上恒 0，死指标），漏掉真正的风险信号：
+     *   - 已置为 BROKEN / 待删（PENDING_DELETE）
+     *   - 被取代（superseded_by 非空）
+     *   - 被打标记（flags 非空：needs_review/duplicate/superseded/stale/low_quality）
+     *   - ACTIVE 但超过 {@code missedDays} 天未验证（last_verified_at 为空 或 早于阈值）→ 时效风险
+     * 返回 [{type, cnt}]，type ∈ BROKEN / PENDING_DELETE / SUPERSEDED / FLAGGED / STALE。
+     */
+    @Select("SELECT 'BROKEN' AS type, COUNT(*) AS cnt FROM docs WHERE status = 'BROKEN' " +
+            "UNION ALL " +
+            "SELECT 'PENDING_DELETE', COUNT(*) FROM docs WHERE status = 'PENDING_DELETE' " +
+            "UNION ALL " +
+            "SELECT 'SUPERSEDED', COUNT(*) FROM docs WHERE superseded_by IS NOT NULL " +
+            "UNION ALL " +
+            "SELECT 'FLAGGED', COUNT(*) FROM docs WHERE flags IS NOT NULL AND flags != '' " +
+            "UNION ALL " +
+            "SELECT 'STALE', COUNT(*) FROM docs " +
+            "  WHERE status = 'ACTIVE' AND (last_verified_at IS NULL OR last_verified_at < DATE_SUB(CURDATE(), INTERVAL #{missedDays} DAY))")
+    List<Map<String, Object>> countProblemDocsByType(@Param("missedDays") int missedDays);
 
     /**
      * FULLTEXT 搜索（BOOLEAN MODE），按相关性 + 调用次数排序

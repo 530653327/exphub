@@ -103,6 +103,17 @@ public class AiAssistantService {
         return assistantMapper.selectCount(null);
     }
 
+    /**
+     * 活跃助手数（2026-11-06 第一批修正）。原 count() 全算，含 3 个 total_calls=0 / last_call_at=NULL 的空壳。
+     * 此处口径 = enabled=true 且在用的（total_calls > 0 或 last_call_at 非空）。
+     * 若想只按 enabled 算，可更简单地传 QueryWrapper.eq("enabled", true)。
+     */
+    public long countActive() {
+        return assistantMapper.selectCount(new QueryWrapper<AiAssistant>()
+            .eq("enabled", true)
+            .and(w -> w.gt("total_calls", 0).or().isNotNull("last_call_at")));
+    }
+
     // 生成 API Key
     private String generateApiKey() {
         return "exp-" + UUID.randomUUID().toString().replace("-", "");

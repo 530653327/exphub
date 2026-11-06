@@ -1844,7 +1844,48 @@ public class DocService {
     }
 
     public long countProblemDocs() {
-        return docMapper.selectCount(new QueryWrapper<Doc>().eq("status", "BROKEN"));
+        return countProblemDocs(90);
+    }
+
+    /**
+     * 仪表盘「有问题文档」真实口径（2026-11-06 修正）。原来只数 BROKEN（线上恒 0，死指标），
+     * 现在把真实风险信号一并纳入：BROKEN、待删、被取代、被打标记、超期未验证。
+     * 返回各类型计数之和。单独看分类用 {@link #countProblemDocsByType(int)}。
+     *
+     * @param missedDays 超过多少天未验证的 ACTIVE 文档算「时效风险」（默认 90）
+     */
+    public long countProblemDocs(int missedDays) {
+        return countProblemDocsByType(missedDays).values().stream().mapToLong(Long::longValue).sum();
+    }
+
+    /**
+     * 分类的问题文档计数。type ∈ BROKEN / PENDING_DELETE / SUPERSEDED / FLAGGED / STALE。
+     * 同一篇可能命中多类（如超期 + flag），分类计数会重复计入，总量 {@link #countProblemDocs(int)} 亦然。
+     * 若想去重可按 {@code total - 命中多类的行数} 反推，这里为看板展示各分类并列即可。
+     */
+    public Map<String, Long> countProblemDocsByType(int missedDays) {
+        Map<String, Long> result = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> row : docMapper.countProblemDocsByType(missedDays)) {
+            String type = String.valueOf(row.get("type"));
+            long cnt = ((Number) row.get("cnt")).longValue();
+            result.put(type, cnt);
+        }
+        return result;
+    }
+
+    /**
+     * 知识型文档数（仪表盘「经验文档」卡片，2026-11-06 修正）。
+     * 原 totalDocs = 全表 count，混入 process 流水（project_progress 427 + todo_list 25，
+     * 正是搜索主排名 {@link #EXCLUDED_FROM_RANKING} 排除的过程记录）、COMPLETED/DEPRECATED。
+     * 此处口径 = 有效知识文档：status IN (ACTIVE, COMPLETED)
+     *             且 template_type 不是排除的过程记录（project_progress / todo_list）。
+     * COMPLETED 保留（是「已完结的经验」，仍是知识；DEPRECATED/PENDING_DELETE/BROKEN 剔除）。
+     */
+    public long countKnowledgeDocs() {
+        return docMapper.selectCount(new QueryWrapper<Doc>()
+            .in("status", "ACTIVE", "COMPLETED")
+            .and(w -> w.isNull("template_type")
+                .or().notIn("template_type", EXCLUDED_FROM_RANKING)));
     }
 
     /**
