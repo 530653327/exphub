@@ -4,10 +4,22 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.exphub.entity.MailMessage;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+
+import java.util.List;
 
 @Mapper
 public interface MailMessageMapper extends BaseMapper<MailMessage> {
+
+    /** 后台筛选下拉用：出现过的角色代号（收发两侧合并去重）。 */
+    @Select("SELECT DISTINCT from_role FROM mail_messages " +
+            "UNION SELECT DISTINCT to_role FROM mail_messages ORDER BY 1")
+    List<String> distinctRoles();
+
+    /** 后台线程数统计。 */
+    @Select("SELECT COUNT(DISTINCT thread_id) FROM mail_messages")
+    long countThreads();
 
     /**
      * 原子认领：以<b>受影响行数</b>判胜负。

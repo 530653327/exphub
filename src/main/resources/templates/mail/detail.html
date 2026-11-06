@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>信件详情 - 经验阁 ExpHub</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .role-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; background: #eef0f4; padding: 2px 8px; border-radius: 10px; }
+        .type-dispatch { background: #e3f2fd; color: #1565c0; }
+        .type-receipt { background: #e8f5e9; color: #2e7d32; }
+        .type-accept { background: #d4edda; color: #155724; }
+        .type-fix { background: #fff3e0; color: #e65100; }
+        .type-note { background: #f1f3f5; color: #495057; }
+        .type-badge { font-size: 0.72rem; padding: 3px 9px; border-radius: 20px; }
+        .mail-card { border-left: 4px solid #dee2e6; }
+        .mail-card.current { border-left-color: #e94560; box-shadow: 0 0 0 3px rgba(233,69,96,0.08); }
+        .mail-body { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; line-height: 1.75; color: #2b2f36; }
+        .meta { color: #8a8f98; font-size: 0.78rem; }
+        .hint { color: #8a8f98; font-size: 0.78rem; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="brand">经验<span>阁</span> ExpHub</div>
+    <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+    <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+    <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+    <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+    <a th:href="@{/tool-stats}"><i class="fas fa-tools mr-2"></i> 工具统计</a>
+    <a th:href="@{/projects}"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+    <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+    <a th:href="@{/mail}" class="active"><i class="fas fa-envelope mr-2"></i> 协作信箱</a>
+</div>
+
+<div class="main-content">
+    <div class="topbar">
+        <div>
+            <div class="hint mb-1">
+                <a th:href="@{/mail}" class="hint"><i class="fas fa-arrow-left mr-1"></i>返回信箱</a>
+            </div>
+            <h5 class="mb-0">[[${current.subject}]]</h5>
+            <div class="hint mt-1">
+                线程 <span class="role-chip">[[${threadId}]]</span>
+                · 共 [[${threadSize}]] 封 · 当前 #[[${current.id}]]
+            </div>
+        </div>
+        <div class="hint text-right">
+            <div>发件 <span class="role-chip">[[${current.fromRole}]]</span></div>
+            <div class="mt-1">收件 <span class="role-chip">[[${current.toRole}]]</span></div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body py-3">
+            <div class="d-flex flex-wrap" style="gap:22px">
+                <div>
+                    <div class="hint">类型</div>
+                    <span class="type-badge"
+                          th:classappend="'type-' + ${current.msgType != null ? current.msgType : 'note'}"
+                          th:text="${current.msgType == 'dispatch' ? '派单'
+                                   : (current.msgType == 'receipt' ? '回执'
+                                   : (current.msgType == 'accept' ? '验收'
+                                   : (current.msgType == 'fix' ? '更正' : '通知')))}"></span>
+                </div>
+                <div>
+                    <div class="hint">时间</div>
+                    <div>[[${current.createdAt != null ? #temporals.format(current.createdAt, 'yyyy-MM-dd HH:mm:ss') : '-'}]]</div>
+                </div>
+                <div>
+                    <div class="hint">配置来源</div>
+                    <div class="role-chip">[[${current.configSourceId != null ? current.configSourceId : '（未带）'}]]</div>
+                </div>
+                <div>
+                    <div class="hint">回复</div>
+                    <div th:text="${current.inReplyTo != null ? '#' + current.inReplyTo : '新线程'}"></div>
+                </div>
+                <div>
+                    <div class="hint">认领</div>
+                    <div th:text="${current.claimedBy != null ? current.claimedBy : '未认领'}"></div>
+                </div>
+                <div>
+                    <div class="hint">处理</div>
+                    <div th:text="${current.processedAt != null ? '已处理 ' + #temporals.format(current.processedAt, 'MM-dd HH:mm') : '未处理'}"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="hint mb-2">
+        同一根线程的全部消息（按时间先后）。只看单封判断不了「回执到了没」，所以这里不按游标截断。
+    </div>
+
+    <div th:each="m : ${thread}" class="card mail-card mb-3"
+         th:classappend="${m.id == current.id} ? ' current' : ''">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <span class="role-chip">#[[${m.id}]]</span>
+                    <span class="type-badge ml-1"
+                          th:classappend="'type-' + ${m.msgType != null ? m.msgType : 'note'}"
+                          th:text="${m.msgType == 'dispatch' ? '派单'
+                                   : (m.msgType == 'receipt' ? '回执'
+                                   : (m.msgType == 'accept' ? '验收'
+                                   : (m.msgType == 'fix' ? '更正' : '通知')))}"></span>
+                    <span class="ml-2">
+                        <span class="role-chip">[[${m.fromRole}]]</span>
+                        <i class="fas fa-arrow-right mx-1" style="font-size:0.7rem;color:#b0b6c0"></i>
+                        <span class="role-chip">[[${m.toRole}]]</span>
+                    </span>
+                </div>
+                <div class="meta">
+                    [[${m.createdAt != null ? #temporals.format(m.createdAt, 'MM-dd HH:mm') : '-'}]]
+                    <span th:if="${m.configSourceId != null}"> · [[${m.configSourceId}]]</span>
+                </div>
+            </div>
+            <div class="mb-2" style="font-weight:600">[[${m.subject}]]</div>
+            <div class="mail-body">[[${m.body}]]</div>
+            <div class="meta mt-2" th:if="${m.claimedBy != null or m.processedAt != null}">
+                <span th:if="${m.claimedBy != null}"><i class="fas fa-lock mr-1"></i>[[${m.claimedBy}]] 认领</span>
+                <span th:if="${m.processedAt != null}" class="ml-2">
+                    <i class="fas fa-check-circle mr-1"></i>处理于 [[${#temporals.format(m.processedAt, 'MM-dd HH:mm')}]]
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

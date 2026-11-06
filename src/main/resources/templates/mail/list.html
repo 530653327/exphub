@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>协作信箱 - 经验阁 ExpHub</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .stat-card { border-radius: 12px; padding: 16px; color: #fff; }
+        .stat-card .number { font-size: 1.5rem; font-weight: bold; line-height: 1.2; }
+        .stat-card .label { font-size: 0.78rem; opacity: 0.9; }
+        .bg-g1 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .bg-g2 { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .bg-g3 { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .bg-g4 { background: linear-gradient(135deg, #434343 0%, #000000 100%); }
+        .mail-row { cursor: pointer; }
+        .mail-row:hover { background: #f8f9ff; }
+        .subject { font-weight: 600; color: #1a1a2e; }
+        .snippet { color: #8a8f98; font-size: 0.8rem; }
+        .role-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; background: #eef0f4; padding: 2px 8px; border-radius: 10px; }
+        .type-dispatch { background: #e3f2fd; color: #1565c0; }
+        .type-receipt { background: #e8f5e9; color: #2e7d32; }
+        .type-accept { background: #d4edda; color: #155724; }
+        .type-fix { background: #fff3e0; color: #e65100; }
+        .type-note { background: #f1f3f5; color: #495057; }
+        .type-badge { font-size: 0.72rem; padding: 3px 9px; border-radius: 20px; }
+        .state-done { color: #2e7d32; font-size: 0.76rem; }
+        .state-open { color: #b26a00; font-size: 0.76rem; }
+        .filter-bar { background: #fff; border-radius: 12px; padding: 16px 20px; margin-bottom: 18px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .hint { color: #8a8f98; font-size: 0.78rem; }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="brand">经验<span>阁</span> ExpHub</div>
+    <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+    <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+    <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+    <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+    <a th:href="@{/tool-stats}"><i class="fas fa-tools mr-2"></i> 工具统计</a>
+    <a th:href="@{/projects}"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+    <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+    <a th:href="@{/mail}" class="active"><i class="fas fa-envelope mr-2"></i> 协作信箱</a>
+</div>
+
+<div class="main-content">
+    <div class="topbar">
+        <div>
+            <h5 class="mb-0"><i class="fas fa-envelope mr-2" style="color:#e94560"></i>协作信箱</h5>
+            <div class="hint mt-1">助手之间的通信记录 · 只追加不回改 · 不进经验搜索</div>
+        </div>
+        <div class="hint">共 [[${totalMessages}]] 封 / [[${totalThreads}]] 根线程</div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-md-3 mb-2">
+            <div class="stat-card bg-g1">
+                <div class="number">[[${totalMessages}]]</div>
+                <div class="label">全部消息</div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-2">
+            <div class="stat-card bg-g2">
+                <div class="number">[[${totalThreads}]]</div>
+                <div class="label">线程数</div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-2">
+            <div class="stat-card bg-g3">
+                <div class="number">[[${todayMessages}]]</div>
+                <div class="label">今日消息</div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-2">
+            <div class="stat-card bg-g4">
+                <div class="number">[[${unprocessedMessages}]]</div>
+                <div class="label">尚未处理</div>
+            </div>
+        </div>
+    </div>
+
+    <form class="filter-bar" method="get" th:action="@{/mail}">
+        <div class="form-row align-items-end">
+            <div class="col-md-2 mb-2">
+                <label class="hint mb-1">发件人</label>
+                <select class="form-control form-control-sm" name="fromRole">
+                    <option value="">全部</option>
+                    <option th:each="r : ${roles}" th:value="${r}" th:text="${r}"
+                            th:selected="${r == fromRole}"></option>
+                </select>
+            </div>
+            <div class="col-md-2 mb-2">
+                <label class="hint mb-1">收件人</label>
+                <select class="form-control form-control-sm" name="toRole">
+                    <option value="">全部</option>
+                    <option th:each="r : ${roles}" th:value="${r}" th:text="${r}"
+                            th:selected="${r == toRole}"></option>
+                </select>
+            </div>
+            <div class="col-md-2 mb-2">
+                <label class="hint mb-1">类型</label>
+                <select class="form-control form-control-sm" name="type">
+                    <option value="">全部</option>
+                    <option value="dispatch" th:selected="${type == 'dispatch'}">派单</option>
+                    <option value="receipt" th:selected="${type == 'receipt'}">回执</option>
+                    <option value="accept" th:selected="${type == 'accept'}">验收</option>
+                    <option value="note" th:selected="${type == 'note'}">通知</option>
+                    <option value="fix" th:selected="${type == 'fix'}">更正</option>
+                </select>
+            </div>
+            <div class="col-md-3 mb-2">
+                <label class="hint mb-1">关键词（主题 / 正文 / 线程号）</label>
+                <input type="text" class="form-control form-control-sm" name="keyword"
+                       th:value="${keyword}" placeholder="如 部署、信箱、T2611">
+            </div>
+            <div class="col-md-3 mb-2">
+                <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-search mr-1"></i>查询</button>
+                <a th:href="@{/mail}" class="btn btn-sm btn-outline-secondary ml-1">重置</a>
+            </div>
+        </div>
+    </form>
+
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="thead-light">
+                <tr>
+                    <th style="width:64px">#</th>
+                    <th style="width:96px">时间</th>
+                    <th style="width:200px">发件 → 收件</th>
+                    <th style="width:78px">类型</th>
+                    <th>主题 / 首行</th>
+                    <th style="width:130px">线程</th>
+                    <th style="width:96px">状态</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:if="${#lists.isEmpty(messages)}">
+                    <td colspan="7" class="text-center text-muted py-5">
+                        还没有信件。助手调 <code>mail_send</code> 发一封就会出现在这里。
+                    </td>
+                </tr>
+                <tr th:each="m : ${messages}" class="mail-row">
+                    <td><a th:href="@{/mail/{id}(id=${m.id})}" class="role-chip">#[[${m.id}]]</a></td>
+                    <td class="hint">[[${m.createdAt != null ? #temporals.format(m.createdAt, 'MM-dd HH:mm') : '-'}]]</td>
+                    <td>
+                        <span class="role-chip">[[${m.fromRole}]]</span>
+                        <i class="fas fa-arrow-right mx-1" style="font-size:0.7rem;color:#b0b6c0"></i>
+                        <span class="role-chip">[[${m.toRole}]]</span>
+                    </td>
+                    <td>
+                        <span class="type-badge"
+                              th:classappend="'type-' + ${m.msgType != null ? m.msgType : 'note'}"
+                              th:text="${m.msgType == 'dispatch' ? '派单'
+                                       : (m.msgType == 'receipt' ? '回执'
+                                       : (m.msgType == 'accept' ? '验收'
+                                       : (m.msgType == 'fix' ? '更正' : '通知')))}"></span>
+                    </td>
+                    <td>
+                        <div class="subject">[[${m.subject}]]</div>
+                        <div class="snippet" th:text="${#strings.abbreviate(m.body != null ? m.body.replaceAll('\\s+',' ') : '', 110)}"></div>
+                    </td>
+                    <td><span class="role-chip">[[${m.threadId}]]</span></td>
+                    <td>
+                        <span th:if="${m.processedAt != null}" class="state-done">
+                            <i class="fas fa-check-circle mr-1"></i>已处理
+                        </span>
+                        <span th:if="${m.processedAt == null}" class="state-open">
+                            <i class="far fa-circle mr-1"></i>未处理
+                        </span>
+                        <div th:if="${m.claimedBy != null}" class="hint mt-1">
+                            <i class="fas fa-lock mr-1"></i>[[${m.claimedBy}]]
+                        </div>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <nav class="mt-3" th:if="${totalPages > 1}">
+        <ul class="pagination pagination-sm justify-content-center">
+            <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled' : ''">
+                <a class="page-link"
+                   th:href="@{/mail(page=${currentPage - 1}, fromRole=${fromRole}, toRole=${toRole}, type=${type}, keyword=${keyword})}">上一页</a>
+            </li>
+            <li class="page-item disabled">
+                <span class="page-link">[[${currentPage}]] / [[${totalPages}]]</span>
+            </li>
+            <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled' : ''">
+                <a class="page-link"
+                   th:href="@{/mail(page=${currentPage + 1}, fromRole=${fromRole}, toRole=${toRole}, type=${type}, keyword=${keyword})}">下一页</a>
+            </li>
+        </ul>
+    </nav>
+</div>
+</body>
+</html>
