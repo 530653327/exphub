@@ -320,8 +320,11 @@ class ToolDescriptionRedundancyTest {
         //            resolve_candidate 加 candidateIds（批量判定），参数 179 → 183。
         // 同日补救：reopen_candidate 加 candidateIds（批量撤销），参数 183 → 184。
         //            判错一次要救几十条时，只能逐条撤等于不撤 —— 撤销通道比判定通道更该好用。
-        assertEquals(47, toolCount, "工具数变了（46 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(184, paramCount, "参数数变了（183 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-11-06 2.3.2 信箱：47 → 50，新增 mail_start（3 参数）/ mail_send（6）/ mail_thread（5）；
+        //            参数 184 → 198。只加三个是阁主砍的：工具 schema 是每轮都付的常驻成本
+        //            （#1324 C108），五个会拿省下来的读信钱去赔工具说明钱。
+        assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(198, paramCount, "参数数变了（184 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

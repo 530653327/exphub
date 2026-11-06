@@ -230,5 +230,38 @@ INSERT IGNORE INTO doc_templates (type, name, description, instruction, template
  '## 📅 排期概述\n- 项目名称：\n- 计划周期：开始时间 ~ 结束时间\n- 当前阶段：\n\n## 🎯 里程碑\n| 时间节点 | 里程碑 | 交付物 | 状态 |\n|---------|--------|--------|------|\n| YYYY-MM-DD | 需求评审 | PRD文档 | ⏳ |\n| YYYY-MM-DD | 开发完成 | 代码+测试 | ⏳ |\n| YYYY-MM-DD | 上线发布 | 发布报告 | ⏳ |\n\n## 📋 阶段划分\n\n### 阶段一：名称（起止日期）\n- [ ] 任务1\n- [ ] 任务2\n\n### 阶段二：名称（起止日期）\n- [ ] 任务1\n- [ ] 任务2\n\n## ⚠️ 风险与阻塞\n- 风险描述 | 影响范围 | 应对措施\n\n## 📝 进展记录\n- [日期] 完成了什么，遇到了什么问题');
 
 -- ============================================================
+-- 14/15. 协作信箱（2026-11-06）
+-- 消息只追加、不回改；不进 docs 全文索引，不参与经验搜索排名。
+-- 线程不另建表：thread_id + in_reply_to 自聚合。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS mail_messages (
+    id               BIGINT PRIMARY KEY AUTO_INCREMENT,
+    thread_id        VARCHAR(32)  NOT NULL COMMENT '线程号，服务端生成',
+    in_reply_to      BIGINT       NULL     COMMENT '父消息ID；有值即回信',
+    from_role        VARCHAR(32)  NOT NULL COMMENT '发件角色，服务端填',
+    to_role          VARCHAR(32)  NOT NULL COMMENT '收件角色',
+    msg_type         VARCHAR(16)  NOT NULL DEFAULT 'note' COMMENT 'dispatch/receipt/accept/note/fix',
+    subject          VARCHAR(200) NOT NULL,
+    body             MEDIUMTEXT   NOT NULL,
+    client_msg_id    VARCHAR(64)  NULL     COMMENT '幂等键',
+    claimed_by       VARCHAR(32)  NULL     COMMENT '认领人，原子更新抢锁',
+    claimed_at       DATETIME     NULL,
+    processed_at     DATETIME     NULL,
+    config_source_id VARCHAR(64)  NULL     COMMENT '配置来源标识，不证明是谁写的',
+    created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_mail_client (client_msg_id),
+    KEY idx_mail_to (to_role, id),
+    KEY idx_mail_thread (thread_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='助手间信箱消息（只追加）';
+
+CREATE TABLE IF NOT EXISTS mail_cursors (
+    role         VARCHAR(32) NOT NULL,
+    thread_id    VARCHAR(32) NOT NULL,
+    last_read_id BIGINT      NOT NULL DEFAULT 0,
+    updated_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (role, thread_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='信箱阅读游标';
+
+-- ============================================================
 -- 完成
 -- ============================================================

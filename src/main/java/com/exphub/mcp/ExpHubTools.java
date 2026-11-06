@@ -4,6 +4,7 @@ import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.DocTemplate;
 import com.exphub.entity.DocVersion;
+import com.exphub.entity.MailMessage;
 import com.exphub.entity.Project;
 import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.CallLogService;
@@ -91,6 +92,9 @@ public class ExpHubTools {
 
     @Autowired
     private SimilarityService similarityService;
+
+    @Autowired
+    private com.exphub.service.MailboxService mailboxService;
 
     /**
      * 获取当前调用者权限信息
@@ -5882,6 +5886,202 @@ public class ExpHubTools {
             log.error("ExpHubTools.listArchivedVersions: FAILED", e);
             callLogService.incrementFailCalls();
             return "查询失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    // ================================================================
+    // 协作信箱（2026-11-06；设计定稿见 #1324 C114–C121）
+    //
+    // 只碰 mail_messages / mail_cursors，不进 docs 索引、不影响搜索排名。
+    // 身份 = 共享 Key + 客户端配置里写死的请求头，属「委托信任」，不是鉴权。
+    // ================================================================
+
+    /** 当前角色：优先客户端配置注入的请求头，其次参数兜底（只有带不了 header 的客户端才用）。 */
+    private String mailRole(String fallback) {
+        String r = MailIdentity.role();
+        if (r == null || r.isBlank()) r = fallback;
+        return (r == null) ? null : r.trim();
+    }
+
+    @Tool(name = "mail_start",
+          description = "【开工先调这个】取「你是谁 + 未读信封」。身份来自客户端配置注入的 x-exphub-role 头（委托信任，不是鉴权）；"
+                      + "没配角色就只回提示、不给任何私信。信封按线程聚合，每根一行：主题/发件人/新消息数/正文首 100 字。"
+                      + "要展开某根用 mail_thread；q 只搜主题/发件人/类型，不搜正文。")
+    public String mailStart(
+            @ToolParam(description = "可选。搜信封的关键词（只匹配主题/发件人/类型，不搜正文）", required = false) String q,
+            @ToolParam(description = "可选。最多列几根线程，默认 20，上限 50", required = false) Integer limit,
+            @ToolParam(description = "可选。角色代号兜底。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role) {
+        try {
+            String me = mailRole(role);
+            String cfg = MailIdentity.configSource();
+            StringBuilder sb = new StringBuilder();
+
+            if (me == null) {
+                sb.append("⚠️ 未声明角色：客户端配置里没有 `").append(MailIdentity.HEADER_ROLE).append("` 头。\n");
+                sb.append("本机制是**委托信任、不是鉴权** —— 服务端不认人，只按配置给信件贴收件人标签。\n");
+                sb.append("配好之前**不给任何私信**，免得串信。\n");
+                sb.append("配法：MCP 客户端配置加请求头 `").append(MailIdentity.HEADER_ROLE)
+                  .append(": 你的代号`、`").append(MailIdentity.HEADER_CONFIG_SOURCE)
+                  .append(": 唯一配置标识`（九份配置别从模板复制，实例 ID 必须各不相同）。\n");
+                return sb.toString();
+            }
+
+            int lim = (limit == null || limit <= 0) ? 20 : Math.min(limit, 50);
+            boolean searchMode = q != null && !q.isBlank();
+            int unread = mailboxService.unreadCount(me);
+
+            sb.append("你是【").append(me).append("】");
+            if (cfg != null) sb.append("，配置来源 ").append(cfg);
+            sb.append("；未读 ").append(unread).append(" 封\n");
+
+            List<com.exphub.service.MailboxService.Envelope> list =
+                    mailboxService.inbox(me, q, lim, searchMode);
+            if (list.isEmpty()) {
+                sb.append(searchMode ? "📭 没搜到匹配的信封。换个词，或直接报 thread_id 用 mail_thread 展开。\n"
+                                     : "📭 没有新信。要翻旧信传 q（搜主题/发件人/类型）。\n");
+                return sb.toString();
+            }
+
+            sb.append("\n📬 ").append(list.size()).append(" 根线程").append(searchMode ? "（含已读）" : "有待看").append("\n");
+            for (com.exphub.service.MailboxService.Envelope e : list) {
+                sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
+                  .append(" · ").append(e.fromRole)
+                  .append(" · ").append(e.freshCount).append(" 封新")
+                  .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt));
+                if (e.claimed) sb.append(" · 已认领(").append(e.claimedBy).append(")");
+                sb.append("\n  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
+            }
+            sb.append("\n> 展开某根：`mail_thread(thread_id=\"").append(list.get(0).threadId).append("\")`\n");
+            sb.append("> 未读只是计数；推信只看游标（服务端记，别自己记）。标处理过用 `mail_thread(..., ack_ids=\"消息ID\")`。\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.mailStart: FAILED", e);
+            return "读信箱失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "mail_send",
+          description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 in_reply_to，线程自动推导（没有 thread_id 参数）。"
+                      + "消息只追加不可改，要纠错发一条 type=fix 引用原信。client_msg_id 做幂等，工具超时重试不会发两封。"
+                      + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。")
+    public String mailSend(
+            @ToolParam(description = "收件角色代号，如 baize / gezhu") String to,
+            @ToolParam(description = "主题，一句话说清这件事") String subject,
+            @ToolParam(description = "正文。建议不超过 8000 字，超了拆成多条；禁止写账号密码密钥") String body,
+            @ToolParam(description = "可选。回信填父消息ID；不填=开新线程", required = false) Long inReplyTo,
+            @ToolParam(description = "可选。类型：dispatch/receipt/accept/note/fix，默认 note", required = false) String type,
+            @ToolParam(description = "可选。幂等键。工具超时重试时带同一个值，不会重复发", required = false) String clientMsgId) {
+        try {
+            String me = mailRole(null);
+            if (me == null) {
+                return "❌ 发不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE
+                        + "` 头，服务端不知道该署谁的名。先配好角色再发。";
+            }
+            MailMessage m = mailboxService.send(me, to, subject, body, inReplyTo, type, clientMsgId,
+                    MailIdentity.configSource());
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ 已以【").append(me).append("】");
+            String cfg = MailIdentity.configSource();
+            if (cfg != null) sb.append("（配置来源 ").append(cfg).append("）");
+            sb.append("发给【").append(m.getToRole()).append("】\n");
+            sb.append("消息 #").append(m.getId()).append("，线程 ").append(m.getThreadId())
+              .append("，类型 ").append(m.getMsgType());
+            if (m.getInReplyTo() != null) sb.append("，回复 #").append(m.getInReplyTo());
+            sb.append("\n");
+            return sb.toString();
+        } catch (IllegalArgumentException iae) {
+            return "❌ " + iae.getMessage();
+        } catch (Exception e) {
+            log.error("ExpHubTools.mailSend: FAILED", e);
+            return "发信失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "mail_thread",
+          description = "展开一根线程。默认只给**游标之后的新消息**（最多 10 条），full=true 才从头分页回溯。"
+                      + "读完服务端自动推游标 —— 同样的参数不用再调一次，不会重复给同一批。"
+                      + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ack_ids 只记「处理过」，不参与去重。")
+    public String mailThread(
+            @ToolParam(description = "线程号，从 mail_start 的信封列表里抄") String threadId,
+            @ToolParam(description = "可选。true=从线程头开始（分页回溯）；默认 false 只给游标之后的新消息", required = false) Boolean full,
+            @ToolParam(description = "可选。条数上限：默认 10，回溯模式默认 30，都封顶 50", required = false) Integer limit,
+            @ToolParam(description = "可选。逗号分隔的消息ID，标记「我处理过了」。只做展示，不推游标、不影响去重", required = false) String ackIds,
+            @ToolParam(description = "可选。要认领的消息ID（派单用）。抢锁失败会回是谁认领的", required = false) Long claimId) {
+        try {
+            String me = mailRole(null);
+            if (me == null) {
+                return "❌ 读不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE + "` 头。";
+            }
+            if (threadId == null || threadId.isBlank()) {
+                return "❌ 要 thread_id。从 mail_start 的信封列表里抄，别自己编。";
+            }
+            boolean backfill = Boolean.TRUE.equals(full);
+            int def = backfill ? 30 : 10;
+            int lim = (limit == null || limit <= 0) ? def : Math.min(limit, 50);
+
+            // 认领先做：失败要说清是谁认的，别让调用方以为读到了就算拿到了
+            StringBuilder head = new StringBuilder();
+            if (claimId != null) {
+                int ok = mailboxService.claim(claimId, me);
+                if (ok == 1) {
+                    head.append("🔒 已认领 #").append(claimId).append("\n");
+                } else {
+                    MailMessage c = mailboxService.byId(claimId);
+                    head.append("⚠️ 认领失败：#").append(claimId);
+                    if (c != null && c.getClaimedBy() != null) {
+                        head.append(" 已被【").append(c.getClaimedBy()).append("】认领于 ")
+                            .append(com.exphub.service.MailboxService.time(c.getClaimedAt()));
+                    } else {
+                        head.append(" 不存在");
+                    }
+                    head.append("。别重复接这单，先跟对方确认。\n");
+                }
+            }
+
+            List<MailMessage> list = mailboxService.thread(me, threadId.trim(), backfill, lim);
+            long total = mailboxService.countThread(threadId.trim());
+
+            if (list.isEmpty()) {
+                return head + "📭 这根线程没有新消息（游标已到头，共 " + total + " 封）。要重看历史传 `full=true`。";
+            }
+
+            StringBuilder sb = new StringBuilder(head);
+            sb.append("📬 线程 ").append(threadId.trim())
+              .append("「").append(mailboxService.threadSubject(threadId.trim())).append("」")
+              .append("　本批 ").append(list.size()).append(" 封 / 共 ").append(total).append(" 封\n\n");
+            for (MailMessage m : list) {
+                sb.append("---\n#").append(m.getId()).append(" [").append(m.getMsgType()).append("] ")
+                  .append(m.getFromRole()).append(" → ").append(m.getToRole())
+                  .append(" · ").append(com.exphub.service.MailboxService.time(m.getCreatedAt()));
+                if (m.getConfigSourceId() != null) sb.append(" · 配置 ").append(m.getConfigSourceId());
+                if (m.getClaimedBy() != null) sb.append(" · 已认领(").append(m.getClaimedBy()).append(")");
+                if (m.getProcessedAt() != null) sb.append(" · 已处理");
+                sb.append("\n**").append(m.getSubject()).append("**\n")
+                  .append(m.getBody() == null ? "" : m.getBody()).append("\n\n");
+            }
+
+            long tail = list.get(list.size() - 1).getId();
+            sb.append("> 已读到 #").append(tail).append("，服务端游标已推进。**同样参数别重复调**，没有新信时会直接告诉你到头了。\n");
+
+            // ack：只记「处理过」，不推游标
+            if (ackIds != null && !ackIds.isBlank()) {
+                int acked = 0;
+                for (String t : ackIds.split("[,，\\s]+")) {
+                    if (t.isBlank()) continue;
+                    try {
+                        Long id = Long.parseLong(t.trim());
+                        int n = mailboxService.markProcessed(id, me);
+                        if (n > 0) acked++;
+                    } catch (NumberFormatException ignore) {
+                        // 非数字项跳过，不因为一个脏参数整封失败
+                    }
+                }
+                sb.append("> 已标记 ").append(acked).append(" 封为处理过（只是记录，不影响游标）。\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.mailThread: FAILED", e);
+            return "读线程失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
     }
 }

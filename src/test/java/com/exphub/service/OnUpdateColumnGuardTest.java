@@ -58,7 +58,10 @@ class OnUpdateColumnGuardTest {
             "docs_updated_at_bak20261029", Set.of("updated_at"),
             "projects", Set.of("updated_at"),
             "public_users", Set.of("updated_at"),
-            "users", Set.of("updated_at"));
+            "users", Set.of("updated_at"),
+            // 2026-11-06 协作信箱：游标表的 updated_at 声明了 ON UPDATE，
+            // 建表脚本执行后线上同样具备（migration_20261106a_mailbox.sql）。
+            "mail_cursors", Set.of("updated_at"));
 
     /**
      * 仓库 DDL 声明了 ON UPDATE、但线上实测**没有**的列。必须逐条说明理由，

@@ -127,14 +127,25 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
         // 将助手信息存入 InheritableThreadLocal（关键！boundedElastic 线程需要）
         currentAssistantHolder.set(assistant);
         request.setAttribute(ASSISTANT_ATTR, assistant);
-        log.info("validateApiKey: assistant set, assistantId={}, assistantName={}", 
-            assistant.getAssistantId(), assistant.getAssistantName());
+
+        // 协作信箱：角色与配置来源来自客户端配置里写死的请求头。
+        // 注意这不是鉴权 —— 网关只认上面这把共享 Key，角色谁都能声称（#1324 C118）。
+        // 放这里读是为了拿到「每次请求的真实 header」；工具层只从 ThreadLocal 取，
+        // 不接受模型作为参数传入。
+        com.exphub.mcp.MailIdentity.set(
+                request.getHeader(com.exphub.mcp.MailIdentity.HEADER_ROLE),
+                request.getHeader(com.exphub.mcp.MailIdentity.HEADER_CONFIG_SOURCE));
+
+        log.info("validateApiKey: assistant set, assistantId={}, assistantName={}, role={}, configSource={}",
+            assistant.getAssistantId(), assistant.getAssistantName(),
+            com.exphub.mcp.MailIdentity.role(), com.exphub.mcp.MailIdentity.configSource());
         return true;
     }
 
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
         currentAssistantHolder.remove();
+        com.exphub.mcp.MailIdentity.clear();
     }
 
     /**
