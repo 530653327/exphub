@@ -84,6 +84,7 @@ public class PageController extends BaseController {
         model.addAttribute("todayBiz", stats.get("todayBiz"));
         model.addAttribute("todayTool", stats.get("todayTool"));
         model.addAttribute("successRate", String.format("%.1f", ((Double) stats.get("successRate")) * 100));
+        model.addAttribute("successSampled", stats.get("successSampled"));
         model.addAttribute("toolSuccessRate", String.format("%.1f", ((Double) stats.get("toolSuccessRate")) * 100));
         model.addAttribute("problemDocs", problemDocs);
         model.addAttribute("problemDocsByType", docService.countProblemDocsByType(90));

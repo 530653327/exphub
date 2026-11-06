@@ -15,7 +15,7 @@ public class CallLog {
     private String action;           // 操作类型：SEARCH/CREATE/UPDATE/DELETE/HELPFUL/TOOL
     private String toolName;         // MCP 工具名（action=TOOL 时记录，用于工具维度统计）
     private Integer costMs;          // 工具耗时毫秒（action=TOOL 时记录）
-    private Integer success;         // 工具调用成败 1成功 0失败（action=TOOL 时记录）
+    private Integer success;         // 成败 1成功 0失败。TOOL=工具调用执行成败；SEARCH=是否有结果（>0命中=1，零命中=0）；CREATE/UPDATE/DELETE/HELPFUL=1
     private String keyword;          // 检索关键字（SEARCH 时用）
     private Integer hitCount;        // 命中数据条数（SEARCH 时用）
     private Long docId;             // 文档ID（CREATE/UPDATE/DELETE 时用）

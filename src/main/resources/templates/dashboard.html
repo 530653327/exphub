@@ -109,8 +109,10 @@
                 <div class="stat-card" style="background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);">
                     <i class="fas fa-chart-pie icon"></i>
                     <div>
-                        <div class="number" th:text="${toolSuccessRate} + '%'">0%</div>
-                        <div class="label">工具调用成功率</div>
+                        <div class="number" th:if="${successSampled > 0}" th:text="${successRate} + '%'">0%</div>
+                        <div class="number" th:if="${successSampled == 0}">积累中</div>
+                        <div class="label">业务成功率（搜索有结果+写动作成功）</div>
+                        <div class="small" th:text="'工具成功率 ' + ${toolSuccessRate} + '%'">0%</div>
                     </div>
                 </div>
             </div>

@@ -116,12 +116,24 @@ public class CallLogService {
                 + "（署名=" + signed + "，Key 绑定=" + keyName + "）");
     }
 
-    // 系统自动记录调用日志（从拦截器获取调用者信息）
+    /**
+     * 记录一次搜索。
+     *
+     * <p><b>success 语义（2026-11-06 第二批补业务埋点成败）</b>：
+     * SEARCH 的 success 记「本次搜索是否搜到了东西」——{@code hitCount > 0} = 1（有结果），
+     * {@code 0} 命中 = 0（零命中，搜索没到达预期）。这不是系统错误，而是**搜索质量信号**：
+     * 零命中率高说明召回差，正是仪表盘该盯的指标。要区分「系统失败」与「零命中」，
+     * 前者由异常链路/TOOL 埋点体现，后者用 success=0 + hit_count=0 表达。
+     */
     public CallLog logSearch(String keyword, int hitCount, List<Doc> matchedDocs) {
         CallLog entry = new CallLog();
         entry.setAction("SEARCH");
         entry.setKeyword(keyword);
         entry.setHitCount(hitCount);
+        entry.setSuccess(hitCount > 0 ? 1 : 0);
+        if (hitCount == 0) {
+            entry.setDetail("零命中");
+        }
 
         // 记录匹配到的经验标题。拼接长度由 CallLogWriter 按列宽兜底截断，
         // 这里保留完整拼接意图，不再手工控制长度。
@@ -148,13 +160,14 @@ public class CallLogService {
         return entry;
     }
 
-    // 记录创建经验
+    // 记录创建经验。success=1（能走到这里说明写操作已成功执行）
     public CallLog logCreate(Doc doc) {
         CallLog entry = new CallLog();
         entry.setAction("CREATE");
         entry.setDocId(doc.getId());
         entry.setDocTitle(doc.getTitle());
         entry.setDetail("创建新经验");
+        entry.setSuccess(1);
 
         // 同 logUpdate：署名以文档 author_name 为准，Key 名只作追溯线索
         fillCaller(entry, doc.getAuthorName());
@@ -183,6 +196,7 @@ public class CallLogService {
         entry.setDocId(doc.getId());
         entry.setDocTitle(doc.getTitle());
         entry.setDetail("更新经验至 v" + doc.getVersion());
+        entry.setSuccess(1);   // 走到这里说明写操作已成功执行
 
         // 署名以自报值为准，Key 名只作 detail 里的追溯线索
         fillCaller(entry, signedName);
@@ -191,13 +205,14 @@ public class CallLogService {
         return entry;
     }
 
-    // 记录删除经验
+    // 记录删除经验。success=1（走到这里说明删除已执行）
     public CallLog logDelete(Long docId, String docTitle) {
         CallLog entry = new CallLog();
         entry.setAction("DELETE");
         entry.setDocId(docId);
         entry.setDocTitle(docTitle);
         entry.setDetail("删除经验");
+        entry.setSuccess(1);
 
         fillCaller(entry);
         safeUpdateAssistant(ApiKeyInterceptor.getCurrentAssistant());
@@ -205,13 +220,14 @@ public class CallLogService {
         return entry;
     }
 
-    // 记录 AI 反馈（经验是否有帮助）
+    // 记录 AI 反馈（经验是否有帮助）。HELPFUL/NOT_HELPFUL 都是成功（用户给出了反馈）
     public CallLog logFeedback(Doc doc, boolean helpful, String feedback) {
         CallLog entry = new CallLog();
         entry.setAction(helpful ? "HELPFUL" : "NOT_HELPFUL");
         entry.setDocId(doc.getId());
         entry.setDocTitle(doc.getTitle());
         entry.setDetail(feedback != null ? feedback : "");
+        entry.setSuccess(1);
 
         fillCaller(entry);
         safeUpdateAssistant(ApiKeyInterceptor.getCurrentAssistant());
@@ -334,9 +350,10 @@ public class CallLogService {
      *   <li>successRate 之前取 ai_assistants 的累计桶（success 5886 / fail 6），
      *       但 fail 只在工具方法抛异常时 +1，工具几乎都 catch 返回错误串不抛 → 成功率恒 99.9% 假数。
      *       且 total_calls(6050) 与 success_calls(5886) 自身不自洽（差 164）。</li>
-     *   <li>业务动作（SEARCH/CREATE/UPDATE/DELETE）的 success 列全是 NULL——埋点压根没记成败，
-     *       所以业务成功率**无法**从 call_logs 实算。只有 TOOL 埋点写了真实的 success(0/1)，
-     *       故成功率卡改为「工具调用成功率」，来源可追溯。</li>
+     *   <li>业务动作（SEARCH/CREATE/UPDATE/DELETE）的 success 列原全 NULL——埋点没记成败。
+     *       2026-11-06 第二批已补：SEARCH=是否有结果(>0命中=1/零命中=0)，写动作=1。
+     *       业务成功率从「新埋点且 success 非 NULL」实算，存量 NULL 不计入分子分母（历史数据补不回）。</li>
+     *   <li>工具成功率保留在 toolSuccessRate（TOOL 埋点 success=0/1，历史即有）。</li>
      * </ul>
      */
     public Map<String, Object> getOverview() {
@@ -357,8 +374,17 @@ public class CallLogService {
         stats.put("todayBiz", todayBiz);
         stats.put("todayTool", todayTool);
 
-        // 工具调用成功率：唯一有真实 success 数据的口径（TOOL 埋点 success=0/1）
-        // 取 getToolOverview().total/successCalls 实算，避免上面 SQL 里再维护一套口径。
+        // 业务成功率：新埋点（action!=TOOL 且 success 非 NULL）实算。
+        // bizSuccess=有结果的搜索+成功写动作，bizFail=零命中搜索。存量 NULL 不计入。
+        double bizRate = 0.0;
+        long bizTotal = bizSuccess + bizFail;
+        if (bizTotal > 0) {
+            bizRate = bizSuccess / (double) bizTotal;
+        }
+        stats.put("successRate", bizRate);
+        stats.put("successSampled", bizTotal);   // 分母（已计入成功的业务动作数），供前端「数据积累中」判断
+
+        // 工具成功率（TOOL 埋点 success=0/1）
         double toolSuccessRate = 0.0;
         try {
             Map<String, Object> to = callLogMapper.getToolOverview();
@@ -370,11 +396,7 @@ public class CallLogService {
         } catch (Exception e) {
             log.warn("读取工具成功率失败（已忽略）: {}", e.getMessage());
         }
-
-        stats.put("successRate", toolSuccessRate);
         stats.put("toolSuccessRate", toolSuccessRate);
-        stats.put("bizSuccess", bizSuccess);
-        stats.put("bizFail", bizFail);
 
         return stats;
     }
