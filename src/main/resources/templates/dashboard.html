@@ -136,6 +136,48 @@
             </div>
         </div>
 
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stat-card" style="background: linear-gradient(135deg, #6f42c1 0%, #9a67d9 100%);">
+                    <i class="fas fa-folder-open icon"></i>
+                    <div>
+                        <div class="number" th:text="${totalProjects}">0</div>
+                        <div class="label">项目空间</div>
+                        <div class="small" th:text="'项目文档 ' + ${projectDocs} + ' · 全局 ' + ${globalDocs}">0</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card" style="background: linear-gradient(135deg, #f39c12 0%, #f1c40f 100%);">
+                    <i class="fas fa-clock icon"></i>
+                    <div>
+                        <div class="number" style="color:#333;" th:text="${staleDocs}">0</div>
+                        <div class="label" style="color:#333;">超期未验证（90天）</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card" style="background: linear-gradient(135deg, #2980b9 0%, #3498db 100%);">
+                    <i class="fas fa-tasks icon"></i>
+                    <div>
+                        <div class="number" th:text="${candidatePending}">0</div>
+                        <div class="label">候选待判断</div>
+                        <div class="small" th:text="'全部候选 ' + ${candidateTotal}">0</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-warning">
+                    <i class="fas fa-search-minus icon"></i>
+                    <div>
+                        <div class="number" th:text="${searchZeroRate} + '%'">0%</div>
+                        <div class="label">近30天搜索零命中率</div>
+                        <div class="small" th:text="'零命中 ' + ${searchZeroHit} + ' / ' + ${searchTotal}">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="card mt-4">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <h5 class="mb-0"><i class="fas fa-chart-line text-primary mr-2"></i>近 7 天调用趋势</h5>

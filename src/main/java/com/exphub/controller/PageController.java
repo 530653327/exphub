@@ -9,6 +9,7 @@ import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import com.exphub.service.ReviewCandidateService;
+import com.exphub.service.ProjectService;
 import com.exphub.service.SimilarityScorer;
 import com.exphub.service.ToolStatsService;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -47,6 +48,9 @@ public class PageController extends BaseController {
 
     @Autowired
     private ReviewCandidateService reviewCandidateService;
+
+    @Autowired
+    private ProjectService projectService;
 
     // 登录页
     @GetMapping("/login")
@@ -89,6 +93,22 @@ public class PageController extends BaseController {
         model.addAttribute("problemDocs", problemDocs);
         model.addAttribute("problemDocsByType", docService.countProblemDocsByType(90));
         model.addAttribute("totalAssistants", assistantService.countActive());
+
+        // 第三批看板卡片：项目 / 时效 / 候选队列 / 搜索零命中
+        List<com.exphub.entity.Project> projects = projectService.listProjects();
+        model.addAttribute("totalProjects", projects == null ? 0 : projects.size());
+        model.addAttribute("projectDocs", docService.countProjectDocs());
+        model.addAttribute("globalDocs", docService.countGlobalRegularDocs());
+        Map<String, Long> pbt = docService.countProblemDocsByType(90);
+        model.addAttribute("staleDocs", pbt.getOrDefault("STALE", 0L));
+        model.addAttribute("candidatePending", reviewCandidateService.pendingCount());
+        Map<String, Long> candGroup = reviewCandidateService.countByStatusGroup();
+        long candTotal = candGroup.values().stream().mapToLong(Long::longValue).sum();
+        model.addAttribute("candidateTotal", candTotal);
+        Map<String, Object> searchHit = callLogService.getSearchHitStats(30);
+        model.addAttribute("searchTotal", searchHit.get("totalSearch"));
+        model.addAttribute("searchZeroHit", searchHit.get("zeroHit"));
+        model.addAttribute("searchZeroRate", String.format("%.1f", ((Number) searchHit.get("zeroRate")).doubleValue() * 100));
 
         // 热门文档
         List<Doc> hotDocs = docMapper.selectList(

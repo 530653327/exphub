@@ -42,6 +42,17 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
             "FROM call_logs")
     Map<String, Object> getOverviewStats();
 
+    /**
+     * 近 N 天搜索命中情况：总搜索次数与零命中次数（hit_count=0）。
+     * 零命中 = 用户搜了词但一条结果都没有 —— 搜索质量最该盯的信号。
+     */
+    @Select("SELECT " +
+            "COUNT(*) AS totalSearch, " +
+            "SUM(CASE WHEN hit_count = 0 OR hit_count IS NULL THEN 1 ELSE 0 END) AS zeroHit " +
+            "FROM call_logs WHERE action = 'SEARCH' " +
+            "AND created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY)")
+    Map<String, Object> getSearchHitStats(@Param("days") int days);
+
     // ===== 工具维度统计（action='TOOL'，由 ToolCallAspect 写入）=====
 
     /** 工具总览：总调用、今日、成功数、平均耗时、有调用的工具数 */

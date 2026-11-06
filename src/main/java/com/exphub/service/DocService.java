@@ -1888,6 +1888,18 @@ public class DocService {
                 .or().notIn("template_type", EXCLUDED_FROM_RANKING)));
     }
 
+    /** 挂到项目下的文档数（第三批看板「项目」卡片） */
+    public long countProjectDocs() {
+        java.util.Map<String, Object> row = docMapper.countProjectDocs();
+        return row == null || row.get("cnt") == null ? 0L : ((Number) row.get("cnt")).longValue();
+    }
+
+    /** 全局（未挂项目）知识文档数 —— 与 {@link #countProjectDocs()} 一起看分布 */
+    public long countGlobalRegularDocs() {
+        java.util.Map<String, Object> row = docMapper.countGlobalRegularDocs();
+        return row == null || row.get("cnt") == null ? 0L : ((Number) row.get("cnt")).longValue();
+    }
+
     /**
      * 更新经验状态（ACTIVE / COMPLETED / BROKEN / DEPRECATED）
      */

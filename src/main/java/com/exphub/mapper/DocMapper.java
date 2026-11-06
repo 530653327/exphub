@@ -36,6 +36,16 @@ public interface DocMapper extends BaseMapper<Doc> {
             "  WHERE status = 'ACTIVE' AND (last_verified_at IS NULL OR last_verified_at < DATE_SUB(CURDATE(), INTERVAL #{missedDays} DAY))")
     List<Map<String, Object>> countProblemDocsByType(@Param("missedDays") int missedDays);
 
+    /** 挂到项目下的文档数（project_id 非空），仪表盘「项目」卡片用 */
+    @Select("SELECT COUNT(*) AS cnt FROM docs WHERE project_id IS NOT NULL")
+    java.util.Map<String, Object> countProjectDocs();
+
+    /** 全局知识文档数（project_id IS NULL 且非过程流水），用于展示「全局 vs 项目」分布 */
+    @Select("SELECT COUNT(*) AS cnt FROM docs WHERE project_id IS NULL " +
+            "AND (template_type IS NULL OR template_type NOT IN ('project_progress','todo_list')) " +
+            "AND status IN ('ACTIVE','COMPLETED')")
+    java.util.Map<String, Object> countGlobalRegularDocs();
+
     /**
      * FULLTEXT 搜索（BOOLEAN MODE），按相关性 + 调用次数排序
      * @param keyword  BOOLEAN MODE 查询词（含 + 前缀等操作符）

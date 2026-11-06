@@ -426,6 +426,18 @@ public class CallLogService {
         return callLogMapper.getCallTrend(days);
     }
 
+    /**
+     * 近 N 天搜索命中统计（第三批看板）。返回 totalSearch / zeroHit / zeroRate。
+     */
+    public Map<String, Object> getSearchHitStats(int days) {
+        Map<String, Object> row = callLogMapper.getSearchHitStats(days);
+        long total = toLong(row.get("totalSearch"));
+        long zero = toLong(row.get("zeroHit"));
+        double rate = total > 0 ? zero / (double) total : 0.0;
+        row.put("zeroRate", rate);
+        return row;
+    }
+
     /** 工具维度总览（action='TOOL'）—— 2026-10-26 13:2x 阁主要「工具精简的数据依据」 */
     public Map<String, Object> getToolOverview() {
         return callLogMapper.getToolOverview();
