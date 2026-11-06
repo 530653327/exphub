@@ -613,6 +613,18 @@ public class DocService {
     public static final Set<String> EXCLUDED_FROM_RANKING = Set.of("project_progress", "todo_list");
 
     /**
+     * 概念只在正文命中时的强度折扣（#1290 C87/C88，一个变量，单独可回退）。
+     *
+     * <p>0.75 = 「正文整词命中」从 1.0 降到 0.75，「正文 2-gram」从 0.5 降到 0.375。
+     * 标题/摘要/别名/标签命中不受影响。
+     *
+     * <p>取值理由：只压「照抄」这一层，不把正文命中一棍子打死（真正的操作手册，
+     * 关键词也常只在正文里出现）。0.75 使一篇纯靠正文抄 query 的文档，
+     * coverage 从 1.0 降到 0.75 —— 与「标题精确 + 摘要 2-gram」的文档同档，不再压过它。
+     */
+    private static final double CONTENT_ONLY_FACTOR = 0.75;
+
+    /**
      * 严格命中「直接采用」的门槛（2026-10-30 L0-2 修数字漂移）。
      *
      * <p>这里原来写的是 {@code strictTotal >= size} —— size 是调用方传的 limit。
@@ -817,16 +829,45 @@ public class DocService {
     }
 
     /**
-     * 概念命中强度：整词命中记 1.0，仅 2-gram/英文片段命中记 0.5。
-     * 这样「数据模型」这类精确命中，不会被只命中「数据」的泛匹配在覆盖率上压平。
+     * 概念命中强度（#1290 C87/C88）。
+     *
+     * <p>两维叠加：**命中粒度** × **命中位置**。
+     * <ul>
+     *   <li>粒度：整词命中 1.0，仅 2-gram/英文片段命中 0.5（原有逻辑）</li>
+     *   <li>位置：结构化字段（title/summary/aliases/tags）视为「这文档确实在讲它」，系数 1.0；
+     *       只在正文里出现，系数 {@link #CONTENT_ONLY_FACTOR} —— 因为正文里可能是引用、
+     *       抄了一遍问题原话、或台账里贴了 query 字符串，**照抄不等于讲透了**。</li>
+     * </ul>
+     *
+     * <p><b>为什么加位置这一维</b>：实测（#1290 D65）一本讨论搜索的信箱，把它讨论的那句 query
+     * 原样抄进正文，两个概念都在正文整词命中 → coverage 满分 1.0，直接压过标题精确相关的文档。
+     * 结果是「越勤奋记录越占前排」，搜出来永远是会议纪要和信箱，不是手册。
+     *
+     * <p>取 max 而不是取第一个命中：整词命中正文(0.75) 应当输给 2-gram 命中标题(0.5)吗？不该 ——
+     * 但也不能因为先检查了整词就丢掉后面更好的命中，所以对同一概念的多个变体取最大值。
      */
     private double conceptStrength(Doc doc, List<String> variants) {
         if (variants == null || variants.isEmpty()) return 0;
-        if (matchesAnyField(doc, variants.get(0))) return 1.0;
-        for (int i = 1; i < variants.size(); i++) {
-            if (matchesAnyField(doc, variants.get(i))) return 0.5;
+        double best = 0;
+        for (int i = 0; i < variants.size(); i++) {
+            String v = variants.get(i);
+            double base = (i == 0) ? 1.0 : 0.5;   // 第 0 个变体是整词
+            if (matchesStructuredField(doc, v)) {
+                best = Math.max(best, base);
+            } else if (containsIgnoreCase(doc.getContent(), v)) {
+                best = Math.max(best, base * CONTENT_ONLY_FACTOR);
+            }
+            if (best >= 1.0) break;               // 已经是上限，不用再看后面的变体
         }
-        return 0;
+        return best;
+    }
+
+    /** 结构化字段命中 = 这文档确实在讲这个概念（不含正文）。 */
+    private boolean matchesStructuredField(Doc doc, String term) {
+        return containsIgnoreCase(doc.getTitle(), term)
+                || containsIgnoreCase(doc.getAliases(), term)
+                || containsIgnoreCase(doc.getSummary(), term)
+                || containsIgnoreCase(doc.getTags(), term);
     }
 
     private boolean matchesAnyField(Doc doc, String term) {

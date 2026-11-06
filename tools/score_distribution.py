@@ -162,15 +162,30 @@ def field_weight(doc, variants):
     return best
 
 
+# 概念只在正文命中时的强度折扣（与 DocService.CONTENT_ONLY_FACTOR 同源，改一处必须改另一处）
+CONTENT_ONLY_FACTOR = 0.75
+STRUCTURED = ('title', 'aliases', 'summary', 'tags')
+
+
 def concept_strength(doc, variants):
+    """命中粒度 × 命中位置（#1290 C87/C88），与 Java conceptStrength 一一对应。
+
+    结构化字段（title/aliases/summary/tags）命中 → 整词 1.0 / 2-gram 0.5；
+    只在 content 命中 → 乘 CONTENT_ONLY_FACTOR（整句照抄进正文 ≠ 讲透了）。
+    对同一概念的多个变体取最大值：整词在正文(0.75) 应当赢 2-gram 在标题(0.5)。
+    """
     if not variants:
         return 0.0
-    if field_weight_term(doc, variants[0]) > 0:
-        return 1.0
-    for v in variants[1:]:
-        if field_weight_term(doc, v) > 0:
-            return 0.5
-    return 0.0
+    best = 0.0
+    for i, v in enumerate(variants):
+        base = 1.0 if i == 0 else 0.5
+        if any(_contains(doc[f], v) for f in STRUCTURED):
+            best = max(best, base)
+        elif _contains(doc['content'], v):
+            best = max(best, base * CONTENT_ONLY_FACTOR)
+        if best >= 1.0:
+            break
+    return best
 
 
 def parts(doc, variants, recency_weight=RECENCY_WEIGHT):
