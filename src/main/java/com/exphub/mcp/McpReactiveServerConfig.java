@@ -157,8 +157,16 @@ public class McpReactiveServerConfig {
                 }
 
                 ApiKeyInterceptor.setCurrentAssistant(assistant);
-                log.debug("MCP WebFlux: authorized, assistantId={}, path={}, thread={}",
-                        assistant.getAssistantId(), request.path(), Thread.currentThread().getName());
+                // 2026-11-06：信箱身份头也必须在这里读。
+                // 3098 是 WebFlux(Netty) 独立服务器，完全不经过 ApiKeyInterceptor，
+                // 之前在拦截器里读头 → SSE 链路永远 role=null（忆阁正是走 SSE）。
+                // 这条链路与 3099(MVC) 是两套鉴权实现，改一处必须同时改另一处。
+                MailIdentity.set(
+                        request.headers().firstHeader(MailIdentity.HEADER_ROLE),
+                        request.headers().firstHeader(MailIdentity.HEADER_CONFIG_SOURCE));
+                log.debug("MCP WebFlux: authorized, assistantId={}, role={}, configSource={}, path={}, thread={}",
+                        assistant.getAssistantId(), MailIdentity.role(), MailIdentity.configSource(),
+                        request.path(), Thread.currentThread().getName());
 
                 // 【重要】只在 SSE 长连接真正关闭时清理身份。
                 // POST /mcp/message 只投递消息并立即返回，若此时 remove，
@@ -167,7 +175,10 @@ public class McpReactiveServerConfig {
                 boolean isSseEndpoint = request.path().endsWith("/sse");
                 if (isSseEndpoint) {
                     return handler.handle(request)
-                            .doFinally(signalType -> ApiKeyInterceptor.removeCurrentAssistant());
+                            .doFinally(signalType -> {
+                                ApiKeyInterceptor.removeCurrentAssistant();
+                                MailIdentity.clear();
+                            });
                 }
                 return handler.handle(request);
 

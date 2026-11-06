@@ -2,6 +2,7 @@ package com.exphub.config;
 
 import com.exphub.entity.AiAssistant;
 import com.exphub.interceptor.ApiKeyInterceptor;
+import com.exphub.mcp.MailIdentity;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,15 +37,23 @@ public class McpContextPropagationConfig {
     @PostConstruct
     public void registerThreadLocalPropagation() {
         Schedulers.onScheduleHook(HOOK_KEY, runnable -> {
-            // ① 调度时（请求线程）捕获身份
+            // ① 调度时（请求线程）捕获身份 + 信箱身份
+            // 2026-11-06：只传 AiAssistant 不够。信箱的「声明角色 / 配置来源」是另一组
+            // ThreadLocal，不一起传播的话，工具在 boundedElastic 线程里读到的就是 null，
+            // 现象是「包已经到了、应用层读成空」——忆阁 3.3.28 验收就是卡在这里。
             final AiAssistant captured = ApiKeyInterceptor.getCurrentAssistant();
-            if (captured == null) {
+            final String capturedRole = MailIdentity.role();
+            final String capturedConfigSource = MailIdentity.configSource();
+            if (captured == null && capturedRole == null) {
                 return runnable;
             }
             // ② 执行时（boundedElastic 线程）恢复身份
             return () -> {
                 final AiAssistant previous = ApiKeyInterceptor.getCurrentAssistant();
+                final String previousRole = MailIdentity.role();
+                final String previousConfigSource = MailIdentity.configSource();
                 ApiKeyInterceptor.setCurrentAssistant(captured);
+                MailIdentity.set(capturedRole, capturedConfigSource);
                 try {
                     runnable.run();
                 } finally {
@@ -54,9 +63,10 @@ public class McpContextPropagationConfig {
                     } else {
                         ApiKeyInterceptor.removeCurrentAssistant();
                     }
+                    MailIdentity.set(previousRole, previousConfigSource);
                 }
             };
         });
-        log.info("MCP 身份上下文跨线程传播已启用（Reactor onScheduleHook={}）", HOOK_KEY);
+        log.info("MCP 身份上下文跨线程传播已启用（Reactor onScheduleHook={}，含信箱角色）", HOOK_KEY);
     }
 }
