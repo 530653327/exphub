@@ -109,8 +109,10 @@ class JavaUpdateWriteBackGuardTest {
         // 2026-10-29 实数：6 条（DocService 5 + ProjectService 1）。
         // 2026-10-30 +1：DocService.cancelDeletion 里清 delete_reason/marked_by/marked_at 三列
         //   必须走 UpdateWrapper（updateById 对 null 是跳过，置空写不进去），成为第 7 条。
+        // 2026-11-07 +1：LoginSuccessHandler 写 users.last_login（登录防爆破那批）——
+        //   这个字段以前从没被写过，整条 users 写入路径是那次新增的，成为第 8 条。
         // ReviewCandidate 那条不算 —— review_candidates 表只有 created_at / resolved_at，没有 ON UPDATE 列。
-        assertEquals(7, seen,
+        assertEquals(8, seen,
                 "扫到的 Java 写入点变了（实际 " + seen + "）。新增写路径请同步这个数字；"
                         + "数字变**少**通常意味着正则或注释遮蔽逻辑退化，守卫会在没人察觉的情况下失效");
     }

@@ -38,7 +38,11 @@ class ScopeProgressFilterTest {
                 "排除条件必须同时出现在搜索与计数两条 SQL 里（只改一边会让「匹配 N 条」与实际不符）");
 
         String cond = "AND (template_type IS NULL OR template_type NOT IN ('project_progress','todo_list'))";
-        assertEquals(2, countOf(mapper, cond), "两条 SQL 各需一份排除条件（2026-11-06 扩到 todo_list）");
+        // 2026-11-08 实测 3 处，不是 2 处。多出来的是 DocMapper.countGlobalRegularDocs
+        // （仪表盘「全局知识文档数」，project_id IS NULL 且非过程流水）—— 它无条件排除，没有 excludeProjectProgress 开关，
+        // 所以上面 <if> 那条仍然是 2。两处搜索 SQL 仍然各一份，这条判据要守的没变。
+        assertEquals(3, countOf(mapper, cond), "两条搜索 SQL 各需一份排除条件（2026-11-06 扩到 todo_list）；"
+                + "第 3 处是 countGlobalRegularDocs 的口径，加进来是为了让仪表盘计数与搜索同口径");
     }
 
     @Test
