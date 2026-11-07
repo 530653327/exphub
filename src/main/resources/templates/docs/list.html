@@ -325,6 +325,20 @@
     <script th:inline="javascript">
         var contextPath = /*[[${contextPath}]]*/ '';
         var currentStatus = /*[[${status}]]*/ '';
+        var currentFlag = /*[[${flag}]]*/ '';
+        var currentKeyword = /*[[${keyword}]]*/ '';
+        var currentTemplateType = /*[[${templateType}]]*/ '';
+
+        // 删除/恢复后要回到当前视图，所以把当前 Tab 与筛选条件拼到 POST 的 query 上。
+        // 服务端只认这几个键，不接收完整 URL（避免开放重定向）。
+        function docsContextQuery() {
+            var qs = [];
+            if (currentStatus) qs.push('status=' + encodeURIComponent(currentStatus));
+            if (currentFlag) qs.push('flag=' + encodeURIComponent(currentFlag));
+            if (currentKeyword) qs.push('keyword=' + encodeURIComponent(currentKeyword));
+            if (currentTemplateType) qs.push('templateType=' + encodeURIComponent(currentTemplateType));
+            return qs.length ? ('?' + qs.join('&')) : '';
+        }
 
         function doSearch() {
             var keyword = document.getElementById('searchInput').value.trim();
@@ -412,7 +426,7 @@
             if (!confirm('撤销待删标记，把这条经验恢复正常？')) {
                 return;
             }
-            submitPostForm(contextPath + '/docs/' + id + '/restore');
+            submitPostForm(contextPath + '/docs/' + id + '/restore' + docsContextQuery());
         }
 
         function deleteDoc(id) {
@@ -421,7 +435,7 @@
             }
             var form = document.createElement('form');
             form.method = 'POST';
-            form.action = contextPath + '/docs/' + id + '/delete';
+            form.action = contextPath + '/docs/' + id + '/delete' + docsContextQuery();
             // ⚠️ 动态创建的表单不经过 Thymeleaf 渲染，不会自动带 CSRF 隐藏域，
             // 必须手动从 meta 取 token 补上，否则 CSRF 启用后删除会 403
             var csrfMeta = document.querySelector('meta[name="_csrf"]');

@@ -465,23 +465,71 @@ public class PageController extends BaseController {
     }
 
     // 删除经验（后台管理）
+    // ⚠️ 2026-11-07：删除后必须回到「原来的视图」而不是 /docs 首页。
+    // 用户在待删 Tab 里删一条，旧代码 redirect:/docs 直接跳回全部，得重新点待删——
+    // 6 条就得重复 6 次。现在把当前 Tab/筛选条件带回来（参数由前端表单 query 传入）。
     @PostMapping("/docs/{id}/delete")
-    public String deleteDoc(HttpSession session, @PathVariable Long id) {
+    public String deleteDoc(HttpSession session, @PathVariable Long id,
+                            @RequestParam(required = false) String status,
+                            @RequestParam(required = false) String flag,
+                            @RequestParam(required = false) String keyword,
+                            @RequestParam(required = false) String templateType) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
         docService.delete(id);
-        return "redirect:/docs";
+        // 回到原视图第 1 页：删掉一条后当前页可能越界，且待删队列本来就没几页
+        return redirectToDocs(status, flag, keyword, templateType, true);
     }
 
     // M10：撤销待删标记（把 AI 标记的东西放回来）
     @PostMapping("/docs/{id}/restore")
-    public String restoreDoc(HttpSession session, @PathVariable Long id) {
+    public String restoreDoc(HttpSession session, @PathVariable Long id,
+                             @RequestParam(required = false) String status,
+                             @RequestParam(required = false) String flag,
+                             @RequestParam(required = false) String keyword,
+                             @RequestParam(required = false) String templateType) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
         docService.cancelDeletion(id);
-        return "redirect:/docs?status=" + DocService.PENDING_DELETE;
+        // 恢复后仍留在待删队列（方便连续处理剩下的），但保留用户的其它筛选条件
+        return redirectToDocs(
+                (status == null || status.isEmpty()) ? DocService.PENDING_DELETE : status,
+                flag, keyword, templateType, true);
+    }
+
+    /**
+     * 拼「回到经验列表」的重定向地址，保留当前 Tab 与筛选条件。
+     *
+     * <p>只接受已知的几个参数键并逐个编码后拼装，<b>不接收完整 URL</b> ——
+     * 直接 {@code redirect(userInput)} 会有开放重定向风险。
+     *
+     * @param resetPage true = 回到第 1 页（删/恢复后当前页可能已越界）
+     */
+    private String redirectToDocs(String status, String flag, String keyword,
+                                  String templateType, boolean resetPage) {
+        return buildDocsRedirect(status, flag, keyword, templateType);
+    }
+    /**
+     * 纯函数版重定向拼装（包级可见，供单测直接断言输出，不必起 Spring）。
+     * 只认这 4 个已知键，逐个编码后拼装；<b>不接收完整 URL</b>，避免开放重定向。
+     */
+    static String buildDocsRedirect(String status, String flag, String keyword, String templateType) {
+        List<String> qs = new java.util.ArrayList<>();
+        if (status != null && !status.trim().isEmpty()) {
+            qs.add("status=" + org.springframework.web.util.UriUtils.encodeQueryParam(status, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        if (flag != null && !flag.trim().isEmpty()) {
+            qs.add("flag=" + org.springframework.web.util.UriUtils.encodeQueryParam(flag, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            qs.add("keyword=" + org.springframework.web.util.UriUtils.encodeQueryParam(keyword, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        if (templateType != null && !templateType.trim().isEmpty()) {
+            qs.add("templateType=" + org.springframework.web.util.UriUtils.encodeQueryParam(templateType, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return qs.isEmpty() ? "redirect:/docs" : "redirect:/docs?" + String.join("&", qs);
     }
 
     /**
