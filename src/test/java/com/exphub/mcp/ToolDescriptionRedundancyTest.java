@@ -325,8 +325,10 @@ class ToolDescriptionRedundancyTest {
         //            （#1324 C108），五个会拿省下来的读信钱去赔工具说明钱。
         // 2026-11-08 发件视角：工具数仍 50（不新增，红线 13），mail_start 加 sent 参数，参数 198 → 199。
         //            理由：发件方必须能自查「我发给了谁」——#45 丢信那次就是发件方无法自证。
+        // 2026-11-08 只读未读摘要：仍不加工具（越哥批准走「改现有工具」），mail_start 再加 unreadOnly，
+        //            参数 199 → 200。忆阁拿它做聊天界面角标，不能给它 mail_start 的信封（含正文摘要）。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(199, paramCount, "参数数变了（198 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(200, paramCount, "参数数变了（198 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

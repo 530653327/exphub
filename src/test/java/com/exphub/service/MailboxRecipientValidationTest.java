@@ -84,6 +84,19 @@ class MailboxRecipientValidationTest {
     }
 
     @Test
+    @DisplayName("accept 与 display 拆开：历史拼错能收信，但绝不出现在给人看的列表里")
+    void displayListExcludesHistoricalTypos() {
+        // accept 集合要含历史 role，否则老线程突然发不出去
+        assertTrue(svc.isKnownRole("legacy_guy"), "accept 集合必须含库里的历史代号");
+
+        String msg = svc.unknownRecipientMessage("nobody");
+        // display 集合只取配置表：拼错代号一旦出现在「可用代号」里，就会被照着抄，然后发给一个没人读的信箱
+        assertFalse(msg.contains("legacy_guy"),
+                "display 集合不能含历史代号，否则等于教人去发死信：" + msg);
+        assertTrue(msg.contains("zhulong"), "配置表里的代号要列出来：" + msg);
+    }
+
+    @Test
     @DisplayName("配置表为空时不能把所有人都拒掉：库里存在过的代号仍然可发")
     void emptyConfigDoesNotRejectEveryone() {
         ReflectionTestUtils.setField(svc, "knownRolesConfig", "");

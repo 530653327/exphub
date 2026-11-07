@@ -87,6 +87,18 @@ public class MailboxService {
         return set;
     }
 
+    /** 只取配置表的代号（**给人看的**列表）。 */
+    public Set<String> displayRoles() {
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        if (knownRolesConfig != null) {
+            for (String s : knownRolesConfig.split(",")) {
+                String v = s.trim().toLowerCase(Locale.ROOT);
+                if (!v.isEmpty()) set.add(v);
+            }
+        }
+        return set;
+    }
+
     private Set<String> dbRoles() {
         long now = System.currentTimeMillis();
         Set<String> cached = cachedDbRoles;
@@ -126,7 +138,7 @@ public class MailboxService {
         } else {
             sb.append("收件人「").append(t).append("」不是已知角色代号，已拒绝（未发出任何信）。\n\n");
         }
-        sb.append("可用代号：").append(String.join(" / ", knownRoles())).append("\n\n");
+        sb.append("可用代号：").append(String.join(" / ", displayRoles())).append("\n\n");
         sb.append("代号表是单一数据源：`application.yml` 的 `exphub.mail.known-roles`（另并上库里已出现过的代号）。\n");
         sb.append("这条校验只在**开新线程**时生效；回信（带 inReplyTo）不拦，避免历史线程被卡死。");
         return sb.toString();

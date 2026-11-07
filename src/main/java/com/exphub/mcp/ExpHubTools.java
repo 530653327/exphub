@@ -5921,7 +5921,10 @@ public class ExpHubTools {
             @ToolParam(description = "可选。最多列几根线程，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。角色代号兜底。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role,
             @ToolParam(description = "可选。true=发件视角（我发出去的，列出收件人）；**默认 false**，不传就是收件视角。"
-                    + "发信方自查「到底发给了谁」用它 —— 收件视角永远看不到自己发的信", required = false) Boolean sent) {
+                    + "发信方自查「到底发给了谁」用它 —— 收件视角永远看不到自己发的信", required = false) Boolean sent,
+            @ToolParam(description = "可选。true=**只读未读摘要**：只给线程数/消息数/每根的主题类型，"
+                    + "**不含正文摘要**，不推游标、不改任何状态（调多次结果一样）。外部系统做未读角标用它，"
+                    + "默认 false 行为不变", required = false) Boolean unreadOnly) {
         try {
             String me = mailRole(role);
             String cfg = MailIdentity.configSource();
@@ -5967,6 +5970,42 @@ public class ExpHubTools {
                 return sb.toString();
             }
 
+            // 2026-11-08（越哥批准走「改现有工具」而不是加第 51 个）：只读未读摘要，供忆阁做角标。
+            // 幂等的根本原因：只走 inbox（内部只调 cursorOf 读游标），全程没有 advanceCursor。
+            if (Boolean.TRUE.equals(unreadOnly)) {
+                List<com.exphub.service.MailboxService.Envelope> un =
+                        mailboxService.inbox(me, null, lim, false);
+                sb.append("；只读模式\n");
+                if (un.isEmpty()) {
+                    sb.append("📭 没有未读。\n");
+                    sb.append("{\"threads\":0,\"messages\":0,\"items\":[]}\n");
+                    return sb.toString();
+                }
+                sb.append("\n📬 未读：").append(un.size()).append(" 根线程 / ").append(unread).append(" 封消息\n");
+                StringBuilder json = new StringBuilder("{\"threads\":").append(un.size())
+                        .append(",\"messages\":").append(unread).append(",\"items\":[");
+                for (int i = 0; i < un.size(); i++) {
+                    com.exphub.service.MailboxService.Envelope e = un.get(i);
+                    if (i > 0) json.append(",");
+                    json.append("{\"threadId\":\"").append(jsonEscape(e.threadId))
+                        .append("\",\"subject\":\"").append(jsonEscape(e.subject))
+                        .append("\",\"from\":\"").append(jsonEscape(e.fromRole))
+                        .append("\",\"type\":\"").append(jsonEscape(e.msgType))
+                        .append("\",\"unread\":").append(e.freshCount)
+                        .append(",\"lastAt\":\"")
+                        .append(jsonEscape(com.exphub.service.MailboxService.time(e.latestAt)))
+                        .append("\"}");
+                    sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
+                      .append(" · ").append(e.fromRole).append(" · ").append(e.freshCount).append(" 封新")
+                      .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt)).append("\n");
+                    sb.append("  「").append(e.subject).append("」\n");
+                }
+                json.append("]}");
+                sb.append("\n> 只读：不推游标、不改任何状态，重复调用结果逐字相同。不含正文摘要。\n");
+                sb.append(json).append("\n");
+                return sb.toString();
+            }
+
             List<com.exphub.service.MailboxService.Envelope> list =
                     mailboxService.inbox(me, q, lim, searchMode);
             if (list.isEmpty()) {
@@ -5991,6 +6030,13 @@ public class ExpHubTools {
             log.error("ExpHubTools.mailStart: FAILED", e);
             return "读信箱失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /** 拼只读摘要里的 JSON 用：正文摘要不带，但主题里可能有引号和换行，不转义会拼出坏 JSON。 */
+    private static String jsonEscape(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", " ").replace("\r", " ").replace("\t", " ");
     }
 
     @Tool(name = "mail_send",
