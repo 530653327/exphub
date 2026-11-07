@@ -81,6 +81,29 @@ class ContentHashGuardTest {
     }
 
     @Test
+    @DisplayName("验收（阁主 #37 派单）：局部改的提示必须排在三步走之前——模型按顺序读，末尾那句等于没写")
+    void localEditHintComesBeforeThreeSteps() {
+        String stored = longDoc(6240);
+        String wrongHash = ContentHashGuard.sha256("完全不同的内容");
+        String[] messages = {
+                ContentHashGuard.missingMessage(124, stored),
+                ContentHashGuard.mismatchMessage(124, stored, wrongHash)
+        };
+        for (String msg : messages) {
+            int patch = msg.indexOf("patch_experience");
+            int export = msg.indexOf("export_document");
+            assertTrue(patch >= 0, "必须点名 patch_experience：" + msg);
+            assertTrue(export >= 0, "整篇写回的三步仍要给：" + msg);
+            // 这一条就是本次改动的全部意义：先看到「其实不用读全文」，才不会被 6 行三步走牵着去读两万字。
+            assertTrue(patch < export,
+                    "「只改一段不用读全文」这句必须出现在 export_document 之前，实际在 " + patch + " vs " + export
+                            + "：\n" + msg);
+            assertTrue(msg.contains("append_experience") && msg.contains("replace_section"),
+                    "三个替代路径都要点名（追加 / 整节替换也是常见改法）：" + msg);
+        }
+    }
+
+    @Test
     @DisplayName("hash 不一致的文案：给出两边前缀 + 三步走，并说清两种可能（被别人改过 / 自己读到截断）")
     void mismatchMessageExplainsBothCauses() {
         String stored = longDoc(6240);

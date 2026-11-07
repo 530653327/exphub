@@ -70,18 +70,24 @@ public final class ContentHashGuard {
         return p.equals(sha256(storedContent)) ? Verdict.OK : Verdict.MISMATCH;
     }
 
-    /** 没传 hash 时的拒绝文案：必须给出三步，且点名 export_document。 */
+    /** 没传 hash 时的拒绝文案：先说「多数改法不用读全文」，再给整篇写回的三步。 */
     public static String missingMessage(long id, String storedContent) {
         int len = storedContent == null ? 0 : storedContent.length();
         return "❌ **缺少 originalHash，已拒绝写入（未做任何改动）。**\n\n"
                 + "整篇写回等于「用你手上这份替换库里的全部正文」，所以必须能证明你读到的是**完整原文**（当前 "
                 + len + " 字）。本次没传 originalHash，无法证明；我不会退回去猜字数 —— 字数挡不住"
                 + "「读到前半段、加两句、总长度反而更长」这一种。\n\n"
-                + "📋 **三步走：**\n"
+                // 2026-11-08 挪位置（阁主 #37 派单）：这句原来在三步走之后，模型读完步骤就动手，压根读不到。
+                // 多数请求本来就该走局部改；先给它，才拦得住「为了改一行去读两万字」。
+                + "✂️ **多数修改不用读全文，也不用管 hash：**\n"
+                + "· 只改一段 / 改错字 → `patch_experience`\n"
+                + "· 只在末尾补充 → `append_experience`\n"
+                + "· 整节替换 → `replace_section`\n"
+                + "这三个由服务端定位修改，不会丢你没读到的部分。\n\n"
+                + "📋 **确实要整篇写回时，三步走：**\n"
                 + "1. `export_document(id=" + id + ")` → 拿到完整正文，回执里有 `content_sha256=<64位>`\n"
                 + "2. 把正文存成本地 .md 改完（原样保留其余部分，不要只留片段）\n"
-                + "3. 回传 `originalHash=<第 1 步那个 sha256>` —— 它是**原文**的 hash，不是新内容的 hash\n\n"
-                + "只改一段 / 只追加 / 整节替换不必读全文：`patch_experience` / `append_experience` / `replace_section`。";
+                + "3. 回传 `originalHash=<第 1 步那个 sha256>` —— 它是**原文**的 hash，不是新内容的 hash";
     }
 
     /**
@@ -106,7 +112,7 @@ public final class ContentHashGuard {
                 + "　本次写回仍需你事先读过全文；只改一段/只追加请继续用 patch/append，不必用这个。\n";
     }
 
-    /** hash 对不上时的拒绝文案：点明差异在哪，再给同样的三步。 */
+    /** hash 对不上时的拒绝文案：点明差异在哪；同样先给「不必读全文」的替代路径，再给三步。 */
     public static String mismatchMessage(long id, String storedContent, String providedHash) {
         String cur = sha256(storedContent);
         String p = normalize(providedHash);
@@ -118,10 +124,14 @@ public final class ContentHashGuard {
                 + "两种可能，处理方式一样：**你手上的不是最新全文** ——\n"
                 + "① 文档在你读取之后被别人改过（这时写回会覆盖别人的改动）；\n"
                 + "② 你读到的是截断片段，或从头拼过一份（这时写回会删掉没读到的部分）。\n\n"
-                + "📋 **三步走：**\n"
+                // 同上：位置前移。模型按顺序执行，末尾补的提示等于没写。
+                + "✂️ **多数修改不用读全文，也不用管 hash：**\n"
+                + "· 只改一段 / 改错字 → `patch_experience`\n"
+                + "· 只在末尾补充 → `append_experience`\n"
+                + "· 整节替换 → `replace_section`\n\n"
+                + "📋 **确实要整篇写回时，三步走：**\n"
                 + "1. `export_document(id=" + id + ")` → 重新拿完整正文与新的 `content_sha256`\n"
                 + "2. 在**这份**全文上改，存本地 .md\n"
-                + "3. 回传 `originalHash=<刚才导出的 sha256>`\n\n"
-                + "局部修改不必整篇写回：`patch_experience`（改一段）/ `append_experience`（追加）/ `replace_section`（整节替换）。";
+                + "3. 回传 `originalHash=<刚才导出的 sha256>`";
     }
 }
