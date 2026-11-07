@@ -84,6 +84,28 @@ public final class ContentHashGuard {
                 + "只改一段 / 只追加 / 整节替换不必读全文：`patch_experience` / `append_experience` / `replace_section`。";
     }
 
+    /**
+     * 写回凭证（2026-11-08 越哥拍板、阁主 #30 派单）：写回工具**成功落库后**，回执里给一行新 hash。
+     *
+     * <p><b>解决什么</b>：read-modify-write 一轮里，读完改完要写回，还得再 {@code export_document}
+     * 一次才能拿到 {@code originalHash} —— 那次读取零信息增量，纯粹为了向服务端证明「我确实读过」。
+     * 落库后服务端手里已经有新正文，顺手算一次，下一轮写回就不用再读。
+     *
+     * <p><b>为什么给 64 位、不给短指纹</b>：{@link #check} 只认等式，12 位前缀一律判 MISMATCH。
+     * 短指纹只能给人看，填进 originalHash 会被拒，然后调用方还得再 export 一次 —— 比不做更亏。
+     *
+     * <p><b>语义边界（必须写死）</b>：这是**写完之后的** hash，是给**下一次**写回用的；
+     * 本次写回依然得自己事先读过全文。它也不是忆阁 {@code detail_fingerprint} 那种展示指纹。
+     *
+     * <p><b>只在成功路径调用</b>：被 originalHash 拦下的回执带上它，等于发一张没落库的通行证。
+     */
+    public static String writebackLine(String contentAfterUpdate) {
+        if (contentAfterUpdate == null) return "";
+        return "**写回凭证**: `writeback_fingerprint=" + sha256(contentAfterUpdate) + "`\n"
+                + "　写完之后的新 hash。同一轮里**下一次整篇写回**可直接把它填 originalHash，不必再 export 一次全文；\n"
+                + "　本次写回仍需你事先读过全文；只改一段/只追加请继续用 patch/append，不必用这个。\n";
+    }
+
     /** hash 对不上时的拒绝文案：点明差异在哪，再给同样的三步。 */
     public static String mismatchMessage(long id, String storedContent, String providedHash) {
         String cur = sha256(storedContent);

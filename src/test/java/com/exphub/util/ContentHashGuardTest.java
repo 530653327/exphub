@@ -110,4 +110,55 @@ class ContentHashGuardTest {
         String edited = stored.replace("第1节", "第 1 节");
         assertEquals(ContentHashGuard.Verdict.MISMATCH, ContentHashGuard.check(h, edited));
     }
+
+    // ================= 写回凭证（writeback_fingerprint，2026-11-08） =================
+
+    /** 从回执行里抠出 writeback_fingerprint 的值，模拟调用方复制它。 */
+    private static String fingerprintIn(String line) {
+        String marker = "writeback_fingerprint=";
+        int i = line.indexOf(marker);
+        assertTrue(i >= 0, "回执里没有 writeback_fingerprint：" + line);
+        int start = i + marker.length();
+        int end = start;
+        while (end < line.length() && "0123456789abcdef".indexOf(line.charAt(end)) >= 0) end++;
+        return line.substring(start, end);
+    }
+
+    @Test
+    @DisplayName("写回凭证闭环：落库后给的 hash，下一次写回直接当 originalHash 用 → 必须 OK")
+    void writebackFingerprintIsUsableAsNextOriginalHash() {
+        String afterUpdate = longDoc(6240);
+        String line = ContentHashGuard.writebackLine(afterUpdate);
+        String fp = fingerprintIn(line);
+        // 这一条是整件事的验收标准：不多不少正好能过校验。
+        // 给短指纹就只有 12 位，check 会判 MISMATCH —— 调用方还得再 export 一次，白白多一轮。
+        assertEquals(ContentHashGuard.Verdict.OK, ContentHashGuard.check(fp, afterUpdate));
+        assertEquals(64, fp.length(), "必须是 64 位完整值，12 位前缀填进 originalHash 会被拒");
+    }
+
+    @Test
+    @DisplayName("写回凭证只对「写完之后」的那版有效：拿去校验旧正文必须拒（防止把凭证当万能钥匙）")
+    void writebackFingerprintIsBoundToTheNewContent() {
+        String before = longDoc(3000);
+        String after = before + "\n### 追加一段\n新的结论。\n";
+        String fp = fingerprintIn(ContentHashGuard.writebackLine(after));
+        assertEquals(ContentHashGuard.Verdict.MISMATCH, ContentHashGuard.check(fp, before),
+                "写完之后的新 hash 不能用来校验旧正文；能过就说明 hash 没覆盖全部内容");
+    }
+
+    @Test
+    @DisplayName("写回凭证文案必须写明语义边界：给下一次用、本次仍要读过全文、局部改用 patch")
+    void writebackLineStatesItsBoundary() {
+        String line = ContentHashGuard.writebackLine("abc");
+        assertTrue(line.contains("originalHash"), "要说清它能填哪个参数：" + line);
+        assertTrue(line.contains("下一次") || line.contains("下次"), "要说清是给下一次写回用的：" + line);
+        assertTrue(line.contains("patch"), "要给出不必用它的替代路径：" + line);
+        assertTrue(line.contains("读完") || line.contains("读过"), "要写死「本次仍须读过全文」：" + line);
+    }
+
+    @Test
+    @DisplayName("没有正文（null）时不给凭证，不能抛异常、也不能给一个空 hash 的假通行证")
+    void writebackLineIsEmptyForNullContent() {
+        assertEquals("", ContentHashGuard.writebackLine(null));
+    }
 }

@@ -2108,6 +2108,10 @@ public class ExpHubTools {
                .append(changedFields.contains("改文档作者") ? "（本条已改归属）" : "（未改动）")
                .append("\n");
             res.append(verifiedLine(afterUpdate, verified != null));
+            // 2026-11-08：写回凭证。只在本版真写了正文时给 —— 只改元数据的话正文 hash 没变，调用方本来就要读全文。
+            if (contentWritten) {
+                res.append(ContentHashGuard.writebackLine(afterUpdate == null ? null : afterUpdate.getContent()));
+            }
             if (changedFields.contains("content")) {
                 int oldLen = existing.getContent() == null ? 0 : existing.getContent().length();
                 int stripped = content.length() - (cleanedContent == null ? content.length() : cleanedContent.length());
@@ -2236,7 +2240,9 @@ public class ExpHubTools {
                 sb.append("**已剥离终端残留**: ").append(residueLines)
                   .append(" 行（终端作业控制/curl 报错，不是正文）\n\n");
             }
-            sb.append("原文完整保留（服务端拼接，未经过任何截断），旧版本已存为快照 v").append(oldVer).append("。");
+            sb.append("原文完整保留（服务端拼接，未经过任何截断），旧版本已存为快照 v").append(oldVer).append("。\n");
+            // 2026-11-08：写回凭证（append 必然写了正文，无条件给）
+            sb.append(ContentHashGuard.writebackLine(updated.getContent()));
             // 2026-10-29 P2-8：滚动日志/施工日志就是靠 append 一次次涨到 2 万字的，这里提醒最有效
             sb.append(longDocHint(newLen));
             return sb.toString();
@@ -2471,6 +2477,8 @@ public class ExpHubTools {
                   .append(" 行（终端作业控制/curl 报错，不是正文）\n");
             }
             sb.append(verifiedLine(updated, verified != null));
+            // 2026-11-08：写回凭证（patch 必然写了正文，无条件给）
+            sb.append(ContentHashGuard.writebackLine(newBody));
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.patchExperience: FAILED", e);
