@@ -306,9 +306,10 @@
                         <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">
                             <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${currentPage - 1})}">&laquo; 上一页</a>
                         </li>
-                        <li class="page-item" th:each="i : ${#numbers.sequence(1, totalPages)}"
-                            th:classappend="${i == currentPage} ? 'active'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${i})}" th:text="${i}">1</a>
+                        <li class="page-item" th:each="i : ${pageNumbers}"
+                            th:classappend="${i != 0 and i == currentPage} ? 'active'">
+                            <a th:if="${i != 0}" class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${i})}" th:text="${i}">1</a>
+                            <span th:if="${i == 0}" class="page-link disabled-link text-muted">&hellip;</span>
                         </li>
                         <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled'">
                             <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${currentPage + 1})}">下一页 &raquo;</a>
