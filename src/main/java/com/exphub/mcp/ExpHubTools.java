@@ -188,7 +188,7 @@ public class ExpHubTools {
     @Value("${exphub.mcp.detail-max-chars:20000}")
     private int detailMaxChars = 20000;
 
-    @Tool(name = "get_experience_detail", description = "获取经验**当前正文**。超长会分段返回。历史版本用 get_experience_history。")
+    @Tool(name = "get_experience_detail", description = "获取经验**当前正文**。超长会分段返回。历史版本用 get_experience_history。⚠️ 回执里的 detail_fingerprint / segment_fingerprint 只是展示指纹（客户端侧附加），**不能**当 originalHash 用；写回凭证是写回工具回执里的 writeback_fingerprint（64 位）。")
     public String getExperienceDetail(
             @ToolParam(description = "经验ID。") Long id,
             @ToolParam(description = "可选。正文起始字符偏移，默认 0。只在续读超长文档时用："
@@ -1930,7 +1930,7 @@ public class ExpHubTools {
     /**
      * 更新经验
      */
-    @Tool(name = "update_experience", description = "更新已有经验的指定字段：**只传要改的字段**。清空用 clearFields 显式声明，不要传 null。改正文：改一段用 patch_experience、追加用 append_experience、整体重写用 export_document + import_document。整篇写回须带 originalHash 证明读过全文。🔒 严禁在 content 含账号密码/API密钥/Token。")
+    @Tool(name = "update_experience", description = "更新已有经验的指定字段：**只传要改的字段**。清空用 clearFields 显式声明，不要传 null。改正文：改一段用 patch_experience、追加用 append_experience、整体重写用 export_document + import_document。整篇写回须带 originalHash 证明读过全文。成功回执末尾给 `writeback_fingerprint`（64 位）＝ 写完之后的新 hash，同一轮下一次整篇写回可直接当 originalHash，不必再 export 一次全文（与 export_document 的 content_sha256 同值）。🔒 严禁在 content 含账号密码/API密钥/Token。")
     public String updateExperience(
             @ToolParam(description = "经验ID（必填）") Long id,
             @ToolParam(description = "可选。新标题。别写版本号（version 管理）", required = false) String title,
@@ -2177,7 +2177,7 @@ public class ExpHubTools {
      * 而 AI 读到的正文是截断过的，写回就等于删掉没读到的部分。
      * 这里服务端直接拼接，客户端完全不持有全文。
      */
-    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。这是补充进展/追加结论的首选方式：服务端直接拼接，你不需要读全文，因此绝不会因为读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不会缩短原文，不触发截断保护。一次传一段；要多段就多次调用。")
+    @Tool(name = "append_experience", description = "在经验正文**末尾追加**一段内容。这是补充进展/追加结论的首选方式：服务端直接拼接，你不需要读全文，因此绝不会因为读取被截断而丢掉原文（用 update_experience 整篇写回才会丢）。只在尾部追加、不会缩短原文，不触发截断保护。一次传一段；要多段就多次调用。成功回执带 `writeback_fingerprint`（64 位）＝ 写完之后的新 hash，可直接当下一次整篇写回的 originalHash。")
     public String appendExperience(
             @ToolParam(description = "经验ID") Long id,
             @ToolParam(description = "要追加的 Markdown 片段（不要带原正文）。建议以小标题开头，如「### 2026-10-25 补充：xxx」，便于日后区分批次") String text,
@@ -2393,7 +2393,7 @@ public class ExpHubTools {
         }
     }
 
-    @Tool(name = "patch_experience", description = "在正文里做局部替换（find→replace）。改错字、更新一行结论、换一个失效命令时用它，不要整篇写回。⚠️ find 必须在正文里**恰好出现一次**（0 次或多次都报错，可加长锚点），至少 4 字符。replace 传空串=删除该段。")
+    @Tool(name = "patch_experience", description = "在正文里做局部替换（find→replace）。改错字、更新一行结论、换一个失效命令时用它，不要整篇写回。⚠️ find 必须在正文里**恰好出现一次**（0 次或多次都报错，可加长锚点），至少 4 字符。replace 传空串=删除该段。成功回执带 `writeback_fingerprint`（64 位）＝ 写完之后的新 hash，可直接当下一次整篇写回的 originalHash。")
     public String patchExperience(
             @ToolParam(description = "经验ID") Long id,
             @ToolParam(description = "要被替换的原文片段，必须在正文中恰好出现一次，至少 4 个字符。建议包含前后文让锚点唯一") String find,
