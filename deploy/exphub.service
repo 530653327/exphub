@@ -9,7 +9,21 @@ User=root
 WorkingDirectory=/usr/local/exphub
 EnvironmentFile=/etc/exphub/.env
 # CentOS7 的 systemd 219 不支持 StandardOutput=append:，只能用 shell 重定向
-ExecStart=/bin/bash -c 'exec /usr/local/java17/bin/java -jar target/exphub-1.0.0.jar >> /usr/local/exphub/app.log 2>&1'
+#
+# ⚠️ JVM 内存必须显式写死（2026-11-07 补）：原来 ExecStart 里连 -Xmx 都没有，
+# 全靠 JVM 人体工学取「物理内存 25%」= 952MB。后果有三个：
+#   1) 换机器/改内存后行为漂移，同一份 jar 在两台机上是两个东西，没法复现问题；
+#   2) 初始堆只有 58MB（实测 InitialHeapSize=60817408），靠不停扩容长大，启动期和突发流量下反复扩缩容；
+#   3) 这台机器 3.6G 内存要同时养 mysqld（buffer pool 1G）+ 忆阁（-Xmx512m）+ exphub，
+#      不封顶的话三个 JVM 抢内存，最后被内核 OOM killer 挑一个杀掉，日志里只会看到「进程莫名重启」。
+# 参数依据（2026-11-07 实测：堆 used 168MB / committed 489MB，Metaspace 80MB）：
+#   -Xms256m  初始堆，与忆阁同档；给足启动期，又不会一上来就吃掉 500M
+#   -Xmx768m  上限。现状峰值远低于此，封顶后最坏情况内存反而比原来的 952M 更低
+#   MaxMetaspaceSize=256m  实测用 80M，封顶防动态生成类把元空间撑爆（默认无上限）
+#   ExitOnOutOfMemoryError 真 OOM 就退出，让 systemd（Restart=always）干净重启；
+#                          不加的话 JVM 可能半死不活地挂着，比直接重启更糟
+#   HeapDumpOnOutOfMemoryError  挂了要留证据，不然只能猜
+ExecStart=/bin/bash -c 'exec /usr/local/java17/bin/java -Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/usr/local/exphub -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai -jar target/exphub-1.0.0.jar >> /usr/local/exphub/app.log 2>&1'
 Restart=always
 RestartSec=5
 # ⚠️ systemd 219（CentOS7）只认 [Service] 里的 StartLimitInterval / StartLimitBurst，
