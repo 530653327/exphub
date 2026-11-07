@@ -9,6 +9,9 @@ import org.springframework.core.env.Environment;
 
 @SpringBootApplication
 @MapperScan("com.exphub.mapper")
+// 2026-11-07：登录失败计数的 @Scheduled 过期清理需要它。
+// 全项目仅 LoginAttemptService 一个 @Scheduled，启用后只多一个单线程调度器。
+@org.springframework.scheduling.annotation.EnableScheduling
 public class ExpHubApplication {
 
     public static void main(String[] args) {

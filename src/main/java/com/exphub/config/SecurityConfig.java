@@ -20,6 +20,9 @@ public class SecurityConfig {
     @Autowired
     private LoginSuccessHandler loginSuccessHandler;
 
+    @Autowired
+    private LoginFailureHandler loginFailureHandler;
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -58,7 +61,10 @@ public class SecurityConfig {
                 .loginPage("/login")
                 .loginProcessingUrl("/login")
                 .successHandler(loginSuccessHandler)
-                .failureUrl("/login?error")
+                // 2026-11-07：改成自定义 failureHandler 以接入失败计数与锁定。
+                // 原来的 failureUrl("/login?error") 只给一句「用户名或密码错误」，
+                // 既不计数也不会锁，等于对爆破完全无感。
+                .failureHandler(loginFailureHandler)
                 .permitAll()
             )
             .logout(logout -> logout

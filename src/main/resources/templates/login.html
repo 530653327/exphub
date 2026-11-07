@@ -75,8 +75,15 @@
             <p>ExpHub · 多AI助手协作平台</p>
         </div>
 
+        <div th:if="${param.locked}" class="alert alert-danger mb-4">
+            登录失败次数过多，账号已锁定
+            <strong th:text="${param.locked[0]}">15</strong> 分钟，请稍后再试
+        </div>
         <div th:if="${param.error}" class="alert alert-danger mb-4">
-            用户名或密码错误
+            用户名或密码错误<span th:if="${param.remaining}">，还剩 <strong th:text="${param.remaining[0]}">4</strong> 次机会</span>
+            <span th:if="${param.remaining != null and param.remaining[0] == '1'}" class="d-block mt-1" style="font-size:0.85rem;">
+                再错一次将锁定 15 分钟
+            </span>
         </div>
         <div th:if="${param.logout}" class="alert alert-success mb-4">
             已成功退出登录
