@@ -13,6 +13,10 @@
 -->
 <head th:fragment="head(title)">
     <meta charset="UTF-8">
+    <!-- CSRF：移动端后续的写操作（删除待删文档等）要带 token，这里与 PC 的 layout/base.html 口径一致。
+         _csrf 为 null 时给空串，页面照常渲染（登录页也可能没有）。 -->
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
     <meta name="theme-color" content="#1e1e2e">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -23,6 +27,7 @@
     <link rel="manifest" th:href="@{/manifest.json}">
     <link rel="apple-touch-icon" th:href="@{/images/pwa/apple-touch-icon.png}">
     <link rel="icon" type="image/png" sizes="32x32" th:href="@{/images/pwa/favicon-32.png}">
+    <script th:src="@{/js/csrf.js}"></script>
     <style th:inline="css">
         :root {
             color-scheme: dark;
@@ -141,7 +146,14 @@
     </div>
     <script th:inline="javascript">
         (function () {
-            var ctx = /*[[${#httpServletRequest.contextPath}]]*/ '';
+            // 2026-11-08 修正（这是本页第一次上线就白屏的根因）：
+            // 原来用 servlet 请求对象取 contextPath，它在 Thymeleaf 3.1 下求值为 null，
+            // 对 null 取属性直接抛 TemplateProcessingException。而 HTML 是边渲染边输出的，
+            // 异常发生时响应已提交 —— 错误页渲染不出来，浏览器只收到半截 HTML，
+            // 表现就是「深灰背景、什么都没有」，而且 HTTP 还是 200，监控完全看不见。
+            // 改用 @{/}：contextPath 由 Thymeleaf 自己拼，不依赖 model 属性、也不依赖 request 对象。
+            var ctx = /*[[@{/}]]*/ '/';
+            ctx = ctx.replace(/\/$/, '');
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function () {
                     navigator.serviceWorker.register(ctx + '/sw.js').catch(function (e) {

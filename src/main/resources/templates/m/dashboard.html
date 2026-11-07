@@ -97,7 +97,9 @@
 <th:block th:replace="~{m/layout :: pwa}"></th:block>
 
 <script th:inline="javascript">
-    var CTX = /*[[${#httpServletRequest.contextPath}]]*/ '';
+    // 用 @{/} 取 contextPath，不碰 servlet 请求对象（本项目 Thymeleaf 3.1 下它为 null，会炸模板）
+    var CTX = /*[[@{/}]]*/ '/';
+    CTX = CTX.replace(/\/$/, '');
 
     function num(v, digits) {
         if (v === null || v === undefined || v === '') return '0';

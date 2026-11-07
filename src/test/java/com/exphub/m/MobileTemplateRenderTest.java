@@ -1,0 +1,141 @@
+package com.exphub.m;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockServletContext;
+import org.thymeleaf.context.WebContext;
+import org.thymeleaf.spring6.SpringTemplateEngine;
+import org.thymeleaf.templatemode.TemplateMode;
+import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
+import org.thymeleaf.web.servlet.JakartaServletWebApplication;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Locale;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
+/**
+ * 移动端模板「能渲染」守卫（2026-11-08 加）。
+ *
+ * <h3>为什么必须存在这个测试</h3>
+ * 2026-11-08 第一批移动页上线后，手机上打开是「一片深灰、什么都没有」，而 HTTP 状态是 <b>200</b>。
+ * 根因：模板里写了 {@code ${#httpServletRequest.contextPath}}，本项目的 Thymeleaf 3.1 下该对象为 null，
+ * 取属性直接抛 {@code TemplateProcessingException}。而 Thymeleaf 是边渲染边输出，
+ * 异常发生时响应已提交，Spring 连错误页都渲染不了（日志原话：
+ * {@code Cannot render error page ... as the response has already been committed}），
+ * 浏览器收到的是半截 HTML —— 只剩 head 里的背景色。监控、状态码、curl 全部看不见。
+ *
+ * <p>所以这里不做「对源码文本断言」，而是<b>真的把模板渲染一遍</b>：
+ * 模板只要有一个表达式炸，这条测试就红，而不是等人在手机上看着空白页去猜。
+ *
+ * <p>本类只依赖 thymeleaf + spring-mock，不启动 Spring 容器，也不连数据库 ——
+ * 前面的 {@code @WebMvcTest} 方案因 MyBatis mapper 要 sqlSessionFactory 起不来，故改用纯引擎渲染。
+ */
+class MobileTemplateRenderTest {
+
+    private static final String CTX_PATH = "/exphub";
+
+    /** 五个移动页 + 各自需要的模型变量。新增移动页必须加进来，否则它永远没人渲染过。 */
+    private static final List<String> TEMPLATES = List.of(
+            "m/login", "m/dashboard", "m/pending", "m/tools", "m/me"
+    );
+
+    private static SpringTemplateEngine engine() {
+        ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
+        resolver.setPrefix("templates/");
+        resolver.setSuffix(".html");
+        resolver.setTemplateMode(TemplateMode.HTML);
+        resolver.setCharacterEncoding("UTF-8");
+        resolver.setCacheable(false);
+
+        SpringTemplateEngine engine = new SpringTemplateEngine();
+        engine.setTemplateResolver(resolver);
+        return engine;
+    }
+
+    private static WebContext context() {
+        MockServletContext servletContext = new MockServletContext();
+        MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
+        request.setContextPath(CTX_PATH);
+        request.setRequestURI(CTX_PATH + "/m/dashboard");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        // Thymeleaf 3.1 起 WebContext 只接受 IWebExchange（不再直接吃 Servlet 三件套）
+        JakartaServletWebApplication webApp = JakartaServletWebApplication.buildApplication(servletContext);
+        WebContext ctx = new WebContext(webApp.buildExchange(request, response), Locale.SIMPLIFIED_CHINESE);
+        // 与 MobileController 往 Model 里放的字段保持一致
+        ctx.setVariable("title", "看板");
+        ctx.setVariable("me", "管理员");
+        ctx.setVariable("username", "admin");
+        ctx.setVariable("lastLogin", "2026-11-08 02:00");
+        ctx.setVariable("activeTab", "dashboard");
+        // _csrf 在测试里没有 Security 上下文，模板按 null 分支走（这正是要覆盖的分支之一）
+        ctx.setVariable("_csrf", null);
+        return ctx;
+    }
+
+    @Test
+    @DisplayName("五个移动页都能渲染完成，且 contextPath 被 @{/} 正确拼上")
+    void allMobileTemplatesRender() {
+        SpringTemplateEngine engine = engine();
+
+        for (String t : TEMPLATES) {
+            String html;
+            try {
+                html = engine.process(t, context());
+            } catch (RuntimeException e) {
+                throw new AssertionError("模板 " + t + " 渲染失败 —— 线上表现会是「200 + 半截白/灰页」，"
+                        + "因为响应已提交时错误页也渲染不出来。原始异常：" + e.getMessage(), e);
+            }
+
+            assertTrue(html.contains("<!DOCTYPE html>"), t + " 输出不是完整 HTML：\n" + head(html));
+            // @{/} 在 contextPath=/exphub 下应产出 /exphub/ 前缀
+            assertTrue(html.contains(CTX_PATH), t + " 里没有出现 contextPath " + CTX_PATH
+                    + "（@{/} 没生效？）");
+            assertTrue(html.contains("tabbar"), t + " 缺底部导航（layout 的 tabbar 片段没被 include）");
+        }
+    }
+
+    @Test
+    @DisplayName("dashboard 渲染后 JS 与数据接口都在，不能只剩一个空壳")
+    void dashboardHasWorkingScript() {
+        String html = engine().process("m/dashboard", context());
+
+        assertTrue(html.contains("id=\"refreshBtn\""), "刷新按钮不存在 —— 脚本会在 addEventListener 处抛错，"
+                + "后面的 load() 根本不会跑（线上表现就是没有任何 /api 请求）");
+        assertTrue(html.contains("/api/stats/overview"), "看板脚本里没有 overview 接口调用");
+        assertTrue(html.contains("/api/stats/call-trend"), "看板脚本里没有趋势接口调用");
+        assertTrue(html.contains("id=\"hotList\""), "热门列表容器不存在");
+        // contextPath 拼接：模板里是 CTX + '/api/...'，CTX 不能带尾斜杠否则出现 //api
+        assertFalse(html.contains("//api/"), "contextPath 拼接出现双斜杠：CTX 末尾的 / 没被去掉");
+    }
+
+    @Test
+    @DisplayName("模板里禁止再出现 #httpServletRequest / #request / #session（本项目 Thymeleaf 3.1 下为 null）")
+    void noServletObjectsInTemplates() throws IOException {
+        Path dir = Path.of("src/main/resources/templates/m");
+        assertTrue(Files.isDirectory(dir), "找不到移动端模板目录：" + dir.toAbsolutePath());
+
+        try (var files = Files.list(dir)) {
+            for (Path p : files.filter(f -> f.toString().endsWith(".html")).toList()) {
+                String src = Files.readString(p, StandardCharsets.UTF_8);
+                for (String bad : List.of("#httpServletRequest", "#httpSession", "${#request.", "${#session.")) {
+                    assertFalse(src.contains(bad), p.getFileName() + " 里出现 " + bad
+                            + " —— 本项目 Thymeleaf 3.1 下该对象为 null，会在渲染中途抛异常，"
+                            + "导致「200 状态码 + 半截页面」。取 contextPath 请用 @{/}。");
+                }
+            }
+        }
+    }
+
+    private static String head(String s) {
+        return s.length() > 400 ? s.substring(0, 400) : s;
+    }
+}
