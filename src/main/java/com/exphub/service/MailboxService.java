@@ -9,6 +9,7 @@ import com.exphub.mapper.MailMessageMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -16,8 +17,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
@@ -49,6 +53,85 @@ public class MailboxService {
     @Autowired
     private MailCursorMapper cursorMapper;
 
+    /**
+     * 角色代号基准表。**单一数据源在 application.yml 的 {@code exphub.mail.known-roles}**，
+     * 不写成 Java 常量 —— 名单散在代码里没人知道该改哪（2026-11-08 阁主定）。
+     */
+    @Value("${exphub.mail.known-roles:}")
+    private String knownRolesConfig;
+
+    /** 动态角色集合的缓存（库里出现过的 role 不常变，缓存 60 秒够用）。 */
+    private volatile Set<String> cachedDbRoles;
+    private volatile long cachedDbRolesAt;
+
+    private static final long ROLE_CACHE_MS = 60_000L;
+
+    /**
+     * 可用角色代号 = 配置基准表 ∪ 库里真实出现过的 role。
+     *
+     * <p><b>为什么还要并上库里的</b>：只认配置的话，新增助手必须先改配置、发版、重启才能收信 ——
+     * 而它只要发过一封或收过一封，库里就有记录。反过来，只认库里的也不行：新助手第一次发信时
+     * 库里还没有它，会把自己也拒掉（鸡生蛋）。两边并起来才没有这个死结。
+     */
+    public Set<String> knownRoles() {
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        if (knownRolesConfig != null) {
+            for (String s : knownRolesConfig.split(",")) {
+                String v = s.trim().toLowerCase(Locale.ROOT);
+                if (!v.isEmpty()) set.add(v);
+            }
+        }
+        for (String r : dbRoles()) {
+            if (r != null && !r.isBlank()) set.add(r.trim().toLowerCase(Locale.ROOT));
+        }
+        return set;
+    }
+
+    private Set<String> dbRoles() {
+        long now = System.currentTimeMillis();
+        Set<String> cached = cachedDbRoles;
+        if (cached != null && now - cachedDbRolesAt < ROLE_CACHE_MS) return cached;
+        Set<String> fresh = new LinkedHashSet<>();
+        try {
+            List<String> rs = msgMapper.distinctRoles();
+            if (rs != null) for (String r : rs) if (r != null) fresh.add(r);
+        } catch (Exception e) {
+            // 查不出来不能阻断发信：退化成「只认配置表」，并留日志
+            log.warn("MailboxService.dbRoles: 查询历史角色失败，退化为仅用配置表：{}", e.getMessage());
+        }
+        cachedDbRoles = fresh;
+        cachedDbRolesAt = now;
+        return fresh;
+    }
+
+    /**
+     * 收件代号是否合法（大小写不敏感）。
+     *
+     * <p>校的是「这个代号有没有人用」，**不是权限** —— 信箱本身是委托信任。
+     * 目的是拦住「传了显示名导致信投进没人收的地方」这一类静默失败。
+     */
+    public boolean isKnownRole(String role) {
+        if (role == null || role.isBlank()) return false;
+        return knownRoles().contains(role.trim().toLowerCase(Locale.ROOT));
+    }
+
+    /** 收件人不合法时的拒绝文案：中文显示名要单独说清，不然对方下次还写中文。 */
+    public String unknownRecipientMessage(String to) {
+        String t = to == null ? "" : to.trim();
+        StringBuilder sb = new StringBuilder();
+        boolean nonAscii = t.codePoints().anyMatch(c -> c > 127);
+        if (nonAscii) {
+            sb.append("收件人写成了显示名「").append(t).append("」，已拒绝（未发出任何信）。\n\n");
+            sb.append("角色代号一律**小写英文**、不带引号、不带中文。你要找的大概是下面某一个。\n");
+        } else {
+            sb.append("收件人「").append(t).append("」不是已知角色代号，已拒绝（未发出任何信）。\n\n");
+        }
+        sb.append("可用代号：").append(String.join(" / ", knownRoles())).append("\n\n");
+        sb.append("代号表是单一数据源：`application.yml` 的 `exphub.mail.known-roles`（另并上库里已出现过的代号）。\n");
+        sb.append("这条校验只在**开新线程**时生效；回信（带 inReplyTo）不拦，避免历史线程被卡死。");
+        return sb.toString();
+    }
+
     // ---------------------------------------------------------------- 发信
 
     /**
@@ -67,6 +150,15 @@ public class MailboxService {
         }
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("主题是空的");
+        }
+
+        // 2026-11-08（阁主 #51 拍板）：**只在校验开新线程**。
+        // 根因：to 是自由文本，传了显示名（如「烛龙」）时服务端既不校验也不报错，
+        // 只会存一条谁都匹配不上的记录 —— 发件方全程黑盒，还得靠对方反馈才知道发丢了（#45）。
+        // 回信不校验：带 inReplyTo 时收件人已由父消息确定，把回信拒掉比发丢更伤，
+        // 而且历史里已存在的拼错 role 会把老线程永久卡死。
+        if (inReplyTo == null && !isKnownRole(toRole)) {
+            throw new IllegalArgumentException(unknownRecipientMessage(toRole));
         }
 
         // 幂等：重试不重复发（工具超时重试很常见）
@@ -136,6 +228,8 @@ public class MailboxService {
         public String threadId;
         public String subject;
         public String fromRole;
+        /** 收件人。收件箱里通常是我自己；发件箱里是对方 —— 两种视角共用同一个结构，靠调用方决定怎么念。 */
+        public String toRole;
         public String msgType;
         public LocalDateTime latestAt;
         public String latestSnippet;
@@ -201,6 +295,7 @@ public class MailboxService {
             env.threadId = threadId;
             env.subject = latest.getSubject();
             env.fromRole = latest.getFromRole();
+            env.toRole = latest.getToRole();
             env.msgType = latest.getMsgType();
             env.latestAt = newestAny.getCreatedAt();
             env.latestSnippet = snippet(newestAny.getBody());
@@ -223,6 +318,53 @@ public class MailboxService {
         MailMessage mine = latestMine.get(threadId);
         if (mine != null && mine.getId() > id) id = mine.getId();
         return id;
+    }
+
+    /**
+     * 发件视角：自己发出去的线程（2026-11-08 阁主 #51 派单）。
+     *
+     * <p><b>为什么不加新工具</b>：MCP 工具总数冻结在 50（AGENTS.md 红线 13），
+     * 所以走 {@code mail_start(sent=true)}，默认 false —— 现有调用方行为一个字不变。
+     *
+     * <p><b>为什么需要</b>：只有收件视角时，发完的信自己回看不到，连 to 原文都查不了。
+     * #45 那次排查卡了半天，根因就是「发信方无法自证发了什么」。
+     */
+    public List<Envelope> outbox(String role, String q, int limit) {
+        if (role == null || role.isBlank()) return new ArrayList<>();
+        List<MailMessage> mine = msgMapper.selectList(new QueryWrapper<MailMessage>()
+                .eq("from_role", role.trim())
+                .orderByDesc("id").last("LIMIT " + SCAN_BATCH));
+        if (mine.isEmpty()) return new ArrayList<>();
+
+        // 已按 id desc，每个线程第一次出现的那条就是该线程最新的一封
+        Map<String, MailMessage> latestByThread = new LinkedHashMap<>();
+        for (MailMessage m : mine) latestByThread.putIfAbsent(m.getThreadId(), m);
+
+        String kw = q == null ? null : q.trim().toLowerCase();
+        List<Envelope> out = new ArrayList<>();
+        for (MailMessage latest : latestByThread.values()) {
+            if (kw != null && !kw.isEmpty()) {
+                // 发件箱按「收件人」搜才有意义（收件箱那边按发件人搜）
+                boolean hit = contains(latest.getSubject(), kw)
+                        || contains(latest.getToRole(), kw)
+                        || contains(latest.getMsgType(), kw);
+                if (!hit) continue;
+            }
+            Envelope env = new Envelope();
+            env.threadId = latest.getThreadId();
+            env.subject = latest.getSubject();
+            env.fromRole = latest.getFromRole();
+            env.toRole = latest.getToRole();
+            env.msgType = latest.getMsgType();
+            env.latestAt = latest.getCreatedAt();
+            env.latestSnippet = snippet(latest.getBody());
+            env.freshCount = 0;
+            env.claimed = latest.getClaimedBy() != null;
+            env.claimedBy = latest.getClaimedBy();
+            out.add(env);
+        }
+        if (out.size() > limit) out = out.subList(0, limit);
+        return out;
     }
 
     /** 全库未读计数（只展示，不参与推信）。 */

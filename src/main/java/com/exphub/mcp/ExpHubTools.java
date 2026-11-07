@@ -5914,11 +5914,14 @@ public class ExpHubTools {
     @Tool(name = "mail_start",
           description = "【开工先调这个】取「你是谁 + 未读信封」。身份来自客户端配置注入的 x-exphub-role 头（委托信任，不是鉴权）；"
                       + "没配角色就只回提示、不给任何私信。信封按线程聚合，每根一行：主题/发件人/新消息数/正文首 100 字。"
-                      + "要展开某根用 mail_thread；q 只搜主题/发件人/类型，不搜正文。")
+                      + "要展开某根用 mail_thread；q 只搜主题/发件人/类型，不搜正文。"
+                      + "sent=true 切到**发件视角**（看你发出去的、含发给谁），默认 false=收件视角。")
     public String mailStart(
             @ToolParam(description = "可选。搜信封的关键词（只匹配主题/发件人/类型，不搜正文）", required = false) String q,
             @ToolParam(description = "可选。最多列几根线程，默认 20，上限 50", required = false) Integer limit,
-            @ToolParam(description = "可选。角色代号兜底。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role) {
+            @ToolParam(description = "可选。角色代号兜底。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role,
+            @ToolParam(description = "可选。true=发件视角（我发出去的，列出收件人）；**默认 false**，不传就是收件视角。"
+                    + "发信方自查「到底发给了谁」用它 —— 收件视角永远看不到自己发的信", required = false) Boolean sent) {
         try {
             String me = mailRole(role);
             String cfg = MailIdentity.configSource();
@@ -5941,6 +5944,28 @@ public class ExpHubTools {
             sb.append("你是【").append(me).append("】");
             if (cfg != null) sb.append("，配置来源 ").append(cfg);
             sb.append("；未读 ").append(unread).append(" 封\n");
+
+            // 2026-11-08（#1313 第 2 条）：发件视角。默认 false，现有调用方行为不变。
+            if (Boolean.TRUE.equals(sent)) {
+                List<com.exphub.service.MailboxService.Envelope> sentList = mailboxService.outbox(me, q, lim);
+                sb.append("\n📤 发件视角");
+                if (searchMode) sb.append("（按关键词过滤）");
+                sb.append("：").append(sentList.size()).append(" 根线程\n");
+                if (sentList.isEmpty()) {
+                    sb.append(searchMode ? "📭 没搜到你发过的匹配信件。\n"
+                                         : "📭 你还没发过信。\n");
+                    return sb.toString();
+                }
+                for (com.exphub.service.MailboxService.Envelope e : sentList) {
+                    sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
+                      .append(" · 发给【").append(e.toRole).append("】")
+                      .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt)).append("\n");
+                    sb.append("  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
+                }
+                sb.append("\n> 展开某根：`mail_thread(threadId=\"").append(sentList.get(0).threadId).append("\")`\n");
+                sb.append("> 发件视角只列「我发出去的」，收件箱的信不在这里（默认模式才是收件视角）。\n");
+                return sb.toString();
+            }
 
             List<com.exphub.service.MailboxService.Envelope> list =
                     mailboxService.inbox(me, q, lim, searchMode);
@@ -5996,6 +6021,17 @@ public class ExpHubTools {
               .append("，类型 ").append(m.getMsgType());
             if (m.getInReplyTo() != null) sb.append("，回复 #").append(m.getInReplyTo());
             sb.append("\n");
+            // 2026-11-08：回信不校验收件人（不收件人已由父消息确定，拒掉比发丢更伤），
+            // 但对不上就明确提醒 —— 静默投错人比报错危险。
+            if (m.getInReplyTo() != null) {
+                MailMessage parent = mailboxService.byId(m.getInReplyTo());
+                if (parent != null && parent.getFromRole() != null
+                        && !m.getToRole().equalsIgnoreCase(parent.getFromRole())) {
+                    sb.append("⚠️ 收件人【").append(m.getToRole()).append("】与父消息发件人【")
+                      .append(parent.getFromRole()).append("】不一致。回信不拦（旧线程不能卡死），")
+                      .append("但这封信确实投给了前者，请确认没发错人。\n");
+                }
+            }
             return sb.toString();
         } catch (IllegalArgumentException iae) {
             return "❌ " + iae.getMessage();

@@ -323,8 +323,10 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-06 2.3.2 信箱：47 → 50，新增 mail_start（3 参数）/ mail_send（6）/ mail_thread（5）；
         //            参数 184 → 198。只加三个是阁主砍的：工具 schema 是每轮都付的常驻成本
         //            （#1324 C108），五个会拿省下来的读信钱去赔工具说明钱。
+        // 2026-11-08 发件视角：工具数仍 50（不新增，红线 13），mail_start 加 sent 参数，参数 198 → 199。
+        //            理由：发件方必须能自查「我发给了谁」——#45 丢信那次就是发件方无法自证。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(198, paramCount, "参数数变了（184 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(199, paramCount, "参数数变了（198 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════
