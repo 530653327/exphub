@@ -64,7 +64,12 @@ public class LoginSuccessHandler implements AuthenticationSuccessHandler {
         }
 
         log.info("登录成功：user={} ip={}", username, clientIp(request));
-        response.sendRedirect(request.getContextPath() + "/dashboard");
+
+        // 2026-11-08：移动壳登录要回移动首页。不看 UA —— UA 判断在平板/微信内置浏览器上经常判错，
+        // 而「谁把我送到登录页」是确定信息（/m/login 与 /m/** 都会打这个标记）。
+        boolean mobile = Boolean.TRUE.equals(
+                request.getSession().getAttribute(com.exphub.controller.MobileController.UI_SESSION_KEY));
+        response.sendRedirect(request.getContextPath() + (mobile ? "/m/dashboard" : "/dashboard"));
     }
 
     private static String clientIp(HttpServletRequest request) {

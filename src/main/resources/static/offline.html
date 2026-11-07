@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>离线 · 经验阁</title>
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            background: #1e1e2e; color: #fff; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+            padding: 24px; text-align: center;
+        }
+        .box { max-width: 320px; }
+        h1 { font-size: 20px; margin: 0 0 12px; }
+        p { color: #a1a1b5; font-size: 14px; margin: 0 0 24px; }
+        button {
+            appearance: none; border: 0; border-radius: 10px; padding: 12px 28px;
+            background: #6366f1; color: #fff; font-size: 15px; font-weight: 500;
+        }
+        button:active { opacity: .8; }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h1>当前离线</h1>
+    <!-- 刻意不缓存任何经验内容：宁可不显示，也不给看旧结论 -->
+    <p>后台数据要取最新的，离线时无法展示。<br>连上网络后点下面重试。</p>
+    <button onclick="location.reload()">重新加载</button>
+</div>
+</body>
+</html>

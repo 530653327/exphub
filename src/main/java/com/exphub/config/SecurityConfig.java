@@ -33,6 +33,9 @@ public class SecurityConfig {
         http
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/login", "/").permitAll()
+                // 移动壳登录页 + PWA 三件套：manifest/sw/offline 必须免登录，
+                // 否则浏览器拉 manifest 被 302 到登录页，安装条件不成立（PWA 直接装不上）
+                .requestMatchers("/m/login", "/manifest.json", "/sw.js", "/offline.html").permitAll()
                 .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
                 // MCP 用 authorization-key 请求头鉴权（ApiKeyInterceptor），不依赖 session
                 .requestMatchers("/mcp/**").permitAll()
@@ -72,6 +75,23 @@ public class SecurityConfig {
                 .logoutSuccessUrl("/login?logout")
                 .permitAll()
             )
+            // 2026-11-08 移动壳：未登录访问 /m/** 要落到移动登录页，而不是 PC 登录页。
+            // 必须写在 formLogin 之后 —— FormLoginConfigurer 会把 entryPoint 改成 loginPage，
+            // 写在前面的 exceptionsHandling 会被它覆盖掉（这类「配置顺序」问题不报错，只不生效）。
+            .exceptionHandling(ex -> {
+                java.util.LinkedHashMap<org.springframework.security.web.util.matcher.RequestMatcher,
+                        org.springframework.security.web.AuthenticationEntryPoint> entries =
+                        new java.util.LinkedHashMap<>();
+                entries.put(request -> {
+                    String p = request.getServletPath();
+                    return p != null && (p.equals("/m") || p.startsWith("/m/"));
+                }, new org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint("/m/login"));
+                org.springframework.security.web.authentication.DelegatingAuthenticationEntryPoint delegating =
+                        new org.springframework.security.web.authentication.DelegatingAuthenticationEntryPoint(entries);
+                delegating.setDefaultEntryPoint(
+                        new org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint("/login"));
+                ex.authenticationEntryPoint(delegating);
+            })
             .httpBasic(basic -> basic.disable());
         return http.build();
     }

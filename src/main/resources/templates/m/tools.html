@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('工具埋点')}"></head>
+<body>
+<div class="page">
+    <div class="h1">工具埋点</div>
+    <div class="empty">
+        这一块下一批上线。<br>
+        <span class="muted">会展示每个工具被调用了多少次、成功率、平均耗时，以及最近的调用记录。</span>
+    </div>
+</div>
+<nav th:replace="~{m/layout :: tabbar('tools')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+</body>
+</html>

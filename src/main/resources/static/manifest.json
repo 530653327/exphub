@@ -1,0 +1,46 @@
+{
+  "name": "经验阁 · 后台",
+  "short_name": "经验阁",
+  "description": "ExpHub 后台移动端：看板、待删队列、工具埋点、用户",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./m/dashboard",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#1e1e2e",
+  "theme_color": "#1e1e2e",
+  "icons": [
+    {
+      "src": "./images/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./images/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./images/pwa/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "待删队列",
+      "url": "./m/pending",
+      "description": "确认删除标记待删的经验"
+    },
+    {
+      "name": "工具埋点",
+      "url": "./m/tools",
+      "description": "工具调用次数与成功率"
+    }
+  ]
+}

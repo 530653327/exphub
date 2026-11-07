@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('看板')}"></head>
+<body>
+<div class="page">
+    <div class="row-between" style="margin-bottom:14px">
+        <div>
+            <div class="h1" style="margin:0">看板</div>
+            <div class="muted" th:text="'你好，' + ${me}">你好</div>
+        </div>
+        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
+    </div>
+
+    <div id="loading" class="empty">加载中…</div>
+
+    <div id="content" style="display:none">
+        <!-- 首屏四个主指标：手机一眼能看清的四件事 -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div class="card" style="margin:0">
+                <div class="muted">知识文档</div>
+                <div class="num" id="m-totalDocs">—</div>
+                <div class="muted" id="m-docsSub">—</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">今日调用</div>
+                <div class="num" id="m-todayCalls">—</div>
+                <div class="muted" id="m-callsSub">—</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">活跃助手</div>
+                <div class="num" id="m-totalAssistants">—</div>
+                <div class="muted">在用且非空壳</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">调用成功率</div>
+                <div class="num" id="m-successRate">—</div>
+                <div class="muted" id="m-sample">—</div>
+            </div>
+        </div>
+
+        <div class="h2">质量与风险</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div class="card" style="margin:0">
+                <div class="muted">问题文档</div>
+                <div class="num" id="m-problemDocs" style="color:var(--warn)">—</div>
+                <div class="muted">超期/取代/待删/异常</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">超 90 天未验证</div>
+                <div class="num" id="m-staleDocs" style="color:var(--warn)">—</div>
+                <div class="muted">结论可能已过期</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">待判候选</div>
+                <div class="num" id="m-candidatePending">—</div>
+                <div class="muted">疑似重复待人工定</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">搜索零命中率</div>
+                <div class="num" id="m-searchZeroRate">—</div>
+                <div class="muted" id="m-searchSub">近 30 天</div>
+            </div>
+        </div>
+
+        <div class="h2">分布</div>
+        <div class="card">
+            <div class="row-between" style="padding:6px 0">
+                <span class="muted">全局知识文档</span>
+                <span id="m-globalDocs" style="font-weight:500">—</span>
+            </div>
+            <div class="divider"></div>
+            <div class="row-between" style="padding:6px 0">
+                <span class="muted">项目内文档</span>
+                <span id="m-projectDocs" style="font-weight:500">—</span>
+            </div>
+            <div class="divider"></div>
+            <div class="row-between" style="padding:6px 0">
+                <span class="muted">项目数</span>
+                <span id="m-totalProjects" style="font-weight:500">—</span>
+            </div>
+        </div>
+
+        <div class="h2">近 7 天调用趋势</div>
+        <div class="card">
+            <svg id="trend" viewBox="0 0 320 120" style="width:100%;height:120px;display:block"></svg>
+            <div class="muted" id="trendSub" style="margin-top:6px">—</div>
+        </div>
+
+        <div class="h2">热门经验 Top10</div>
+        <div id="hotList"></div>
+
+        <div class="muted" style="text-align:center;margin:20px 0 8px;font-size:12px" id="updatedAt"></div>
+    </div>
+</div>
+
+<nav th:replace="~{m/layout :: tabbar('dashboard')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+
+<script th:inline="javascript">
+    var CTX = /*[[${#httpServletRequest.contextPath}]]*/ '';
+
+    function num(v, digits) {
+        if (v === null || v === undefined || v === '') return '0';
+        var n = Number(v);
+        if (isNaN(n)) return String(v);
+        return digits === undefined ? n.toLocaleString('zh-CN') : n.toFixed(digits);
+    }
+
+    function setText(id, text) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = text;
+    }
+
+    function load() {
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('content').style.display = 'none';
+
+        Promise.all([
+            fetch(CTX + '/api/stats/overview').then(function (r) { return r.json(); }),
+            fetch(CTX + '/api/stats/call-trend?days=7').then(function (r) { return r.json(); }),
+            fetch(CTX + '/api/stats/hot-docs?limit=10').then(function (r) { return r.json(); })
+        ]).then(function (res) {
+            var o = (res[0] && res[0].data) || {};
+            renderOverview(o);
+            renderTrend((res[1] && res[1].data) || []);
+            renderHot((res[2] && res[2].data) || []);
+            setText('updatedAt', '数据更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+        }).catch(function (e) {
+            document.getElementById('loading').textContent = '加载失败：' + e.message + '（下拉或点刷新重试）';
+        });
+    }
+
+    function renderOverview(o) {
+        setText('m-totalDocs', num(o.totalDocs));
+        setText('m-docsSub', '全局 ' + num(o.globalDocs) + ' · 项目 ' + num(o.projectDocs));
+        setText('m-todayCalls', num(o.todayCalls));
+        setText('m-callsSub', '业务 ' + num(o.todayBiz) + ' · 工具 ' + num(o.todayTool));
+        setText('m-totalAssistants', num(o.totalAssistants));
+
+        var rate = o.successRate;
+        // successRate 在不同口径下可能是 0~1 小数，也可能是已乘 100 的字符串 —— 两种都要认
+        var pct = rate === undefined || rate === null ? null : (Number(rate) > 1 ? Number(rate) : Number(rate) * 100);
+        setText('m-successRate', pct === null || isNaN(pct) ? '—' : pct.toFixed(1) + '%');
+        setText('m-sample', o.successSampled ? '样本 ' + num(o.successSampled) : '样本积累中');
+
+        setText('m-problemDocs', num(o.problemDocs));
+        setText('m-staleDocs', num(o.staleDocs));
+        setText('m-candidatePending', num(o.candidatePending));
+
+        var zr = o.searchZeroRate;
+        setText('m-searchZeroRate', zr === undefined || zr === null ? '—' : num(zr, 1) + '%');
+        setText('m-searchSub', '近 30 天 · 共 ' + num(o.searchTotal) + ' 次搜索');
+
+        setText('m-globalDocs', num(o.globalDocs));
+        setText('m-projectDocs', num(o.projectDocs));
+        setText('m-totalProjects', num(o.totalProjects));
+    }
+
+    function renderTrend(rows) {
+        var svg = document.getElementById('trend');
+        if (!rows || !rows.length) {
+            svg.innerHTML = '';
+            setText('trendSub', '暂无调用记录');
+            return;
+        }
+        var vals = rows.map(function (r) {
+            return Number(r.bizCalls !== undefined ? r.bizCalls : (r.calls !== undefined ? r.calls : 0));
+        });
+        var max = Math.max.apply(null, vals.concat([1]));
+        var W = 320, H = 120, pad = 8;
+        var step = rows.length > 1 ? (W - pad * 2) / (rows.length - 1) : 0;
+
+        var pts = vals.map(function (v, i) {
+            var x = pad + step * i;
+            var y = H - pad - (v / max) * (H - pad * 2);
+            return [x, y];
+        });
+
+        var line = pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' ');
+        var area = line + ' L' + pts[pts.length - 1][0].toFixed(1) + ' ' + (H - pad) + ' L' + pts[0][0].toFixed(1) + ' ' + (H - pad) + ' Z';
+
+        var dots = pts.map(function (p) {
+            return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.6" fill="#6366f1"/>';
+        }).join('');
+
+        svg.innerHTML =
+            '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
+            '<stop offset="0%" stop-color="#6366f1" stop-opacity="0.35"/>' +
+            '<stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>' +
+            '</linearGradient></defs>' +
+            '<path d="' + area + '" fill="url(#g)"/>' +
+            '<path d="' + line + '" fill="none" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>' +
+            dots;
+
+        var total = vals.reduce(function (a, b) { return a + b; }, 0);
+        setText('trendSub', '共 ' + total.toLocaleString('zh-CN') + ' 次 · 峰值 ' + max.toLocaleString('zh-CN'));
+    }
+
+    function renderHot(list) {
+        var box = document.getElementById('hotList');
+        if (!list || !list.length) {
+            box.innerHTML = '<div class="empty">暂无数据</div>';
+            return;
+        }
+        box.innerHTML = list.map(function (d, i) {
+            var rate = d.successRate === undefined || d.successRate === null ? null : Number(d.successRate) * 100;
+            return '<div class="card">' +
+                '<div class="row">' +
+                '<div style="width:22px;color:var(--muted);font-size:13px">' + (i + 1) + '</div>' +
+                '<div class="grow">' +
+                '<div class="ell" style="font-weight:500">' + escapeHtml(d.title || '') + '</div>' +
+                '<div class="muted ell">' + escapeHtml(d.authorName || '—') +
+                ' · 查看 ' + num(d.callCount) +
+                (rate === null || isNaN(rate) ? '' : ' · 成功 ' + rate.toFixed(0) + '%') +
+                '</div></div></div></div>';
+        }).join('');
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+        });
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', load);
+    load();
+</script>
+</body>
+</html>

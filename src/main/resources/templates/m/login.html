@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('登录')}"></head>
+<body>
+<div class="page" style="padding-top:56px">
+
+    <div style="text-align:center;margin-bottom:36px">
+        <img th:src="@{/images/pwa/icon-192.png}" alt="经验阁"
+             style="width:76px;height:76px;border-radius:18px;">
+        <div class="h1" style="margin-top:14px;margin-bottom:4px">经验阁</div>
+        <div class="muted">ExpHub 后台 · 移动版</div>
+    </div>
+
+    <!-- 失败原因：锁定与普通错误分开说，否则用户会一直重试把账号锁更久 -->
+    <div class="card" th:if="${param.locked}" style="border:1px solid var(--warn)">
+        <div style="color:var(--warn);font-weight:500;margin-bottom:4px">账号已临时锁定</div>
+        <div class="muted" th:text="'连续输错次数过多，请 ' + ${param.locked[0]} + ' 分钟后再试。手机输入容易错，建议先在密码管理器里确认。'"></div>
+    </div>
+    <div class="card" th:if="${param.error}" style="border:1px solid var(--danger)">
+        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">用户名或密码不正确</div>
+        <div class="muted" th:if="${param.remaining}">
+            还可以再试 <span th:text="${param.remaining[0]}">4</span> 次，超过会临时锁定 15 分钟。
+        </div>
+    </div>
+    <div class="card" th:if="${param.logout}">
+        <div class="muted">已退出登录</div>
+    </div>
+
+    <form th:action="@{/login}" method="post">
+        <div style="margin-bottom:12px">
+            <input type="text" name="username" placeholder="用户名" autocomplete="username"
+                   autocapitalize="none" autocorrect="off" required>
+        </div>
+        <div style="margin-bottom:20px">
+            <input type="password" name="password" placeholder="密码" autocomplete="current-password" required>
+        </div>
+        <button class="btn" type="submit">登录</button>
+    </form>
+
+    <div class="muted" style="text-align:center;margin-top:24px;font-size:12px">
+        首次登录后可在浏览器菜单里「添加到主屏幕」，下次像 App 一样打开
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('待删队列')}"></head>
+<body>
+<div class="page">
+    <div class="h1">待删队列</div>
+    <div class="empty">
+        这一块下一批上线。<br>
+        <span class="muted">已经标记待删的经验会在这里列出，可以直接确认删除。</span>
+    </div>
+</div>
+<nav th:replace="~{m/layout :: tabbar('pending')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+</body>
+</html>

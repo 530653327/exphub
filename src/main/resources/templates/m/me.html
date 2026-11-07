@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('我的')}"></head>
+<body>
+<div class="page">
+    <div class="h1">我的</div>
+
+    <div class="card">
+        <div class="row">
+            <img th:src="@{/images/pwa/icon-192.png}" alt=""
+                 style="width:48px;height:48px;border-radius:12px;">
+            <div class="grow">
+                <div style="font-weight:600" th:text="${me}">用户名</div>
+                <div class="muted" th:text="'账号 ' + ${username}">账号</div>
+            </div>
+        </div>
+        <div class="divider"></div>
+        <div class="row-between">
+            <span class="muted">最近登录</span>
+            <span th:text="${lastLogin}">—</span>
+        </div>
+    </div>
+
+    <div class="h2">安装</div>
+    <div class="card">
+        <div class="muted" id="installState">检测中…</div>
+        <div class="divider"></div>
+        <div class="muted" style="font-size:12px;line-height:1.7">
+            · iOS：Safari 打开 → 分享 → 添加到主屏幕<br>
+            · 安卓：Chrome 打开 → 菜单 → 安装应用<br>
+            · 微信内置浏览器不支持安装，请用系统浏览器
+        </div>
+    </div>
+
+    <div class="h2">账号</div>
+    <form th:action="@{/logout}" method="post">
+        <button class="btn danger" type="submit">退出登录</button>
+    </form>
+
+    <div class="muted" style="text-align:center;margin-top:22px;font-size:12px">
+        经验阁 · 移动版<br>
+        手机上只做查看与处理，新增和编辑请在电脑上完成
+    </div>
+</div>
+
+<nav th:replace="~{m/layout :: tabbar('me')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+
+<script th:inline="javascript">
+    (function () {
+        var el = document.getElementById('installState');
+        var standalone = window.navigator.standalone === true ||
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+        var isWeChat = /micromessenger/i.test(navigator.userAgent);
+
+        if (standalone) {
+            el.textContent = '已以独立应用方式打开';
+        } else if (isWeChat) {
+            el.textContent = '当前在微信内打开，无法安装。用系统浏览器打开后可添加到主屏幕';
+        } else if (!('serviceWorker' in navigator)) {
+            el.textContent = '当前浏览器不支持 PWA，功能不受影响';
+        } else {
+            el.textContent = '尚未安装到主屏幕，按下方说明添加后体验更好';
+        }
+    })();
+</script>
+</body>
+</html>
