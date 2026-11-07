@@ -30,6 +30,9 @@
         .badge-primary { background: #e94560; border-color: #e94560; }
         .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
         .search-box { border-radius: 30px; padding: 10px 20px; border: 1px solid #e0e0e0; width: 300px; }
+        .nav-tab { display: inline-block; padding: 12px 16px; color: #666; text-decoration: none; font-size: 0.9rem; border-bottom: 2px solid transparent; }
+        .nav-tab:hover { color: #333; text-decoration: none; }
+        .nav-tab.active { color: #e94560; font-weight: 600; border-bottom-color: #e94560; }
         .doc-item { padding: 20px 25px; border-bottom: 1px solid #f5f5f5; transition: all 0.2s; }
         .doc-item:hover { background: #fafafa; }
         .doc-item:last-child { border-bottom: none; }
@@ -65,10 +68,44 @@
     </div>
 
     <div class="main-content">
-        <div class="topbar">
-            <h4 class="mb-0">经验管理</h4>
-            <div class="d-flex align-items-center">
-                <select class="form-control mr-2" id="templateTypeFilter" onchange="doFilter()" style="width:160px;border-radius:20px;height:42px;">
+        <!-- 第一层：标题 + 新建（新建独占右上角） -->
+        <div class="topbar" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h4 class="mb-0">经验管理</h4>
+                <div th:if="${view != 'candidates'}" class="text-muted mt-1" style="font-size:0.82rem;">
+                    <span th:if="${keyword != null and keyword != ''}">搜索「<strong th:text="${keyword}"></strong>」</span>
+                    <span th:if="${templateType != null and templateType != ''}">｜类型过滤</span>
+                    <span th:if="${status == 'PENDING_DELETE'}">｜待删队列</span>
+                    <span th:if="${flag == 'needs_review'}">｜待复核</span>
+                    <span th:if="${keyword == null or keyword == ''} and ${templateType == null or templateType == ''} and ${status == null or status == ''} and ${flag == null or flag == ''}">全部经验</span>
+                    · 共 <strong th:text="${totalRows}">0</strong> 条
+                </div>
+                <div th:if="${view == 'candidates'}" class="text-muted mt-1" style="font-size:0.82rem;">
+                    整理候选队列 · 待判断 <!--候选去掉右btn，这里是说明区-->
+                </div>
+            </div>
+            <div class="d-flex align-items-center text-muted" style="font-size:0.82rem;">
+                <span th:if="${versionStats != null and versionStats.snapshots != null}" class="mr-3">
+                    <i class="fas fa-layer-group mr-1"></i>历史快照 <span th:text="${versionStats.snapshots}">0</span> 条 · <span th:text="${versionStats.kb}">0</span> KB
+                </span>
+                <a th:href="@{/docs/edit}" class="btn btn-primary">
+                    <i class="fas fa-plus mr-1"></i> 新建经验
+                </a>
+            </div>
+        </div>
+
+        <!-- 第二层：过滤工具栏（搜索 + 类型 + 状态） -->
+        <div class="card mb-3" th:if="${view != 'candidates'}">
+            <div class="card-body py-3 d-flex align-items-center" style="gap:10px;flex-wrap:wrap;">
+                <div class="input-group" style="flex:1;min-width:240px;">
+                    <input type="text" class="form-control" placeholder="搜索标题 / ID / 摘要 / 标签..." id="searchInput" th:value="${keyword}">
+                    <div class="input-group-append">
+                        <button class="btn btn-outline-secondary" type="button" onclick="doSearch()">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                </div>
+                <select class="form-control" id="templateTypeFilter" onchange="doFilter()" style="width:150px;">
                     <option value="">全部类型</option>
                     <option value="problem_solution" th:selected="${templateType == 'problem_solution'}">🛠️ 问题方案</option>
                     <option value="knowledge_doc" th:selected="${templateType == 'knowledge_doc'}">📚 知识文档</option>
@@ -79,57 +116,42 @@
                     <option value="schedule_plan" th:selected="${templateType == 'schedule_plan'}">📅 计划排期</option>
                     <option value="goal" th:selected="${templateType == 'goal'}">🎯 目标</option>
                 </select>
-                <div class="input-group" style="width: 300px;">
-                    <input type="text" class="form-control search-box" placeholder="搜索经验或输入ID精确查找..." id="searchInput" th:value="${keyword}">
-                    <div class="input-group-append">
-                        <button class="btn btn-outline-secondary" type="button" onclick="doSearch()">
-                            <i class="fas fa-search"></i>
-                        </button>
-                    </div>
-                </div>
-                <a th:href="@{/docs(status='PENDING_DELETE')}" class="btn btn-outline-danger ml-3"
-                   th:classappend="${status == 'PENDING_DELETE'} ? 'active'"
-                   title="AI 标记待删的经验，等你确认才真正删除">
-                    <i class="fas fa-trash-restore mr-1"></i> 待删队列
-                    <span class="badge badge-danger ml-1" th:if="${pendingDeleteCount != null and pendingDeleteCount > 0}"
-                          th:text="${pendingDeleteCount}">0</span>
-                </a>
-                <a th:href="@{/docs(flag='needs_review')}" class="btn btn-outline-warning ml-2"
-                   th:classappend="${flag == 'needs_review'} ? 'active'"
-                   title="AI 打上「待复核」标记的经验，引用前请先核实">
-                    <i class="fas fa-flag mr-1"></i> 待复核
-                    <span class="badge badge-warning ml-1" th:if="${needsReviewCount != null and needsReviewCount > 0}"
-                          th:text="${needsReviewCount}">0</span>
-                </a>
-                <a th:href="@{/docs(view='candidates')}" class="btn btn-outline-secondary ml-2"
-                   th:classappend="${view == 'candidates'} ? 'active'"
-                   title="AI/相似度算出的疑似重复对，等人判断。判断只打标记或写指针，不合并、不删除">
-                    <i class="fas fa-clone mr-1"></i> 整理候选
-                    <span class="badge badge-secondary ml-1" th:if="${candidateCount != null and candidateCount > 0}"
-                          th:text="${candidateCount}">0</span>
-                </a>
-                <a th:href="@{/docs/edit}" class="btn btn-primary ml-2">
-                    <i class="fas fa-plus mr-1"></i> 新建经验
-                </a>
-            </div>
-            <!-- A3：版本表占用（只读）。删历史正文不可逆，所以这里只展示不给清理按钮 -->
-            <div th:if="${versionStats != null and versionStats.snapshots != null}" class="text-muted mt-2" style="font-size:0.82rem;">
-                <i class="fas fa-layer-group mr-1"></i>
-                历史快照：<span th:text="${versionStats.snapshots}">0</span> 条 ·
-                占用 <span th:text="${versionStats.kb}">0</span> KB ·
-                平均 <span th:text="${versionStats.avgChars}">0</span> 字/条 ·
-                其中「仅元数据变更」<span th:text="${versionStats.metaCount}">0</span> 条（不存正文副本）
+                <!-- 状态下拉不含「待删」：待删由下方 Tab 管，避免重复入口 -->
+                <select class="form-control" id="statusFilter" onchange="doFilter()" style="width:140px;"
+                        th:disabled="${status == 'PENDING_DELETE'}">
+                    <option value="">全部状态</option>
+                    <option value="ACTIVE" th:selected="${status == 'ACTIVE'}">正常</option>
+                    <option value="COMPLETED" th:selected="${status == 'COMPLETED'}">已完成</option>
+                    <option value="BROKEN" th:selected="${status == 'BROKEN'}">已失效</option>
+                    <option value="DEPRECATED" th:selected="${status == 'DEPRECATED'}">已过期</option>
+                </select>
             </div>
         </div>
 
+        <!-- 第三层：视图 Tab（全部 / 待复核 / 候选 / 待删） -->
+        <div class="card">
+            <div class="card-header px-3 py-0 d-flex" style="gap:2px;border-bottom:1px solid #f0f0f0;">
+                <a th:href="@{/docs(keyword=${keyword}, templateType=${templateType})}"
+                   th:classappend="${status != 'PENDING_DELETE' and flag != 'needs_review' and view != 'candidates'} ? 'active'"
+                   class="nav-tab">全部</a>
+                <a th:href="@{/docs(flag='needs_review')}" th:classappend="${flag == 'needs_review'} ? 'active'" class="nav-tab">
+                    待复核
+                    <span class="badge badge-warning ml-1" th:if="${needsReviewCount != null and needsReviewCount > 0}" th:text="${needsReviewCount}">0</span>
+                </a>
+                <a th:href="@{/docs(view='candidates')}" th:classappend="${view == 'candidates'} ? 'active'" class="nav-tab">
+                    整理候选
+                    <span class="badge badge-secondary ml-1" th:if="${candidateCount != null and candidateCount > 0}" th:text="${candidateCount}">0</span>
+                </a>
+                <a th:href="@{/docs(status='PENDING_DELETE')}" th:classappend="${status == 'PENDING_DELETE'} ? 'active'" class="nav-tab">
+                    待删
+                    <span class="badge badge-danger ml-1" th:if="${pendingDeleteCount != null and pendingDeleteCount > 0}" th:text="${pendingDeleteCount}">0</span>
+                </a>
+            </div>
+
         <!-- D1 施工包 3：整理候选队列。判断只打标记 / 写指针，界面里没有「合并」「删除」按钮 -->
-        <div class="card" th:if="${view == 'candidates'}">
-            <div class="card-header">
-                <i class="fas fa-clone mr-1"></i>整理候选队列，待判断
-                <span th:text="${candidates != null ? candidates.size() : 0}">0</span> 条
-                <span class="text-muted ml-2" style="font-size:0.85rem;font-weight:normal;">
-                    判定为重复 = 两条都打标记（不合并正文）；判定为取代 = 旧条指向新条（原文保留）
-                </span>
+        <div th:if="${view == 'candidates'}">
+            <div class="text-muted px-3 pt-3" style="font-size:0.82rem;">
+                判定为重复 = 两条都打标记（不合并正文）；判定为取代 = 旧条指向新条（原文保留）
             </div>
             <div class="card-body p-0">
                 <div th:if="${candidates == null or #lists.isEmpty(candidates)}" class="text-center text-muted py-5">
@@ -192,30 +214,7 @@
             </div>
         </div>
 
-        <div class="card" th:if="${view != 'candidates'}">
-            <div class="card-header">
-                <span th:if="${status == 'PENDING_DELETE'}" class="text-danger font-weight-bold">
-                    <i class="fas fa-trash-restore mr-1"></i>待删队列，共 <span th:text="${totalRows}">0</span> 条
-                    —— AI 标记的经验，点「恢复」撤回、点「删除」才真正删除
-                </span>
-                <span th:if="${keyword != null && keyword != ''}">
-                    搜索 "<strong th:text="${keyword}"></strong>" 的结果：共 <span th:text="${totalRows}">0</span> 条
-                </span>
-                <span th:if="${templateType != null && templateType != ''}">
-                    <span th:if="${keyword != null && keyword != ''}">，</span>类型：<strong th:switch="${templateType}">
-                        <span th:case="'problem_solution'">🛠️ 问题方案</span>
-                        <span th:case="'knowledge_doc'">📚 知识文档</span>
-                        <span th:case="'todo_list'">✅ 待办事项</span>
-                        <span th:case="'bug_fix'">🐛 Bug修复</span>
-                        <span th:case="'config_guide'">⚙️ 配置指南</span>
-                        <span th:case="'how_to'">📖 操作指南</span>
-                        <span th:case="'schedule_plan'">📅 计划排期</span>
-                        <span th:case="'goal'">🎯 目标</span>
-                        <span th:case="*">其他</span>
-                    </strong>
-                </span>
-                <span th:if="${keyword == null || keyword == ''}"><span th:if="${templateType == null || templateType == ''}">全部经验，共 <span th:text="${totalRows}">0</span> 条</span></span>
-            </div>
+        <div th:if="${view != 'candidates'}">
             <div class="card-body p-0" id="docList">
                 <div class="doc-item" th:each="doc : ${docs}">
                         <div class="d-flex justify-content-between align-items-start">
@@ -318,6 +317,7 @@
                 </nav>
             </div>
         </div>
+        </div><!-- Tab 容器卡闭合 -->
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js"></script>
@@ -331,7 +331,14 @@
             var templateType = document.getElementById('templateTypeFilter').value;
             var url = contextPath + '/docs?keyword=' + encodeURIComponent(keyword);
             if (templateType) url += '&templateType=' + encodeURIComponent(templateType);
-            if (currentStatus) url += '&status=' + encodeURIComponent(currentStatus);
+            var statusSel = document.getElementById('statusFilter');
+            if (statusSel && statusSel.disabled && currentStatus) {
+                url += '&status=' + encodeURIComponent(currentStatus);  // 待删视图下拉禁用，保留原状态
+            } else if (statusSel && statusSel.value) {
+                url += '&status=' + encodeURIComponent(statusSel.value);
+            } else if (currentStatus && currentStatus !== '') {
+                url += '&status=' + encodeURIComponent(currentStatus);
+            }
             window.location.href = url;
         }
 
@@ -342,7 +349,14 @@
             var params = [];
             if (keyword) params.push('keyword=' + encodeURIComponent(keyword));
             if (templateType) params.push('templateType=' + encodeURIComponent(templateType));
-            if (currentStatus) params.push('status=' + encodeURIComponent(currentStatus));
+            var statusSel = document.getElementById('statusFilter');
+            if (statusSel && statusSel.disabled && currentStatus) {
+                params.push('status=' + encodeURIComponent(currentStatus));  // 待删视图下拉禁用
+            } else if (statusSel && statusSel.value) {
+                params.push('status=' + encodeURIComponent(statusSel.value));
+            } else if (currentStatus && currentStatus !== '') {
+                params.push('status=' + encodeURIComponent(currentStatus));
+            }
             if (params.length > 0) url += '?' + params.join('&');
             window.location.href = url;
         }
