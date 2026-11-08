@@ -418,9 +418,12 @@ public class DocService {
                 }
                 return pagedResult(kw, ranked, page, size);
             }
-            // 全被门槛/去重滤掉时也要能解释「为什么 0 条」——把统计留住
+            // 全被门槛/去重滤掉时也要能解释「为什么 0 条」——把统计留住。
+            // ⚠️ tier 必须写 LIKE：重排空之后紧接着就是 LIKE 兜底，写 RERANK 会出现
+            //    「档位说重排、结果来自 LIKE」的自相矛盾（本轮实测：「部」0 候选走 LIKE，
+            //    回执却报 RERANK）。统计仍是重排阶段的不覆盖（attachExplain 不覆盖已有快照）。
             if (explain != null && meta != null) {
-                explain.tier = SearchTier.RERANK;
+                explain.tier = SearchTier.LIKE;
                 explain.matchedTotal = -1L;
                 meta.explainResult = explain;
             }

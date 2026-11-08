@@ -151,9 +151,26 @@ class SearchExplainTest {
         assertEquals(List.of(1278L), second.tiePeers);
     }
 
+    /**
+     * 重排档 0 候选 → 紧接 LIKE 兜底。档位必须如实写 LIKE：
+     * 写 RERANK 会出现「档位说重排、结果来自 LIKE」的自相矛盾（本轮线上实测「部」踩到）。
+     */
     @Test
-    void explainOffKeepsTheOldContract() {
-        stubCandidates(List.of(doc(1, "部署手册", "部署脚本", 0, LocalDateTime.now())));
+    void emptyRelaxedPoolReportsLikeTierWithRetainedStats() {
+        stubCandidates(List.of());
+
+        DocService.SearchMeta meta = searchWithExplain("部署");
+
+        DocService.SearchExplain ex = meta.explainResult;
+        assertNotNull(ex);
+        assertEquals(DocService.SearchTier.LIKE, ex.tier, "重排空之后走的是 LIKE，档位不许写 RERANK");
+        assertEquals(0, ex.candidateCount, "候选 0 条是事实，要留着重排阶段的统计");
+        assertEquals(1, ex.concepts.size(), "概念/门槛等统计不能被 LIKE 覆盖掉");
+        assertTrue(ex.docs.isEmpty());
+    }
+
+    @Test
+    void explainOffKeepsTheOldContract() {        stubCandidates(List.of(doc(1, "部署手册", "部署脚本", 0, LocalDateTime.now())));
         DocService.SearchMeta meta = new DocService.SearchMeta();
 
         docService.search("部署", null, null, null, 1, 20, meta, true);
