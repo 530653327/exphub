@@ -134,6 +134,21 @@ class MobileTemplateRenderTest {
     }
 
     @Test
+    @DisplayName("tools 页渲染后要带统计与日志两个接口，不能只剩标题")
+    void toolsHasWorkingScript() {
+        String html = engine().process("m/tools", context());
+
+        assertTrue(html.contains("/api/tool-stats/summary"), "埋点页没有调用工具统计接口");
+        assertTrue(html.contains("/api/logs"), "埋点页没有调用调用日志接口");
+        // 三个数据区必须各有容器，否则 JS 拿到数据也没地方放
+        assertTrue(html.contains("id=\"ranking\""), "工具使用榜容器不存在");
+        assertTrue(html.contains("id=\"zeroList\""), "零调用工具容器不存在");
+        assertTrue(html.contains("id=\"logs\""), "调用日志容器不存在");
+        assertTrue(html.contains("id=\"trend\""), "趋势图容器不存在");
+        assertTrue(html.contains("id=\"failOnlyBtn\""), "缺少「只看失败」开关");
+    }
+
+    @Test
     @DisplayName("模板里禁止再出现 #httpServletRequest / #request / #session（本项目 Thymeleaf 3.1 下为 null）")
     void noServletObjectsInTemplates() throws IOException {
         Path dir = Path.of("src/main/resources/templates/m");

@@ -3,13 +3,371 @@
 <head th:replace="~{m/layout :: head('工具埋点')}"></head>
 <body>
 <div class="page">
-    <div class="h1">工具埋点</div>
-    <div class="empty">
-        这一块下一批上线。<br>
-        <span class="muted">会展示每个工具被调用了多少次、成功率、平均耗时，以及最近的调用记录。</span>
+    <div class="row-between" style="margin-bottom:14px">
+        <div class="grow">
+            <div class="h1" style="margin:0">工具埋点</div>
+            <div class="muted" id="subtitle">加载中…</div>
+        </div>
+        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
+    </div>
+
+    <!-- 时间窗口：两个就够。选项一多手机上就得展开菜单，反而更慢 -->
+    <div class="row" style="gap:8px;margin-bottom:10px">
+        <button class="btn ghost chip active" data-days="7" style="padding:8px 0;font-size:13px;min-height:36px">近 7 天</button>
+        <button class="btn ghost chip" data-days="30" style="padding:8px 0;font-size:13px;min-height:36px">近 30 天</button>
+    </div>
+
+    <!-- 错误必须显眼：手机上「看不清的错误」等于「没有错误」 -->
+    <div class="card" id="errBox" style="display:none;border:1px solid var(--danger)">
+        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">加载失败</div>
+        <div class="muted" id="errMsg" style="word-break:break-all"></div>
+        <button class="btn ghost" style="margin-top:10px" id="retryBtn">重试</button>
+    </div>
+
+    <div id="loading" class="empty">加载中…</div>
+
+    <div id="content" style="display:none">
+        <!-- 四个主指标 -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div class="card" style="margin:0">
+                <div class="muted">总调用</div>
+                <div class="num" id="m-total">—</div>
+                <div class="muted" id="m-today">—</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">成功率</div>
+                <div class="num" id="m-rate">—</div>
+                <div class="muted" id="m-success">—</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">平均耗时</div>
+                <div class="num" id="m-avg">—</div>
+                <div class="muted">单次调用</div>
+            </div>
+            <div class="card" style="margin:0">
+                <div class="muted">有调用的工具</div>
+                <div class="num" id="m-active">—</div>
+                <div class="muted" id="m-zero">—</div>
+            </div>
+        </div>
+
+        <div class="h2" id="trendTitle">调用趋势</div>
+        <div class="card">
+            <svg id="trend" viewBox="0 0 320 120" style="width:100%;height:120px;display:block"></svg>
+            <div class="muted" id="trendSub" style="margin-top:6px">—</div>
+        </div>
+
+        <div class="h2">工具使用榜</div>
+        <div class="card" style="padding:6px 14px">
+            <div id="ranking"></div>
+        </div>
+
+        <div class="h2">助手分布</div>
+        <div class="card" style="padding:6px 14px">
+            <div id="byAssistant"></div>
+        </div>
+
+        <div class="h2">零调用工具 <span class="tag" id="zeroCount">0</span></div>
+        <div class="muted" style="margin:0 2px 8px;font-size:12px">
+            注册了但窗口内一次都没被调用 —— 要么没被发现，要么本来就多余
+        </div>
+        <div class="card" style="padding:6px 14px">
+            <div id="zeroList"></div>
+        </div>
+
+        <div class="row-between" style="margin:18px 2px 8px">
+            <div class="h2" style="margin:0">最近调用</div>
+            <button class="btn ghost" style="width:auto;padding:6px 12px;font-size:12px;min-height:32px" id="failOnlyBtn">只看失败</button>
+        </div>
+        <div id="logs"></div>
+        <div id="logHint" class="muted" style="text-align:center;padding:14px 0;display:none"></div>
+        <div id="sentinel" style="height:1px"></div>
+
+        <div class="muted" style="text-align:center;margin:20px 0 8px;font-size:12px" id="updatedAt"></div>
     </div>
 </div>
+
 <nav th:replace="~{m/layout :: tabbar('tools')}"></nav>
 <th:block th:replace="~{m/layout :: pwa}"></th:block>
+
+<script th:inline="javascript">
+    // contextPath 用 @{/}（不要用 servlet 请求对象，Thymeleaf 3.1 下为 null 会炸模板）
+    var CTX = /*[[@{/}]]*/ '/';
+    CTX = CTX.replace(/\/$/, '');
+
+    var days = 7;
+    var logPage = 1, logPages = 1, logLoading = false, failOnly = false;
+
+    function esc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/[&<>"']/g, function (c) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+            });
+    }
+
+    function num(v, digits) {
+        if (v === null || v === undefined || v === '') return '0';
+        var n = Number(v);
+        if (isNaN(n)) return String(v);
+        return digits === undefined ? n.toLocaleString('zh-CN') : n.toFixed(digits);
+    }
+
+    function setText(id, t) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = t;
+    }
+
+    function showError(msg) {
+        setText('errMsg', msg);
+        document.getElementById('errBox').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    function getJson(url) {
+        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+            if (r.status === 401 || r.status === 403) throw new Error('登录已过期，请重新登录（HTTP ' + r.status + '）');
+            if (!r.ok) throw new Error('服务端返回 HTTP ' + r.status);
+            return r.json();
+        }).then(function (res) {
+            if (res.code !== 0) throw new Error(res.message || '接口返回失败');
+            return res.data;
+        });
+    }
+
+    function loadSummary() {
+        document.getElementById('errBox').style.display = 'none';
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('content').style.display = 'none';
+
+        getJson(CTX + '/api/tool-stats/summary?days=' + days).then(function (d) {
+            var o = d.overview || {};
+            setText('m-total', num(o.total));
+            setText('m-today', '今日 ' + num(o.today));
+            setText('m-rate', num(o.successRate, 1) + '%');
+            setText('m-success', '成功 ' + num(o.successCalls));
+            setText('m-avg', (o.avgCostMs === null || o.avgCostMs === undefined) ? '—' : num(o.avgCostMs) + 'ms');
+            setText('m-active', num(o.activeTools));
+            setText('m-zero', '零调用 ' + num(o.zeroTools) + ' / 共 ' + num(o.registrySize));
+
+            renderTrend(d.trend || []);
+            renderRanking(d.ranking || []);
+            renderByAssistant(d.byAssistant || []);
+            renderZero(d.zeroTools || []);
+
+            setText('subtitle', '近 ' + days + ' 天 · ' + num(o.total) + ' 次调用');
+            setText('updatedAt', '数据更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+        }).catch(function (e) {
+            showError(e.message || String(e));
+        });
+    }
+
+    function renderTrend(rows) {
+        var svg = document.getElementById('trend');
+        if (!rows || !rows.length) {
+            svg.innerHTML = '';
+            setText('trendSub', '窗口内没有调用记录');
+            return;
+        }
+        var vals = rows.map(function (r) { return Number(r.calls || 0); });
+        var max = Math.max.apply(null, vals.concat([1]));
+        var W = 320, H = 120, pad = 8;
+        var step = rows.length > 1 ? (W - pad * 2) / (rows.length - 1) : 0;
+
+        var pts = vals.map(function (v, i) {
+            return [pad + step * i, H - pad - (v / max) * (H - pad * 2)];
+        });
+        var line = pts.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join(' ');
+        var area = line + ' L' + pts[pts.length - 1][0].toFixed(1) + ' ' + (H - pad)
+                 + ' L' + pts[0][0].toFixed(1) + ' ' + (H - pad) + ' Z';
+        var dots = pts.map(function (p) {
+            return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.6" fill="#6366f1"/>';
+        }).join('');
+
+        svg.innerHTML =
+            '<defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">'
+            + '<stop offset="0%" stop-color="#6366f1" stop-opacity="0.35"/>'
+            + '<stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>'
+            + '</linearGradient></defs>'
+            + '<path d="' + area + '" fill="url(#tg)"/>'
+            + '<path d="' + line + '" fill="none" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>'
+            + dots;
+
+        var total = vals.reduce(function (a, b) { return a + b; }, 0);
+        setText('trendSub', rows.length + ' 天 · 共 ' + num(total) + ' 次 · 峰值 ' + num(max));
+    }
+
+    function renderRanking(rows) {
+        var box = document.getElementById('ranking');
+        if (!rows || !rows.length) {
+            box.innerHTML = '<div class="empty" style="padding:24px 0">窗口内没有工具调用</div>';
+            return;
+        }
+        box.innerHTML = rows.map(function (r, i) {
+            var levelTag = r.level === 'zero'
+                ? '<span class="tag">零</span>'
+                : (r.level === 'low' ? '<span class="tag warn">低频</span>' : '<span class="tag ok">活跃</span>');
+            var width = Math.max(2, Math.min(100, Number(r.share || 0)));
+            return '<div style="padding:10px 0' + (i ? ';border-top:1px solid var(--line)' : '') + '">'
+                + '<div class="row-between" style="gap:8px">'
+                + '<div class="grow ell" style="font-size:14px;font-weight:500">' + esc(r.toolName) + '</div>'
+                + levelTag
+                + '</div>'
+                + '<div class="row-between" style="margin-top:6px;gap:8px">'
+                + '<div class="grow" style="height:5px;background:var(--card-2);border-radius:3px;overflow:hidden">'
+                + '<div style="height:100%;width:' + width + '%;background:var(--accent);border-radius:3px"></div></div>'
+                + '<div class="muted" style="font-size:12px;white-space:nowrap">'
+                + num(r.calls) + ' 次 · ' + num(r.successRate, 1) + '%'
+                + (r.avgCostMs === null || r.avgCostMs === undefined ? '' : ' · ' + num(r.avgCostMs) + 'ms')
+                + '</div></div>'
+                + '<div class="muted" style="margin-top:4px;font-size:12px">'
+                + '最后调用 ' + esc(r.lastCallAtText || '—') + ' · ' + num(r.callerCount) + ' 个助手用过</div>'
+                + '</div>';
+        }).join('');
+    }
+
+    function renderByAssistant(rows) {
+        var box = document.getElementById('byAssistant');
+        if (!rows || !rows.length) {
+            box.innerHTML = '<div class="empty" style="padding:24px 0">暂无数据</div>';
+            return;
+        }
+        box.innerHTML = rows.map(function (r, i) {
+            var rate = r.calls > 0 ? (Number(r.successCalls || 0) / Number(r.calls)) * 100 : 0;
+            return '<div class="row-between" style="padding:10px 0'
+                + (i ? ';border-top:1px solid var(--line)' : '') + '">'
+                + '<div class="grow ell" style="font-size:14px">' + esc(r.callerName || '（未署名）') + '</div>'
+                + '<div class="muted" style="font-size:12px;white-space:nowrap">'
+                + num(r.calls) + ' 次 · ' + rate.toFixed(0) + '%</div>'
+                + '</div>';
+        }).join('');
+    }
+
+    function renderZero(list) {
+        setText('zeroCount', list.length + ' 个');
+        var box = document.getElementById('zeroList');
+        if (!list.length) {
+            box.innerHTML = '<div class="empty" style="padding:24px 0">所有工具都被调用过</div>';
+            return;
+        }
+        box.innerHTML = list.map(function (t, i) {
+            return '<div style="padding:9px 0' + (i ? ';border-top:1px solid var(--line)' : '') + '">'
+                + '<div style="font-size:14px;font-weight:500" class="ell">' + esc(t.toolName) + '</div>'
+                + (t.description ? '<div class="muted ell" style="font-size:12px;margin-top:2px">' + esc(t.description) + '</div>' : '')
+                + '</div>';
+        }).join('');
+    }
+
+    function logHtml(r) {
+        var ok = Number(r.success) === 1;
+        var badge = ok ? '<span class="tag ok">成功</span>' : '<span class="tag danger">失败</span>';
+        var t = String(r.createdAt || '').replace('T', ' ');
+        var hm = t.length >= 16 ? t.substring(11, 16) : t;
+        var head = r.toolName || r.action || '—';
+
+        var extra = [];
+        if (r.keyword) extra.push('关键词：' + r.keyword);
+        if (r.hitCount !== null && r.hitCount !== undefined && r.action === 'SEARCH') extra.push('命中：' + r.hitCount + ' 条');
+        if (r.docTitle) extra.push('文档：' + r.docTitle);
+        if (r.detail) extra.push(r.detail);
+
+        return '<div class="card" style="padding:12px 14px" data-log="' + r.id + '">'
+            + '<div class="row-between" style="gap:8px">'
+            + '<div class="grow ell" style="font-size:14px;font-weight:500">' + esc(head) + '</div>'
+            + badge
+            + '</div>'
+            + '<div class="muted" style="margin-top:4px;font-size:12px">'
+            + esc(r.callerName || '—') + ' · ' + hm
+            + (r.costMs === null || r.costMs === undefined ? '' : ' · ' + r.costMs + 'ms')
+            + ' · ' + esc(r.action || '')
+            + '</div>'
+            + (extra.length
+                ? '<div class="muted" style="margin-top:6px;font-size:12px;line-height:1.6;word-break:break-word">'
+                  + esc(extra.join(' · ')) + '</div>'
+                : '')
+            + '</div>';
+    }
+
+    function loadLogs(reset) {
+        if (logLoading) return;
+        logLoading = true;
+        if (reset) {
+            logPage = 1;
+            logPages = 1;
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        var url = CTX + '/api/logs?page=' + logPage + '&size=20&action=TOOL';
+        getJson(url).then(function (d) {
+            var rows = (d.list || []);
+            // 「只看失败」在客户端过滤：服务端没有 success 参数，
+            // 与其为这个开关去改接口（还要考虑 SQL 注入面），不如在 20 条里筛，够用
+            if (failOnly) rows = rows.filter(function (r) { return Number(r.success) !== 1; });
+
+            if (rows.length) {
+                document.getElementById('logs').insertAdjacentHTML('beforeend', rows.map(logHtml).join(''));
+            }
+            logPages = d.totalPages || 1;
+
+            if (logPage === 1 && !document.getElementById('logs').children.length) {
+                document.getElementById('logs').innerHTML =
+                    '<div class="empty" style="padding:28px 0">'
+                    + (failOnly ? '最近 20 条里没有失败的调用' : '还没有工具调用记录') + '</div>';
+            }
+
+            var hint = document.getElementById('logHint');
+            if (logPage < logPages) {
+                hint.style.display = 'block';
+                hint.textContent = '继续下滑加载更多…';
+            } else {
+                hint.style.display = 'none';
+            }
+        }).catch(function (e) {
+            showError(e.message || String(e));
+        }).then(function () {
+            logLoading = false;
+        });
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', function () {
+        loadSummary();
+        loadLogs(true);
+    });
+    document.getElementById('retryBtn').addEventListener('click', function () {
+        loadSummary();
+        loadLogs(true);
+    });
+
+    document.querySelectorAll('.chip').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var d = Number(btn.getAttribute('data-days'));
+            if (d === days) return;
+            days = d;
+            document.querySelectorAll('.chip').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            loadSummary();
+        });
+    });
+
+    document.getElementById('failOnlyBtn').addEventListener('click', function () {
+        failOnly = !failOnly;
+        this.textContent = failOnly ? '看全部' : '只看失败';
+        this.classList.toggle('danger', failOnly);
+        loadLogs(true);
+    });
+
+    if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) {
+            if (!entries[0].isIntersecting) return;
+            if (logLoading || logPage >= logPages) return;
+            logPage += 1;
+            loadLogs(false);
+        }, { rootMargin: '200px' }).observe(document.getElementById('sentinel'));
+    }
+
+    loadSummary();
+    loadLogs(true);
+</script>
 </body>
 </html>
