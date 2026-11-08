@@ -17,9 +17,35 @@ echo "========================================"
 echo "  ExpHub 部署"
 echo "========================================"
 
-cd /usr/local/exphub
+# 部署结果自证（2026-11-09 阁主派单 T261109062441-879）
+#
+# 以前 deploy.log 那行写在 [2.7] 步，也就是**迁移和重启之前**：迁移失败也照样留一条看着正常的
+# 记录，部署是死是活只能靠人再翻 app.log —— 2.4.0 首发那次（迁移 ERROR 1052 中断）就是这么被
+# 盖住的。现在改成 EXIT trap：脚本从任何一步退出（set -e 中途失败 / 迁移失败 / 重启失败 /
+# 健康检查失败）都追加一行，带退出码。**这是 deploy.log 的唯一写入口**；[2.7] 只打印不写，
+# 否则一次部署两行、两行结论还可能互相矛盾（同 9l/9o 的「回执必须自证值」口径）。
+DEPLOY_REPO="${EXPHUB_REPO:-/usr/local/exphub}"
+DEPLOY_LOG="${EXPHUB_DEPLOY_LOG:-$DEPLOY_REPO/deploy.log}"
+ENTRY_DIR="${EXPHUB_ENTRY_DIR:-/opt/deploy}"
+DEPLOY_STEP="启动"
+DEPLOY_PHASE=""
+DEPLOY_ENTRY_MD5="n/a"
+DEPLOY_ENTRY_LINES="n/a"
+DEPLOY_INNER_MD5="n/a"
+_on_exit() {
+    rc=$?
+    printf '%s entry=%s(%s行) deploy=%s commit=%s exit=%d step=%s%s\n' \
+        "$(date '+%F %T')" "$DEPLOY_ENTRY_MD5" "$DEPLOY_ENTRY_LINES" "$DEPLOY_INNER_MD5" \
+        "$(cd "$DEPLOY_REPO" 2>/dev/null && git log -1 --format=%h 2>/dev/null || echo unknown)" \
+        "$rc" "$DEPLOY_STEP" "${DEPLOY_PHASE:+ phase=$DEPLOY_PHASE}" \
+        >> "$DEPLOY_LOG" 2>/dev/null || true
+}
+trap _on_exit EXIT
+
+cd "$DEPLOY_REPO"
 
 # 0. 加载环境变量（服务器安全位置，不随代码提交）
+DEPLOY_STEP="0/5 环境变量"
 if [ -f /etc/exphub/.env ]; then
     set -a
     source /etc/exphub/.env
@@ -36,6 +62,7 @@ fi
 # 现在推荐用仓库外入口：/opt/deploy/exphub-run.sh，它先 git 同步、再带着 EXPHUB_SKIP_PULL=1
 # 调本脚本。入口文件不在仓库里，永远不会被 reset 替换，也就没有 inode 问题。
 # 直接 `bash deploy.sh` 仍然可用（兼容旧习惯），此时靠自重入兜底。
+DEPLOY_STEP="1/5 拉取代码"
 if [ "${EXPHUB_SKIP_PULL:-0}" = "1" ]; then
     echo "[1/5] 跳过拉取（外部入口已 git 同步：$(git log -1 --format='%h %s')）"
 else
@@ -58,6 +85,7 @@ else
 fi
 
 # 2. 编译打包
+DEPLOY_STEP="2/5 编译打包"
 echo "[2/5] 编译打包..."
 export JAVA_HOME=/usr/local/java17
 export PATH=$JAVA_HOME/bin:$PATH
@@ -73,45 +101,104 @@ mvn clean package -DskipTests -q
 #    机制不改，下一个写 migration 的人会原样再踩一遍，所以在这里加版本表：
 #    同一文件 + 同一 md5 只执行一次；文件内容改了才重跑。
 echo "[2.5/5] 执行数据库迁移..."
+DEPLOY_STEP="2.5/5 数据库迁移"
 DB_NAME="${EXPHUB_DB_NAME:-exphub}"
-if command -v mysql >/dev/null 2>&1; then
-    MYSQL="mysql -u$EXPHUB_DB_USERNAME -p$EXPHUB_DB_PASSWORD $DB_NAME --default-character-set=utf8mb4"
-    $MYSQL -e "CREATE TABLE IF NOT EXISTS schema_migrations (
-        filename   VARCHAR(200) NOT NULL COMMENT '文件名(basename)',
-        checksum   CHAR(32)     NOT NULL COMMENT '文件md5，变了才重跑',
-        applied_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (filename)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已执行的migration，避免每次部署全量重跑'" >/dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo "  ⚠️  建 schema_migrations 失败（权限不足？），退化为全量重跑"
-    fi
-    for f in sql/migrations/migration_2026*.sql; do
-        [ -f "$f" ] || continue
-        base=$(basename "$f")
-        sum=$(md5sum "$f" | cut -c1-32)
-        applied=$($MYSQL -N -e "SELECT checksum FROM schema_migrations WHERE filename='$base'" 2>/dev/null | tr -d '[:space:]')
-        if [ "$applied" = "$sum" ]; then
-            continue
-        fi
-        if $MYSQL < "$f" >/tmp/exphub_mig.log 2>&1; then
-            if [ -n "$applied" ]; then
-                $MYSQL -e "UPDATE schema_migrations SET checksum='$sum', applied_at=NOW() WHERE filename='$base'" >/dev/null 2>&1
-                echo "  ✅ $base（内容有改动，已重跑）"
-            else
-                $MYSQL -e "INSERT INTO schema_migrations(filename,checksum) VALUES('$base','$sum')" >/dev/null 2>&1
-                echo "  ✅ $base"
-            fi
-        else
-            echo "  ⚠️  $base 执行有报错（若是幂等脚本可忽略重复列提示）"
-            tail -5 /tmp/exphub_mig.log
-        fi
-    done
-    rm -f /tmp/exphub_mig.log
-else
-    echo "  ⚠️  未找到 mysql 客户端，跳过迁移（新代码若依赖新列会启动失败）"
+MIG_LOG="${EXPHUB_MIG_LOG:-/tmp/exphub_mig.log}"
+
+# 迁移失败一律 fatal（2026-11-09 阁主派单 T261109062441-879）
+#
+# 旧行为：某个 migration 报错只打一行 ⚠️「若是幂等脚本可忽略重复列提示」就继续重启。
+# 2.4.0 首发就是这么坏的：游标迁移在 MySQL 5.7.44 上报 ERROR 1052 中途断了，脚本照样重启，
+# 服务起来「看着正常」，实际新列不存在、功能半坏，人手不翻日志根本发现不了。
+# 现在的口径：**迁移是重启的前置条件**，没成功就不许重启，退出码非零并留摘要。
+#
+# 为什么不给「重复列」开白名单：
+# mysql 默认遇到第一个错误就中断，同一个文件里后面的语句根本没跑。白名单会把
+# 「第 2 条重复列 → 第 3~5 条没执行」伪装成成功，等于换个地方继续装死。
+# 现有 migration 都自带幂等守卫（IF NOT EXISTS / information_schema 判存在），
+# 所以「重跑报重复列」本身不该发生；真发生了就是脚本要修，不是部署要放行。
+if ! command -v mysql >/dev/null 2>&1; then
+    echo "=========================================="
+    echo "❌ 部署中止：[2.5/5] 未找到 mysql 客户端，迁移无法执行"
+    echo "   按设计**不重启服务**，线上仍是旧版本在跑"
+    echo "   装好 mysql 客户端后重跑部署"
+    exit 1
 fi
 
+MYSQL="mysql -u$EXPHUB_DB_USERNAME -p$EXPHUB_DB_PASSWORD $DB_NAME --default-character-set=utf8mb4"
+if ! $MYSQL -e "CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename   VARCHAR(200) NOT NULL COMMENT '文件名(basename)',
+    checksum   CHAR(32)     NOT NULL COMMENT '文件md5，变了才重跑',
+    applied_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (filename)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已执行的migration，避免每次部署全量重跑'" >/dev/null 2>"$MIG_LOG"; then
+    echo "=========================================="
+    echo "❌ 部署中止：[2.5/5] 无法创建/访问 schema_migrations（库 $DB_NAME）"
+    echo "   迁移无法记账 → 拒绝继续（记账不了就没法保证不重复执行）"
+    echo "   按设计**不重启服务**，线上仍是旧版本在跑"
+    echo "--- mysql 输出 ---"
+    tail -10 "$MIG_LOG"
+    exit 1
+fi
+
+MIG_TOTAL=$(ls sql/migrations/migration_2026*.sql 2>/dev/null | wc -l | tr -d ' ')
+MIG_IDX=0
+MIG_APPLIED=0
+MIG_SKIPPED=0
+for f in sql/migrations/migration_2026*.sql; do
+    [ -f "$f" ] || continue
+    MIG_IDX=$((MIG_IDX + 1))
+    base=$(basename "$f")
+    sum=$(md5sum "$f" | cut -c1-32)
+    applied=$($MYSQL -N -e "SELECT checksum FROM schema_migrations WHERE filename='$base'" 2>/dev/null | tr -d '[:space:]')
+    if [ "$applied" = "$sum" ]; then
+        MIG_SKIPPED=$((MIG_SKIPPED + 1))
+        continue
+    fi
+    if ! $MYSQL < "$f" >"$MIG_LOG" 2>&1; then
+        # 失败时把「哪一步 / 什么错 / 迁移到第几条」一次说清，别让人再去翻日志猜
+        DEPLOY_PHASE="迁移失败 $base"
+        echo ""
+        echo "=========================================="
+        echo "❌ 部署中止：[2.5/5] 数据库迁移失败（第 $MIG_IDX/$MIG_TOTAL 条：$base）"
+        echo "   本次已实际执行成功 $MIG_APPLIED 条，跳过（已是最新）$MIG_SKIPPED 条"
+        echo "   该文件**未**记入 schema_migrations，修好 SQL 后重跑部署会重试它"
+        echo "   按设计**不重启服务**，线上仍是旧版本在跑（mvn 已打包但未生效）"
+        echo "--- mysql 输出（末尾 20 行）---"
+        tail -20 "$MIG_LOG"
+        echo "=========================================="
+        exit 1
+    fi
+    if [ -n "$applied" ]; then
+        if ! $MYSQL -e "UPDATE schema_migrations SET checksum='$sum', applied_at=NOW() WHERE filename='$base'" >"$MIG_LOG" 2>&1; then
+            DEPLOY_PHASE="迁移记账失败 $base"
+            echo "=========================================="
+            echo "❌ 部署中止：[2.5/5] $base 已执行，但 schema_migrations 记账失败"
+            echo "   不记账就不敢继续（下次会重跑，非幂等语句会重复生效）；按设计**不重启服务**"
+            echo "--- mysql 输出 ---"
+            tail -10 "$MIG_LOG"
+            exit 1
+        fi
+        echo "  ✅ $base（内容有改动，已重跑）"
+    else
+        if ! $MYSQL -e "INSERT INTO schema_migrations(filename,checksum) VALUES('$base','$sum')" >"$MIG_LOG" 2>&1; then
+            DEPLOY_PHASE="迁移记账失败 $base"
+            echo "=========================================="
+            echo "❌ 部署中止：[2.5/5] $base 已执行，但 schema_migrations 记账失败"
+            echo "   不记账就不敢继续（下次会重跑，非幂等语句会重复生效）；按设计**不重启服务**"
+            echo "--- mysql 输出 ---"
+            tail -10 "$MIG_LOG"
+            exit 1
+        fi
+        echo "  ✅ $base"
+    fi
+    MIG_APPLIED=$((MIG_APPLIED + 1))
+done
+rm -f "$MIG_LOG"
+echo "  迁移完成：共 $MIG_TOTAL 条（本次执行 $MIG_APPLIED 条、跳过 $MIG_SKIPPED 条）"
+
 # 2.6 同步 systemd 单元（仓库为准，2026-10-25 从 nohup 切到 systemd 托管）
+DEPLOY_STEP="2.6/5 systemd 单元"
 echo "[2.6/5] 检查 systemd 单元..."
 if [ -f deploy/exphub.service ]; then
     if ! cmp -s deploy/exphub.service /etc/systemd/system/exphub.service; then
@@ -131,29 +218,33 @@ fi
 #    而本脚本又要靠入口调到。所以入口必须**锁死在 20 行以内、只做 git 同步 + 调内层**，
 #    并且每次都把它的 md5 记进 deploy.log，被改动至少看得见。
 if [ -f deploy/exphub-run.sh ]; then
-    mkdir -p /opt/deploy
-    if cmp -s deploy/exphub-run.sh /opt/deploy/exphub-run.sh; then
-        echo "  ✅ 仓库外入口已是仓库版本（/opt/deploy/exphub-run.sh）"
+    DEPLOY_STEP="2.7/5 安装部署入口"
+    mkdir -p "$ENTRY_DIR"
+    if cmp -s deploy/exphub-run.sh "$ENTRY_DIR/exphub-run.sh"; then
+        echo "  ✅ 仓库外入口已是仓库版本（$ENTRY_DIR/exphub-run.sh）"
     else
-        install -m 755 deploy/exphub-run.sh /opt/deploy/exphub-run.sh
-        echo "  ✅ 仓库外入口已安装/更新（/opt/deploy/exphub-run.sh）"
+        install -m 755 deploy/exphub-run.sh "$ENTRY_DIR/exphub-run.sh"
+        echo "  ✅ 仓库外入口已安装/更新（$ENTRY_DIR/exphub-run.sh）"
     fi
-    ENTRY_MD5=$(md5sum /opt/deploy/exphub-run.sh | cut -d' ' -f1)
+    ENTRY_MD5=$(md5sum "$ENTRY_DIR/exphub-run.sh" | cut -d' ' -f1)
     INNER_MD5=$(md5sum deploy.sh | cut -d' ' -f1)
-    ENTRY_LINES=$(wc -l < /opt/deploy/exphub-run.sh | tr -d ' ')
+    ENTRY_LINES=$(wc -l < "$ENTRY_DIR/exphub-run.sh" | tr -d ' ')
+    # 交给 EXIT trap 在部署结束时连同退出码一起写进 deploy.log（这里只记不发）
+    DEPLOY_ENTRY_MD5="$ENTRY_MD5"
+    DEPLOY_ENTRY_LINES="$ENTRY_LINES"
+    DEPLOY_INNER_MD5="$INNER_MD5"
     echo "     入口 md5=${ENTRY_MD5}（${ENTRY_LINES} 行）｜内层 deploy.sh md5=${INNER_MD5}"
+    echo "     （入口/内层 md5 与本次退出码在部署结束时统一记入 deploy.log）"
     if [ "$ENTRY_LINES" -gt 20 ]; then
         echo "  ⚠️  入口脚本 ${ENTRY_LINES} 行，超过约定上限 20 行 —— 它不在版本控制内，越复杂越难救"
     fi
-    printf '%s entry=%s(%s行) deploy=%s commit=%s\n' \
-        "$(date '+%F %T')" "$ENTRY_MD5" "$ENTRY_LINES" "$INNER_MD5" "$(git log -1 --format=%h)" \
-        >> /usr/local/exphub/deploy.log
 fi
 
 # 3. 重启应用（systemd 托管）
 # 2026-10-25 变更：原本是 nohup 起进程，systemd 单元形同摆设——
 #   `systemctl status exphub` 常年 failed、systemctl stop 杀不掉真进程、进程崩了没人拉。
 # 现在统一走 systemctl：deploy.sh 不再自己起 java，只负责「清场 + 交给 systemd」。
+DEPLOY_STEP="3/5 重启应用"
 echo "[3/5] 重启应用（systemd）..."
 
 # 清历史 failed：start-limit 计数不清掉，restart 会直接返回失败且不起进程
@@ -182,6 +273,7 @@ echo "  ✅ systemctl restart 已提交，主进程 PID=$(systemctl show -p Main
 #   - 最多等 90 秒（Spring Boot + 连接池初始化约 6-10 秒）
 #   - /health 返回 200 才算成功；503 表示 DB 不可用
 echo "[4/5] 启动自检..."
+DEPLOY_STEP="4/5 启动自检"
 HEALTH_URL="http://127.0.0.1:3099/exphub/health"
 OK=0
 for i in $(seq 1 30); do
@@ -208,6 +300,7 @@ if [ "$OK" = "1" ]; then
         echo "⚠️  MCP(3098) 异常 (http=$MCP_CODE)，请检查 app.log"
     fi
     echo "[5/5] 部署完成 → https://cloudim.club/exphub"
+    DEPLOY_STEP="5/5 完成"
 else
     echo "=========================================="
     echo "❌ 部署失败：健康检查未通过（最后 http=$CODE）"
