@@ -196,6 +196,30 @@ class MailRoleSeedMigrationTest {
     }
 
     @Test
+    @DisplayName("游标 ODKU 的目标列必须带表名（MySQL 5.7.44 实测：不带就 ERROR 1052 ambiguous）")
+    void cursorUpsertMustQualifyTargetColumns() throws Exception {
+        // 2026-11-09 06:07 线上真事故：d06789c 把这里的目标列去掉了表名，部署时
+        //   ERROR 1052 (23000): Column 'last_read_id' in field list is ambiguous
+        // INSERT ... SELECT 的来源表同名，解析器分不清左右两侧。单测只断言「有 ON DUPLICATE」
+        // 抓不到它，所以这里钉死「目标列带 mail_cursors.」。
+        String sql = stripComments(Files.readString(MIGRATION, StandardCharsets.UTF_8));
+        String cursor = statementContaining(sql, "INSERT INTO mail_cursors");
+        assertNotNull(cursor, "找不到游标迁移语句");
+        int odkuIdx = cursor.indexOf("ON DUPLICATE KEY UPDATE");
+        assertTrue(odkuIdx >= 0, "游标迁移缺 ON DUPLICATE KEY UPDATE");
+        String odku = cursor.substring(odkuIdx);
+
+        assertTrue(Pattern.compile(
+                        "last_read_id\\s*=\\s*GREATEST\\(\\s*mail_cursors\\.last_read_id\\s*,\\s*VALUES\\(\\s*last_read_id\\s*\\)\\s*\\)")
+                        .matcher(odku).find(),
+                "ODKU 的 last_read_id 必须写成 mail_cursors.last_read_id（左侧）与 VALUES(last_read_id)（右侧）；"
+                        + "不带表名在 MySQL 5.7.44 会 ERROR 1052：\n" + odku);
+        assertTrue(Pattern.compile("updated_at\\s*=\\s*mail_cursors\\.updated_at")
+                        .matcher(odku).find(),
+                "ODKU 的 updated_at 也必须带 mail_cursors. 表名（同上，否则同样 ambiguous）：\n" + odku);
+    }
+
+    @Test
     @DisplayName("收件人列必须是 utf8mb4 且长度够放「重明鸟」这类汉字正名")
     void recipientColumnsAreUtf8mb4AndWideEnough() throws Exception {
         String init = Files.readString(INIT_SQL, StandardCharsets.UTF_8);

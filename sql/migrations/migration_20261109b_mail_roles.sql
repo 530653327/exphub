@@ -177,10 +177,15 @@ FROM mail_cursors c
 JOIN mail_role_aliases a ON a.alias = c.role
 -- WHERE 1=1 不是废话：MySQL 的 INSERT ... SELECT ... ON DUPLICATE KEY UPDATE 有歧义，
 -- 解析器可能把 ON DUPLICATE 的 ON 当成 JOIN 条件。加一个 WHERE 明确结束 SELECT 部分。
-WHERE 1 = 1
+--
+-- ⚠️ 2026-11-09 06:07 线上实测：ODKU 的目标列**必须带表名**。
+--    写成不带表名的 `last_read_id = GREATEST(last_read_id, VALUES(last_read_id))`，
+--    MySQL 5.7.44 直接报 ERROR 1052 (23000): Column 'last_read_id' in field list is ambiguous
+--    —— INSERT ... SELECT 的来源表（mail_cursors c）也有同名列，解析器分不清指的是哪一侧。
+--    加表名后同一句在同一实例上通过（已用 START TRANSACTION + ROLLBACK 实测）。
 ON DUPLICATE KEY UPDATE
-    last_read_id = GREATEST(last_read_id, VALUES(last_read_id)),
-    updated_at   = updated_at;
+    last_read_id = GREATEST(mail_cursors.last_read_id, VALUES(last_read_id)),
+    updated_at   = mail_cursors.updated_at;
 
 DELETE c FROM mail_cursors c JOIN mail_role_aliases a ON a.alias = c.role;
 
