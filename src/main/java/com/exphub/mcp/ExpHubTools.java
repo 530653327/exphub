@@ -6034,7 +6034,9 @@ public class ExpHubTools {
                       + "**角色正名是汉字（如「烛龙」），拼音（zhulong）仍兼容并会自动归一成汉字**；回执里的角色一律汉字。"
                       + "没配角色就只回提示、不给任何私信。信封按线程聚合，每根一行：主题/发件人/新消息数/正文首 100 字。"
                       + "要展开某根用 mail_thread；q 只搜主题/发件人/类型，不搜正文。"
-                      + "sent=true 切到**发件视角**（看你发出去的、含发给谁），默认 false=收件视角。")
+                      + "sent=true 切到**发件视角**（看你发出去的、含发给谁），默认 false=收件视角。"
+                      + "roles=true 只列**当前可投递角色名单**（汉字正名，停用/待复核不出现），不读信封、不推游标；"
+                      + "名单只用于展示，**调用方不得依据名单自动改写收件人并重发**。")
     public String mailStart(
             @ToolParam(description = "可选。搜信封的关键词（只匹配主题/发件人/类型，不搜正文）", required = false) String q,
             @ToolParam(description = "可选。最多列几根线程，默认 20，上限 50", required = false) Integer limit,
@@ -6043,8 +6045,15 @@ public class ExpHubTools {
                     + "发信方自查「到底发给了谁」用它 —— 收件视角永远看不到自己发的信", required = false) Boolean sent,
             @ToolParam(description = "可选。true=**只读未读摘要**：只给线程数/消息数/每根的主题类型，"
                     + "**不含正文摘要**，不推游标、不改任何状态（调多次结果一样）。外部系统做未读角标用它，"
-                    + "默认 false 行为不变", required = false) Boolean unreadOnly) {
+                    + "默认 false 行为不变", required = false) Boolean unreadOnly,
+            @ToolParam(description = "可选。true=**按需查全量角色名单**：只列当前 status=ACTIVE 的角色（汉字正名），"
+                    + "停用与待复核不出现；不读信封、不推游标。返信里的名单超过阈值时用它查全量，"
+                    + "**名单只用于展示，不得据此自动改写收件人并重发**", required = false) Boolean roles) {
         try {
+            if (Boolean.TRUE.equals(roles)) {
+                // 阁主 T261109054529-699：全量名单单独一个查询入口按需给，不塞进每次错误响应。
+                return mailboxService.roleDirectoryMessage();
+            }
             String me = mailRole(role);
             String cfg = MailIdentity.configSource();
             StringBuilder sb = new StringBuilder();
@@ -6164,6 +6173,8 @@ public class ExpHubTools {
                       + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。"
                       + "**收件人正名是汉字（如「烛龙」）；拼音（zhulong）和错拼（zhuolong）仍兼容，会归一到汉字并在回执里说明**。"
                       + "**回信（带 inReplyTo）的收件人强制取父消息发件人**，不接受自选。"
+                      + "收件人被拒时返回结构化的 rejectedRole / candidates / roleList / hint；"
+                      + "**候选和名单只用于展示，调用方不得据此自动改写收件人并重发**（全量名单用 mail_start(roles=true) 按需查，不塞进错误响应）。"
                       + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。")
     public String mailSend(
             @ToolParam(description = "收件人：正名优先写汉字（如「烛龙」「重明鸟」）；拼音（zhulong）也收，"

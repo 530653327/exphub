@@ -41,6 +41,12 @@ import java.util.function.LongSupplier;
  * <p>2026-11-09 阁主 T261109053740-701（P9 定案）：代号校验<b>只在 ExpHub 做</b>，
  * 忆阁不取、不存、不校验、不做拼错纠正；拒绝回执是结构化错误（被拒收件人 + ≤5 个候选 + 一句提示）。
  *
+ * <p><b>2026-11-09 阁主 T261109054529-699：名单只用于展示，不许被当成自动重发的依据。</b>
+ * 拒绝回执里带<b>当前生效名单</b>（只有 {@code ACTIVE}），但条数超过
+ * {@value #MAX_ROLE_LIST_IN_ERROR} 时不给正文、只给计数 + 查询入口 ——
+ * 一百多个代号塞进每次错误响应会把日志和报文撑爆。停用（{@code DISABLED}）与
+ * 待复核（{@code PENDING_REVIEW}）在任何出口都不出现。
+ *
  * <p><b>2026-11-09 阁主 T261109054938-679：正名改汉字，拼音降为别名。</b>
  * {@code mail_roles.role} 现在存「烛龙 / 白泽 / 重明鸟」这类汉字，拼音（含 zhuolong 这类错拼）
  * 全部落在 {@code mail_role_aliases}。<b>兼容期入参汉字和拼音都收</b>（入口统一归一到汉字），
@@ -55,6 +61,15 @@ public class MailRoleCatalog {
 
     /** 拒绝时最多给几个候选。给全清单会撑成一屏、客户端还会截断（阁主 P9 第 2 条）。 */
     public static final int MAX_CANDIDATES = 5;
+
+    /**
+     * 拒绝回执里最多直接列出多少个生效角色。
+     *
+     * <p>超过这个数就只报计数 + 指向 {@code mail_start(roles=true)}：名单会随角色增长到 100+，
+     * 每次发错收件人都把整份名单塞进错误响应，日志和报文都会被撑爆
+     * （阁主 T261109054529-699 第二条）。
+     */
+    public static final int MAX_ROLE_LIST_IN_ERROR = 20;
 
     @Autowired
     private MailRoleMapper roleMapper;
@@ -86,16 +101,19 @@ public class MailRoleCatalog {
 
         private final Set<String> activeRoles;          // 正名（汉字）
         private final Map<String, String> displayNames; // 显示名 → 正名（正名本身已是汉字，保留兼容后台旧数据）
+        private final Map<String, String> labels;       // 正名 → 给人看的名字（后台旧数据可能与正名不同）
         private final Map<String, String> aliases;      // 别名（拼音/错拼）→ 正名（汉字）
         private final long loadedAt;
         private final boolean available;
         private final boolean degraded;
         private final String error;
 
-        Snapshot(Set<String> activeRoles, Map<String, String> displayNames, Map<String, String> aliases,
+        Snapshot(Set<String> activeRoles, Map<String, String> displayNames, Map<String, String> labels,
+                 Map<String, String> aliases,
                  long loadedAt, boolean available, boolean degraded, String error) {
             this.activeRoles = activeRoles;
             this.displayNames = displayNames;
+            this.labels = labels;
             this.aliases = aliases;
             this.loadedAt = loadedAt;
             this.available = available;
@@ -106,6 +124,9 @@ public class MailRoleCatalog {
         public Set<String> activeRoles() { return activeRoles; }
 
         public Map<String, String> displayNames() { return displayNames; }
+
+        /** 正名 → 给人看的名字；没有单独显示名时由调用方回落到正名。 */
+        public Map<String, String> labels() { return labels; }
 
         public Map<String, String> aliases() { return aliases; }
 
@@ -123,7 +144,7 @@ public class MailRoleCatalog {
 
     private static Snapshot empty(long now, boolean degraded, String error) {
         return new Snapshot(Collections.emptySet(), Collections.emptyMap(), Collections.emptyMap(),
-                now, false, degraded, error);
+                Collections.emptyMap(), now, false, degraded, error);
     }
 
     public Snapshot snapshot() {
@@ -141,15 +162,21 @@ public class MailRoleCatalog {
         try {
             Set<String> roles = new LinkedHashSet<>();
             Map<String, String> display = new LinkedHashMap<>();
+            Map<String, String> labels = new LinkedHashMap<>();
             List<MailRole> rows = roleMapper.selectActive();
             if (rows != null) {
                 for (MailRole r : rows) {
                     if (r == null || r.getRole() == null) continue;
+                    // 防御性再筛一次：SQL 已经只取 ACTIVE，但这里不能把「停用/待复核不出现在任何出口」
+                    // 押在一句 WHERE 上 —— 名单一旦混进不可投递的值，人按名单发信会被拒第二次。
+                    if (r.getStatus() != null && !STATUS_ACTIVE.equals(r.getStatus().trim())) continue;
                     String code = norm(r.getRole());
                     if (code.isEmpty()) continue;
                     roles.add(code);
                     if (r.getDisplayName() != null && !r.getDisplayName().isBlank()) {
-                        display.putIfAbsent(r.getDisplayName().trim(), code);
+                        String shown = r.getDisplayName().trim();
+                        display.putIfAbsent(shown, code);
+                        if (!shown.equals(code)) labels.putIfAbsent(code, shown);
                     }
                 }
             }
@@ -164,8 +191,8 @@ public class MailRoleCatalog {
                 }
             }
             Snapshot fresh = new Snapshot(Collections.unmodifiableSet(roles),
-                    Collections.unmodifiableMap(display), Collections.unmodifiableMap(aliases),
-                    now, true, false, null);
+                    Collections.unmodifiableMap(display), Collections.unmodifiableMap(labels),
+                    Collections.unmodifiableMap(aliases), now, true, false, null);
             cached = fresh;
             cachedAt = now;
             return fresh;
@@ -175,7 +202,7 @@ public class MailRoleCatalog {
                     prev != null && prev.available() ? "继续用 " + prev.loadedAt() + " 的旧快照" : "当前无法校验任何代号");
             cachedAt = now; // 失败也计一次尝试，避免每次发信都打库
             if (prev != null && prev.available()) {
-                Snapshot stale = new Snapshot(prev.activeRoles, prev.displayNames, prev.aliases,
+                Snapshot stale = new Snapshot(prev.activeRoles, prev.displayNames, prev.labels, prev.aliases,
                         prev.loadedAt, true, true, why);
                 cached = stale;
                 return stale;
@@ -202,6 +229,45 @@ public class MailRoleCatalog {
     /** 可投递正名集合（{@code status='ACTIVE'}）。清单读不到时为空集 —— 判可用性请看 {@link #snapshot()}。 */
     public Set<String> activeRoles() {
         return snapshot().activeRoles();
+    }
+
+    /**
+     * 当前生效名单（汉字正名，按名字排序），<b>只含 {@code status='ACTIVE'}</b>。
+     *
+     * <p>停用（{@code DISABLED}）与待复核（{@code PENDING_REVIEW}）一律不出现 ——
+     * 这份名单是给人挑收件人的，混进不可投递的值比不给更糟（阁主 T261109054529-699）。
+     * 清单读不到时返回空列表，调用方要先看 {@link Snapshot#available()} 再决定怎么说。
+     */
+    public List<String> roster() {
+        return rosterOf(snapshot());
+    }
+
+    static List<String> rosterOf(Snapshot s) {
+        if (s == null || !s.available()) return List.of();
+        List<String> out = new ArrayList<>(s.activeRoles());
+        out.sort(Comparator.naturalOrder());
+        return out;
+    }
+
+    /**
+     * 名单的展示条目：有单独显示名时写成「正名（中文名）」，否则就是正名。
+     *
+     * <p>当前正名本身已是汉字，绝大多数条目就是「烛龙」；保留这个口子是为了后台旧数据
+     * 里 {@code display_name} 与正名不一致时，人不至于看不懂那行是什么。
+     */
+    public List<String> rosterLabels() {
+        return labelsOf(snapshot());
+    }
+
+    /** 名单的展示条目（与 {@link #rosterLabels()} 同口径，但用调用方手里那份快照，避免二次读）。 */
+    static List<String> labelsOf(Snapshot s) {
+        List<String> out = new ArrayList<>();
+        if (s == null || !s.available()) return out;
+        for (String role : rosterOf(s)) {
+            String label = s.labels().get(role);
+            out.add(label == null || label.isBlank() ? role : role + "（" + label + "）");
+        }
+        return out;
     }
 
     public Map<String, String> aliases() {

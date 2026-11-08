@@ -68,4 +68,38 @@ public final class MailRoleFixtures {
     public static MailRoleMapper roleMapperOf(MailRoleCatalog catalog) {
         return (MailRoleMapper) ReflectionTestUtils.getField(catalog, "roleMapper");
     }
+
+    /**
+     * 故意让 {@code selectActive()} 多返回不可投递的行（DISABLED / PENDING_REVIEW）。
+     *
+     * <p>用来验「名单出口不会漏出停用/待复核角色」—— 真实 SQL 已经过滤，但守卫要看的是
+     * catalog 自己有没有第二道筛子（别把这条不变量押在唯一一句 WHERE 上）。
+     */
+    public static MailRoleCatalog catalogWithLeakedInactive(Set<String> active, Map<String, String> inactiveWithStatus) {
+        List<MailRole> rows = new ArrayList<>();
+        for (String r : active) {
+            MailRole row = new MailRole();
+            row.setRole(r);
+            row.setStatus(MailRoleCatalog.STATUS_ACTIVE);
+            row.setDisplayName(r);
+            rows.add(row);
+        }
+        for (Map.Entry<String, String> e : inactiveWithStatus.entrySet()) {
+            MailRole row = new MailRole();
+            row.setRole(e.getKey());
+            row.setStatus(e.getValue());
+            row.setDisplayName(e.getValue());
+            rows.add(row);
+        }
+
+        MailRoleMapper roleMapper = mock(MailRoleMapper.class);
+        MailRoleAliasMapper aliasMapper = mock(MailRoleAliasMapper.class);
+        when(roleMapper.selectActive()).thenReturn(rows);
+        when(aliasMapper.selectAllAliases()).thenReturn(new ArrayList<>());
+
+        MailRoleCatalog catalog = new MailRoleCatalog();
+        ReflectionTestUtils.setField(catalog, "roleMapper", roleMapper);
+        ReflectionTestUtils.setField(catalog, "aliasMapper", aliasMapper);
+        return catalog;
+    }
 }

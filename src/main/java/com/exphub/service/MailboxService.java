@@ -120,44 +120,48 @@ public class MailboxService {
     }
 
     /**
-     * 收件人被拒时的<b>结构化错误</b>（2026-11-09 阁主 P9 第 2 条 + T261109054938-679）。
+     * 收件人被拒时的<b>结构化错误</b>（2026-11-09 阁主 P9 第 2 条 + T261109054938-679 + T261109054529-699）。
      *
-     * <p>只给三块：被拒收件人（原样回显）/ 不超过 {@value MailRoleCatalog#MAX_CANDIDATES} 个候选
-     * / 一句提示。<b>不再拼全清单</b> —— 一百多个收件人会撑成一屏，客户端还会截断，最后谁都看不到。
-     * 忆阁原样转给用户即可，不需要解析。
+     * <p>四块：被拒收件人（原样回显）/ 不超过 {@value MailRoleCatalog#MAX_CANDIDATES} 个候选
+     * / 当前生效名单（条数超过 {@value MailRoleCatalog#MAX_ROLE_LIST_IN_ERROR} 时只报计数 + 查询入口）
+     * / 一句提示。<b>不拼历史脏代号</b> —— 停用与待复核在任何出口都不出现。
      *
      * <p><b>出口一律汉字</b>：候选、提示、名单都写「烛龙 / 貔貅」。被拒值原样回显（用户传了什么就显示什么），
      * 但它不是正名，不会写进库里。
      *
-     * <p><b>候选只用于展示</b>（阁主 T261109054529-699）：调用方不得据此自动改写收件人并重发。
+     * <p><b>候选和名单只用于展示</b>（阁主 T261109054529-699）：调用方不得据此自动改写收件人并重发。
      *
      * <p>清单读不到时（冷启动 / 库连不上）走单独一支：<b>明说这是 ExpHub 的故障</b>，
      * 不许说成「收件人不存在」—— 那是 #1459 把服务端故障说成用户写错的老毛病。
      */
     public String recipientRejectionMessage(String raw, MailRoleCatalog.Check check) {
-        String shown = raw == null ? "" : raw.trim();
+        // 阁主 T261109054529-699：rejectedRole 原样回，不要清洗。trim 会让「传了什么」失真。
+        String shown = raw == null ? "" : raw;
         StringBuilder sb = new StringBuilder();
         if (check.kind() == MailRoleCatalog.Check.Kind.UNAVAILABLE) {
             sb.append("收件人无法校验（未发出任何信）\n");
-            sb.append("- 被拒收件人：").append(code(shown)).append("\n");
-            sb.append("- 候选（最多 ").append(MailRoleCatalog.MAX_CANDIDATES).append(" 个）：—\n");
-            sb.append("- 提示：ExpHub 的角色清单暂时读不到，这不是你把收件人写错了；")
+            sb.append("- rejectedRole（被拒收件人）：").append(code(shown)).append("\n");
+            sb.append("- candidates（最多 ").append(MailRoleCatalog.MAX_CANDIDATES).append(" 个）：—\n");
+            sb.append("- roleList：—（角色清单读不到，没法给名单）\n");
+            sb.append("- hint：ExpHub 的角色清单暂时读不到，这不是你把收件人写错了；")
               .append("这是服务端故障，请稍后重试并报维护者，别靠改名字去试。\n");
-            sb.append("- ⚠️ 调用方不得依据本响应自动改写收件人并重发：候选是给人看的，不是给程序猜的。");
+            appendDisplayOnlyWarning(sb);
             return sb.toString();
         }
 
         List<String> cands = check.candidates();
         sb.append("收件人无效（未发出任何信）\n");
-        sb.append("- 被拒收件人：").append(code(shown)).append("\n");
-        sb.append("- 候选（最多 ").append(MailRoleCatalog.MAX_CANDIDATES).append(" 个）：");
+        sb.append("- rejectedRole（被拒收件人）：").append(code(shown)).append("\n");
+        sb.append("- candidates（最多 ").append(MailRoleCatalog.MAX_CANDIDATES).append(" 个）：");
         if (cands.isEmpty()) {
             sb.append("— （没有足够接近的正名；当前可投递 ")
               .append(check.snapshot().activeRoles().size()).append(" 个）");
         } else {
             sb.append(cands.stream().map(c -> "`" + c + "`").collect(Collectors.joining("、")));
         }
-        sb.append("\n- 提示：没有这个收件人：").append(shown.isEmpty() ? "（空）" : shown).append("。");
+        sb.append("\n");
+        appendRoleList(sb, check.snapshot());
+        sb.append("- hint：没有这个收件人：").append(shown.isEmpty() ? "（空）" : shown).append("。");
         if (!cands.isEmpty()) sb.append("你是想发 ").append(cands.get(0)).append("？");
         sb.append("收件人正名是汉字（如「烛龙」）；拼音别名（如 zhulong）仍可投递，会被归一到汉字。");
         sb.append("本份清单加载于 ").append(stamp(check.snapshot().loadedAt()))
@@ -166,7 +170,62 @@ public class MailboxService {
             sb.append("；⚠️ 最近一次刷新失败，用的仍是这份旧名单");
         }
         sb.append("；回信（带 inReplyTo）不走这条校验，收件人取父消息的发件人。\n");
-        sb.append("- ⚠️ 调用方不得依据本响应自动改写收件人并重发：候选是给人看的，不是给程序猜的。");
+        appendDisplayOnlyWarning(sb);
+        return sb.toString();
+    }
+
+    /**
+     * 拒绝回执里的「当前生效名单」。
+     *
+     * <p>≤ {@value MailRoleCatalog#MAX_ROLE_LIST_IN_ERROR} 条就直接列；超过只报计数 + 指路
+     * {@code mail_start(roles=true)}。理由：名单会长到 100+，把整份名单塞进每次错误响应，
+     * 日志和报文都会被撑爆（阁主 T261109054529-699 第二条）。
+     */
+    private void appendRoleList(StringBuilder sb, MailRoleCatalog.Snapshot snapshot) {
+        List<String> labels = MailRoleCatalog.labelsOf(snapshot);
+        if (labels.isEmpty()) {
+            sb.append("- roleList：—（当前没有 ACTIVE 角色，名单为空）\n");
+            return;
+        }
+        if (labels.size() <= MailRoleCatalog.MAX_ROLE_LIST_IN_ERROR) {
+            sb.append("- roleList（当前生效 ").append(labels.size()).append(" 个，仅展示）：")
+              .append(labels.stream().map(r -> "`" + r + "`").collect(Collectors.joining("、")))
+              .append("\n");
+        } else {
+            sb.append("- roleList：当前生效 ").append(labels.size())
+              .append(" 个，未随本响应给出（避免撑屏/被客户端截断）；要全量名单请调 `mail_start(roles=true)`\n");
+        }
+    }
+
+    /** 「名单只用于展示」这句话只能有一处出处：成功拒绝和故障两支都调它。 */
+    private static void appendDisplayOnlyWarning(StringBuilder sb) {
+        sb.append("- ⚠️ 调用方不得依据本响应自动改写收件人并重发：名单是给人看的，不是给程序猜的。");
+    }
+
+    /**
+     * 按需查全量角色名单（{@code mail_start(roles=true)} 的唯一出口）。
+     *
+     * <p>只列 {@code status='ACTIVE'}；停用与待复核一律不出现，历史脏代号不从这里漏出去。
+     * 清单读不到时<b>明说是服务端故障</b>，不许显示成「没有角色」。
+     */
+    public String roleDirectoryMessage() {
+        MailRoleCatalog.Snapshot s = roleCatalog.snapshot();
+        StringBuilder sb = new StringBuilder();
+        if (s == null || !s.available()) {
+            sb.append("❌ 读不到角色清单（未列出任何名字）：这是 ExpHub 的服务端故障，不是「没有角色」。\n");
+            sb.append("请稍后重试并报维护者。\n");
+            return sb.toString();
+        }
+        List<String> labels = MailRoleCatalog.labelsOf(s);
+        sb.append("📇 当前可投递角色：").append(labels.size()).append(" 个（只含 status=ACTIVE）\n");
+        for (String label : labels) {
+            sb.append("- ").append(label).append("\n");
+        }
+        sb.append("\n> 清单加载于 ").append(stamp(s.loadedAt()))
+          .append("（每 30 秒刷新一次，刚加的角色可能还没生效）");
+        if (s.degraded()) sb.append("；⚠️ 最近一次刷新失败，用的仍是这份旧名单");
+        sb.append("\n> 停用（DISABLED）与待复核（PENDING_REVIEW）一律不出现在这份名单里。\n");
+        sb.append("> ⚠️ 名单只用于展示：调用方不得依据本名单自动改写收件人并重发。\n");
         return sb.toString();
     }
 

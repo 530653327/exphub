@@ -336,8 +336,11 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-09 授权链元数据（阁主 T261109035247-364）：仍 50 个工具，mail_send 加
         //            chainId + auto + depth，参数 203 → 206。理由：服务端分不出「代理自动回合」
         //            与「本人发的」（from_role 都是 gezhu），只能由调用方自报；加参数不加工具。
+        // 2026-11-09 名单只用于展示（阁主 T261109054529-699）：仍 50 个工具，mail_start 加 roles，
+        //            参数 206 → 207。理由：全量名单要「按需查」而不是塞进每次拒绝响应；
+        //            加参数不加工具，避免为了查名单多付一个工具的常驻 schema 成本。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(206, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(207, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

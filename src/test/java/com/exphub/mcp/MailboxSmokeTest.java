@@ -46,7 +46,7 @@ class MailboxSmokeTest {
     @Test
     @DisplayName("smoke: 没声明角色，mail_start 不给任何私信，也不查库")
     void mailStartWithoutRoleMustRefuse() {
-        String r = tools.mailStart(null, null, null, null, null);
+        String r = tools.mailStart(null, null, null, null, null, null);
         assertTrue(r.contains("未声明角色"), "没角色时必须明说，不能静默返回空列表：\n" + r);
         verifyNoInteractions(mailboxService);
     }
@@ -58,7 +58,7 @@ class MailboxSmokeTest {
         when(mailboxService.unreadCount("zhulong")).thenReturn(2);
         when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false))).thenReturn(List.of());
 
-        String r = tools.mailStart(null, null, null, null, null);
+        String r = tools.mailStart(null, null, null, null, null, null);
         assertTrue(r.startsWith("你是【zhulong】，配置来源 cfg-zhulong-01；未读 2 封"),
                 "回执第一行必须能一眼看出「我是谁、哪份配置」，实际：\n" + r);
     }
@@ -71,7 +71,7 @@ class MailboxSmokeTest {
         when(mailboxService.unreadCount("烛龙")).thenReturn(0);
         when(mailboxService.inbox(eq("烛龙"), isNull(), anyInt(), eq(false))).thenReturn(List.of());
 
-        String r = tools.mailStart(null, null, null, null, null);
+        String r = tools.mailStart(null, null, null, null, null, null);
 
         assertTrue(r.startsWith("你是【烛龙】，配置来源 cfg-zhulong-01"),
                 "兼容期配置仍写拼音，但出口必须是汉字：\n" + r);
@@ -102,7 +102,7 @@ class MailboxSmokeTest {
         when(mailboxService.outbox(eq("zhulong"), isNull(), anyInt()))
                 .thenReturn(List.of(envelope("T261108000000-001", "gezhu")));
 
-        String r = tools.mailStart(null, null, null, true, null);
+        String r = tools.mailStart(null, null, null, true, null, null);
 
         assertTrue(r.contains("发件视角"), "必须明确标出这是发件视角，否则会被当成收件箱读：\n" + r);
         assertTrue(r.contains("发给【gezhu】"), "发件视角的核心就是「我到底发给了谁」：\n" + r);
@@ -120,7 +120,7 @@ class MailboxSmokeTest {
         when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false)))
                 .thenReturn(List.of(envelope("T261108000000-001", "gezhu")));
 
-        String r = tools.mailStart(null, null, null, null, true);
+        String r = tools.mailStart(null, null, null, null, true, null);
 
         assertTrue(r.contains("\"threads\":1"), "要给出可解析的计数：" + r);
         assertTrue(r.contains("\"type\":\"note\""), "type 必须带（dispatch/receipt/accept 优先级不同）：" + r);

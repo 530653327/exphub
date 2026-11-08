@@ -15,7 +15,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p><b>要防的三种错</b>：
  * <ol>
- *   <li>把全清单拼进回执 —— 一百多个收件人撑成一屏，客户端还会截断，最后谁都看不到（旧文案就是这么坏的）；</li>
+ *   <li><b>把历史脏代号/停用角色拼进回执</b> —— 名单只许出现 {@code status='ACTIVE'}；
+ *       而且条数超过阈值就只报计数 + 指向 {@code mail_start(roles=true)}，别把 100+ 代号塞进每次错误响应；</li>
  *   <li>把「服务端读不到名单」说成「收件人不存在」—— 那是 #1459 的老毛病：
  *       错误的解释比没有解释更糟，它把排查方向从一开始就带偏；</li>
  *   <li>出口写拼音（zhulong / pixiu）—— 越哥 #679 定：正名是汉字，<b>应答、候选、名单、提示一律汉字</b>。</li>
@@ -67,30 +68,52 @@ class MailboxRecipientValidationTest {
     }
 
     @Test
-    @DisplayName("拒绝回执是结构化三块：被拒值原样回显 / ≤5 个汉字候选 / 一句提示")
+    @DisplayName("拒绝回执是结构化四块：被拒值原样回显 / ≤5 个汉字候选 / 当前生效名单 / 一句提示")
     void rejectionMessageIsStructured() {
         String msg = svc.recipientRejectionMessage("zhulnog", catalog.check("zhulnog"));
 
         assertTrue(msg.startsWith("收件人无效（未发出任何信）"), msg);
-        assertTrue(msg.contains("- 被拒收件人：`zhulnog`"), "必须回显它传的原值：" + msg);
-        assertTrue(msg.contains("- 候选（最多 5 个）："), msg);
+        assertTrue(msg.contains("- rejectedRole（被拒收件人）：`zhulnog`"), "必须回显它传的原值：" + msg);
+        assertTrue(msg.contains("- candidates（最多 5 个）："), msg);
         assertTrue(msg.contains("`烛龙`"), "要给出最近的正名：" + msg);
-        assertTrue(msg.contains("- 提示：没有这个收件人：zhulnog。你是想发 烛龙？"), msg);
+        assertTrue(msg.contains("- roleList（当前生效 7 个，仅展示）："), "名单要标明是 ACTIVE 全量：" + msg);
+        assertTrue(msg.contains("- hint：没有这个收件人：zhulnog。你是想发 烛龙？"), msg);
     }
 
     @Test
-    @DisplayName("候选不超过 5 个，且绝不拼全清单（100 多个值会撑成一屏并被截断）")
-    void rejectionNeverPrintsTheWholeList() {
-        MailRoleCatalog narrow = MailRoleFixtures.catalog(
-                Set.of("烛龙", "阁主", "白泽", "貔貅", "睚眦", "麒麟"), Map.of(), Map.of());
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "roleCatalog", narrow);
+    @DisplayName("rejectedRole 原样回，不清洗（首尾空白也照原样，别让「传了什么」失真）")
+    void rejectedRoleIsEchoedVerbatim() {
+        String msg = svc.recipientRejectionMessage("  zhulnog  ", catalog.check("  zhulnog  "));
+        assertTrue(msg.contains("`  zhulnog  `"), "必须逐字回显：" + msg);
+    }
 
-        String msg = svc.recipientRejectionMessage("zzzz", narrow.check("zzzz"));
+    @Test
+    @DisplayName("roleList 超过 20 个就不列正文：只报计数 + 指向 mail_start(roles=true)")
+    void roleListIsBoundedWhenRosterIsLarge() {
+        java.util.Set<String> many = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < 25; i++) many.add("角色" + i);
+        MailRoleCatalog big = MailRoleFixtures.catalog(many, Map.of(), Map.of());
 
-        assertTrue(msg.contains("当前可投递 6 个"), "没候选时只报总数，不列名单：" + msg);
-        for (String r : Set.of("烛龙", "阁主", "白泽", "貔貅", "睚眦", "麒麟")) {
-            assertFalse(msg.contains("`" + r + "`"), "不许把全清单拼进回执：" + r + " in " + msg);
-        }
+        String msg = svc.recipientRejectionMessage("zzzzz", big.check("zzzzz"));
+
+        assertTrue(msg.contains("- roleList：当前生效 25 个，未随本响应给出"), msg);
+        assertTrue(msg.contains("mail_start(roles=true)"), "要指出按需查的入口：" + msg);
+        assertFalse(msg.contains("`角色0`"), "超过阈值不许把名单塞进错误响应：" + msg);
+    }
+
+    @Test
+    @DisplayName("名单只含 ACTIVE：停用/待复核行就算从查询里漏出来，也不许进拒绝回执")
+    void roleListNeverLeaksInactiveRoles() {
+        MailRoleCatalog mixed = MailRoleFixtures.catalogWithLeakedInactive(
+                Set.of("烛龙", "阁主", "白泽"),
+                Map.of("夫诸", "DISABLED", "legacy_guy", "PENDING_REVIEW"));
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "roleCatalog", mixed);
+
+        String msg = svc.recipientRejectionMessage("zzzz", mixed.check("zzzz"));
+
+        assertTrue(msg.contains("- roleList（当前生效 3 个，仅展示）："), msg);
+        assertFalse(msg.contains("夫诸"), "停用的角色不许出现在名单：" + msg);
+        assertFalse(msg.contains("legacy_guy"), "待复核的历史脏代号不许出现在名单：" + msg);
     }
 
     @Test
@@ -120,8 +143,9 @@ class MailboxRecipientValidationTest {
         String msg = svc.recipientRejectionMessage("烛龙", catalog.check("烛龙"));
 
         assertTrue(msg.startsWith("收件人无法校验（未发出任何信）"), msg);
-        assertTrue(msg.contains("- 被拒收件人：`烛龙`"), msg);
-        assertTrue(msg.contains("- 候选（最多 5 个）：—"), msg);
+        assertTrue(msg.contains("- rejectedRole（被拒收件人）：`烛龙`"), msg);
+        assertTrue(msg.contains("- candidates（最多 5 个）：—"), msg);
+        assertTrue(msg.contains("- roleList：—（角色清单读不到，没法给名单）"), msg);
         assertTrue(msg.contains("服务端故障"), msg);
         assertTrue(msg.contains("不是你把收件人写错了"), msg);
         assertFalse(msg.contains("收件人无效"), "服务端故障不能显示成用户写错：" + msg);
