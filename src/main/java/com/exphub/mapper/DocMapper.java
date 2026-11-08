@@ -47,6 +47,21 @@ public interface DocMapper extends BaseMapper<Doc> {
     java.util.Map<String, Object> countGlobalRegularDocs();
 
     /**
+     * 按 api_key 统计文档数（移动端「用户」列表用）。
+     *
+     * <p>一次 group by 查完再在内存里映射，不要按用户逐个 count —— 那是标准 N+1，
+     * 用户一多就会把列表接口拖成几百次查询。
+     *
+     * <p>排除过程流水（project_progress / todo_list）：那两个是施工日志，不是知识文档。
+     * 不排除的话每个用户在列表里都会显示几十上百篇，数字看着漂亮但全是假的。
+     */
+    @Select("SELECT api_key AS apiKey, COUNT(*) AS cnt FROM docs " +
+            "WHERE api_key IS NOT NULL AND api_key <> '' " +
+            "AND (template_type IS NULL OR template_type NOT IN ('project_progress','todo_list')) " +
+            "GROUP BY api_key")
+    java.util.List<java.util.Map<String, Object>> countDocsByApiKey();
+
+    /**
      * FULLTEXT 搜索（BOOLEAN MODE），按相关性 + 调用次数排序
      * @param keyword  BOOLEAN MODE 查询词（含 + 前缀等操作符）
      * @param sortKeyword  NATURAL LANGUAGE MODE 排序词（纯净关键词，不含操作符）

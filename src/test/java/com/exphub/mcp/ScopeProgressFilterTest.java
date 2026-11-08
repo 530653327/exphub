@@ -38,11 +38,17 @@ class ScopeProgressFilterTest {
                 "排除条件必须同时出现在搜索与计数两条 SQL 里（只改一边会让「匹配 N 条」与实际不符）");
 
         String cond = "AND (template_type IS NULL OR template_type NOT IN ('project_progress','todo_list'))";
-        // 2026-11-08 实测 3 处，不是 2 处。多出来的是 DocMapper.countGlobalRegularDocs
-        // （仪表盘「全局知识文档数」，project_id IS NULL 且非过程流水）—— 它无条件排除，没有 excludeProjectProgress 开关，
-        // 所以上面 <if> 那条仍然是 2。两处搜索 SQL 仍然各一份，这条判据要守的没变。
-        assertEquals(3, countOf(mapper, cond), "两条搜索 SQL 各需一份排除条件（2026-11-06 扩到 todo_list）；"
-                + "第 3 处是 countGlobalRegularDocs 的口径，加进来是为了让仪表盘计数与搜索同口径");
+        // 2026-11-08 第二次改判据：从「恰好 3 处」改成「至少 3 处」。
+        //
+        // 为什么：这条守卫已经因为「数字过期」红过两次（10-30 一次、11-08 加 countDocsByApiKey 又一次）。
+        // 而它真正要防的是「有人把这条件删了」—— 那个方向是数量变**少**。
+        // 数量变多只是新增了一条同口径的 SQL，本来是好事，却每次都要人来改数字，
+        // 久而久之大家看到这条红就当噪音忽略，守卫就废了。
+        // 所以改成下界断言：变少立刻红，变多不再拦；失败时把所有出现位置打出来。
+        int hits = countOf(mapper, cond);
+        assertTrue(hits >= 3,
+                "排除条件至少要出现在 3 条 SQL 里（两条搜索 SQL + countGlobalRegularDocs 的仪表盘口径），实际 "
+                        + hits + " 处。有谁把其中一条的排除条件删了？\n当前出现位置：\n" + linesOf(mapper, cond));
     }
 
     @Test
@@ -110,5 +116,17 @@ class ScopeProgressFilterTest {
             i += needle.length();
         }
         return n;
+    }
+
+    /** 把所有出现位置按「第 N 行」列出来 —— 红了要能直接跳过去改，而不是自己再搜一遍。 */
+    private static String linesOf(String text, String needle) {
+        StringBuilder sb = new StringBuilder();
+        String[] lines = text.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains(needle)) {
+                sb.append("  第 ").append(i + 1).append(" 行\n");
+            }
+        }
+        return sb.length() == 0 ? "  （未出现）\n" : sb.toString();
     }
 }

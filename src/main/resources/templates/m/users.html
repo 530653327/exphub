@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('用户')}"></head>
+<body>
+<div class="page">
+    <div class="row-between" style="margin-bottom:14px">
+        <div class="grow">
+            <div class="h1" style="margin:0">用户</div>
+            <div class="muted" id="subtitle">加载中…</div>
+        </div>
+        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
+    </div>
+
+    <!-- 两类用户是两个不同的东西，不要混在一个列表里：
+         门户用户是「人」，AI 助手是「带 Key 的机器身份」，判据和关注点完全不同 -->
+    <div class="row" style="gap:8px;margin-bottom:12px">
+        <button class="btn ghost chip active" data-tab="users" style="padding:8px 0;font-size:13px;min-height:36px">门户用户</button>
+        <button class="btn ghost chip" data-tab="assistants" style="padding:8px 0;font-size:13px;min-height:36px">AI 助手</button>
+    </div>
+
+    <div class="card" id="errBox" style="display:none;border:1px solid var(--danger)">
+        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">加载失败</div>
+        <div class="muted" id="errMsg" style="word-break:break-all"></div>
+        <button class="btn ghost" style="margin-top:10px" id="retryBtn">重试</button>
+    </div>
+
+    <!-- ========== 门户用户 ========== -->
+    <div id="pane-users">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+            <div class="card" style="margin:0;padding:12px">
+                <div class="muted" style="font-size:12px">总用户</div>
+                <div class="num" id="u-total" style="font-size:22px">—</div>
+            </div>
+            <div class="card" style="margin:0;padding:12px">
+                <div class="muted" style="font-size:12px">今日新增</div>
+                <div class="num" id="u-today" style="font-size:22px">—</div>
+            </div>
+            <div class="card" style="margin:0;padding:12px">
+                <div class="muted" style="font-size:12px">7 日活跃</div>
+                <div class="num" id="u-active" style="font-size:22px">—</div>
+            </div>
+        </div>
+
+        <input type="search" id="userSearch" placeholder="搜邮箱或昵称" autocomplete="off"
+               style="margin-bottom:10px">
+
+        <div id="userList"></div>
+        <div id="userHint" class="muted" style="text-align:center;padding:14px 0;display:none"></div>
+        <div id="userSentinel" style="height:1px"></div>
+    </div>
+
+    <!-- ========== AI 助手 ========== -->
+    <div id="pane-assistants" style="display:none">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+            <div class="card" style="margin:0;padding:12px">
+                <div class="muted" style="font-size:12px">助手</div>
+                <div class="num" id="a-total" style="font-size:22px">—</div>
+            </div>
+            <div class="card" style="margin:0;padding:12px">
+                <div class="muted" style="font-size:12px">启用中</div>
+                <div class="num" id="a-enabled" style="font-size:22px">—</div>
+            </div>
+            <div class="card" style="margin:0;padding:12px">
+                <div class="muted" style="font-size:12px">总调用</div>
+                <div class="num" id="a-calls" style="font-size:22px">—</div>
+            </div>
+        </div>
+
+        <div id="assistantList"></div>
+        <div id="assistantHint" class="muted" style="text-align:center;padding:14px 0;display:none"></div>
+    </div>
+
+    <div class="muted" style="text-align:center;margin:22px 0 8px;font-size:12px" id="updatedAt"></div>
+</div>
+
+<nav th:replace="~{m/layout :: tabbar('users')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+
+<script th:inline="javascript">
+    // contextPath 用 @{/}（不要用 servlet 请求对象，Thymeleaf 3.1 下为 null 会炸模板）
+    var CTX = /*[[@{/}]]*/ '/';
+    CTX = CTX.replace(/\/$/, '');
+
+    var uPage = 1, uPages = 1, uLoading = false, uKeyword = '', uTotal = 0;
+    var assistantLoaded = false;
+
+    function esc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/[&<>"']/g, function (c) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+            });
+    }
+
+    function num(v, digits) {
+        if (v === null || v === undefined || v === '') return '0';
+        var n = Number(v);
+        if (isNaN(n)) return String(v);
+        return digits === undefined ? n.toLocaleString('zh-CN') : n.toFixed(digits);
+    }
+
+    function setText(id, t) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = t;
+    }
+
+    function showError(msg) {
+        setText('errMsg', msg);
+        document.getElementById('errBox').style.display = 'block';
+        setText('subtitle', '加载失败');
+    }
+
+    function clearError() {
+        document.getElementById('errBox').style.display = 'none';
+    }
+
+    function getJson(url) {
+        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+            if (r.status === 401 || r.status === 403) throw new Error('登录已过期，请重新登录（HTTP ' + r.status + '）');
+            if (!r.ok) throw new Error('服务端返回 HTTP ' + r.status);
+            return r.json();
+        }).then(function (res) {
+            if (res.code !== 0) throw new Error(res.message || '接口返回失败');
+            return res.data;
+        });
+    }
+
+    /** 2026-11-08T01:23:45 -> 11-08 01:23；空值给「从未」而不是「—」，因为对用户来说这两者含义不同 */
+    function fmtTime(s, emptyText) {
+        if (!s) return emptyText || '—';
+        var t = String(s).replace('T', ' ');
+        if (t.length < 16) return t;
+        return t.substring(5, 16);
+    }
+
+    // ---------- 门户用户 ----------
+    function userCard(u) {
+        var statusTag = u.enabled === false
+            ? '<span class="tag danger">已停用</span>'
+            : '<span class="tag ok">正常</span>';
+        return '<div class="card" style="padding:13px 14px">'
+            + '<div class="row-between" style="gap:8px">'
+            + '<div class="grow ell" style="font-weight:600">' + esc(u.displayName || '（未设昵称）') + '</div>'
+            + statusTag
+            + '</div>'
+            + '<div class="muted ell" style="margin-top:3px;font-size:13px">' + esc(u.email || '—') + '</div>'
+            + '<div class="divider" style="margin:10px 0"></div>'
+            + '<div class="row-between" style="font-size:12px">'
+            + '<span class="muted">注册 ' + fmtTime(u.createdAt) + '</span>'
+            + '<span class="muted">最后登录 ' + fmtTime(u.lastLoginAt, '从未') + '</span>'
+            + '</div>'
+            + '<div class="row-between" style="font-size:12px;margin-top:6px">'
+            + '<span class="muted">经验文档 ' + num(u.docCount) + ' 篇</span>'
+            + '<span class="muted">#' + u.id + '</span>'
+            + '</div>'
+            + '</div>';
+    }
+
+    function loadUsers(reset) {
+        if (uLoading) return;
+        uLoading = true;
+        clearError();
+
+        if (reset) {
+            uPage = 1;
+            uPages = 1;
+            document.getElementById('userList').innerHTML = '';
+        }
+
+        var url = CTX + '/api/mobile/users?page=' + uPage + '&size=20';
+        if (uKeyword) url += '&keyword=' + encodeURIComponent(uKeyword);
+
+        getJson(url).then(function (d) {
+            var rows = d.list || [];
+            uPages = d.pages || 1;
+            uTotal = d.total || 0;
+
+            if (rows.length) {
+                document.getElementById('userList')
+                    .insertAdjacentHTML('beforeend', rows.map(userCard).join(''));
+            }
+
+            var s = d.summary || {};
+            setText('u-total', s.total === null || s.total === undefined ? '—' : num(s.total));
+            setText('u-today', s.todayNew === null || s.todayNew === undefined ? '—' : num(s.todayNew));
+            setText('u-active', s.active7d === null || s.active7d === undefined ? '—' : num(s.active7d));
+
+            if (uPage === 1 && !rows.length) {
+                document.getElementById('userList').innerHTML =
+                    '<div class="empty">' + (uKeyword ? '没有匹配的用户' : '还没有注册用户') + '</div>';
+            }
+
+            setText('subtitle', (uKeyword ? '搜索「' + uKeyword + '」· ' : '') + uTotal + ' 个门户用户');
+
+            var hint = document.getElementById('userHint');
+            if (uPage < uPages) {
+                hint.style.display = 'block';
+                hint.textContent = '继续下滑加载更多…';
+            } else {
+                hint.style.display = 'none';
+            }
+        }).catch(function (e) {
+            showError(e.message || String(e));
+        }).then(function () {
+            uLoading = false;
+        });
+    }
+
+    // ---------- AI 助手 ----------
+    function assistantCard(a) {
+        var perms = [];
+        if (a.canSearch) perms.push('查');
+        if (a.canCreate) perms.push('建');
+        if (a.canUpdate) perms.push('改');
+
+        var total = Number(a.totalCalls || 0);
+        var ok = Number(a.successCalls || 0);
+        var rate = total > 0 ? (ok / total) * 100 : null;
+
+        return '<div class="card" style="padding:13px 14px">'
+            + '<div class="row-between" style="gap:8px">'
+            + '<div class="grow ell" style="font-weight:600">' + esc(a.assistantName || '（未命名）') + '</div>'
+            + (a.enabled === false ? '<span class="tag danger">已停用</span>' : '<span class="tag ok">启用</span>')
+            + '</div>'
+            + (a.description
+                ? '<div class="clamp2 muted" style="margin-top:4px;font-size:13px">' + esc(a.description) + '</div>'
+                : '')
+            + '<div class="divider" style="margin:10px 0"></div>'
+            + '<div class="row-between" style="font-size:12px">'
+            + '<span class="muted">调用 ' + num(total) + ' 次'
+            + (rate === null ? '' : ' · 成功率 ' + rate.toFixed(0) + '%') + '</span>'
+            + '<span class="muted">失败 ' + num(a.failCalls) + '</span>'
+            + '</div>'
+            + '<div class="row-between" style="font-size:12px;margin-top:6px;gap:8px">'
+            + '<span class="muted ell">' + esc(a.apiKey || '—') + '</span>'
+            + '<span class="muted" style="white-space:nowrap">最后 ' + fmtTime(a.lastCallAt, '从未调用') + '</span>'
+            + '</div>'
+            + '<div class="row" style="gap:6px;margin-top:8px">'
+            + (perms.length
+                ? perms.map(function (p) { return '<span class="tag">' + p + '</span>'; }).join('')
+                : '<span class="tag danger">无权限</span>')
+            + '</div>'
+            + '</div>';
+    }
+
+    function loadAssistants() {
+        if (assistantLoaded) return;
+        clearError();
+
+        // 助手数量是几十的量级，一次拉 50 条足够；真超过再翻页，不必一上来就做无限滚动
+        getJson(CTX + '/api/assistants?page=1&size=50').then(function (d) {
+            var rows = d.list || [];
+            assistantLoaded = true;
+
+            var enabled = rows.filter(function (a) { return a.enabled !== false; }).length;
+            var calls = rows.reduce(function (sum, a) { return sum + Number(a.totalCalls || 0); }, 0);
+
+            setText('a-total', num(d.total || rows.length));
+            setText('a-enabled', num(enabled));
+            setText('a-calls', num(calls));
+
+            document.getElementById('assistantList').innerHTML = rows.length
+                ? rows.map(assistantCard).join('')
+                : '<div class="empty">还没有创建过 AI 助手</div>';
+
+            var hint = document.getElementById('assistantHint');
+            if ((d.total || 0) > rows.length) {
+                hint.style.display = 'block';
+                hint.textContent = '共 ' + d.total + ' 个，只显示前 ' + rows.length + ' 个';
+            } else {
+                hint.style.display = 'none';
+            }
+        }).catch(function (e) {
+            showError(e.message || String(e));
+        });
+    }
+
+    // ---------- 交互 ----------
+    var searchTimer = null;
+    document.getElementById('userSearch').addEventListener('input', function () {
+        var v = this.value.trim();
+        clearTimeout(searchTimer);
+        // 防抖 400ms：手机上每敲一个字就发一次请求，弱网下会互相覆盖，看起来像"搜不出东西"
+        searchTimer = setTimeout(function () {
+            uKeyword = v;
+            loadUsers(true);
+        }, 400);
+    });
+
+    document.querySelectorAll('[data-tab]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var tab = btn.getAttribute('data-tab');
+            document.querySelectorAll('[data-tab]').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+
+            document.getElementById('pane-users').style.display = tab === 'users' ? 'block' : 'none';
+            document.getElementById('pane-assistants').style.display = tab === 'assistants' ? 'block' : 'none';
+
+            if (tab === 'assistants') {
+                loadAssistants();
+                setText('subtitle', 'AI 助手与 API Key');
+            } else {
+                setText('subtitle', uTotal + ' 个门户用户');
+            }
+        });
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', function () {
+        clearError();
+        loadUsers(true);
+        if (document.getElementById('pane-assistants').style.display !== 'none') {
+            assistantLoaded = false;
+            loadAssistants();
+        }
+        setText('updatedAt', '数据更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+    });
+    document.getElementById('retryBtn').addEventListener('click', function () {
+        clearError();
+        loadUsers(true);
+        if (document.getElementById('pane-assistants').style.display !== 'none') {
+            assistantLoaded = false;
+            loadAssistants();
+        }
+    });
+
+    if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) {
+            if (!entries[0].isIntersecting) return;
+            if (uLoading || uPage >= uPages) return;
+            uPage += 1;
+            loadUsers(false);
+        }, { rootMargin: '200px' }).observe(document.getElementById('userSentinel'));
+    }
+
+    loadUsers(true);
+</script>
+</body>
+</html>

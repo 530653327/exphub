@@ -121,7 +121,10 @@
 </head>
 <body>
 
-<!-- 底部导航：四项固定。activeTab 传 dashboard / pending / tools / me -->
+<!-- 底部导航：五项固定。activeTab 传 dashboard / pending / tools / users / me
+     2026-11-08 加了第 5 项「用户」（越哥要求能看到用户数与用户信息）。
+     五个是手机底部栏的上限 —— 再加就要么改抽屉，要么把「我的」挪进头像入口，
+     别直接塞第六个，360px 宽的手机上每个 Tab 只剩 60px，字会挤成一团。 -->
 <nav class="tabbar" th:fragment="tabbar(activeTab)">
     <a class="tab" th:classappend="${activeTab == 'dashboard'} ? 'active'" th:href="@{/m/dashboard}">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="11" width="7" height="10" rx="1.5"/><rect x="3" y="15" width="7" height="6" rx="1.5"/></svg>
@@ -134,6 +137,10 @@
     <a class="tab" th:classappend="${activeTab == 'tools'} ? 'active'" th:href="@{/m/tools}">
         <svg viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19v-4"/></svg>
         <span>埋点</span>
+    </a>
+    <a class="tab" th:classappend="${activeTab == 'users'} ? 'active'" th:href="@{/m/users}">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M2.8 19.5c1-3 3.3-4.6 6.2-4.6s5.2 1.6 6.2 4.6"/><path d="M16.5 5.6a3 3 0 0 1 0 5.8M17.6 14.4c2.1.5 3.5 2.2 4 4.4"/></svg>
+        <span>用户</span>
     </a>
     <a class="tab" th:classappend="${activeTab == 'me'} ? 'active'" th:href="@{/m/me}">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4S18.3 16.4 19.5 20"/></svg>

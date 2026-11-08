@@ -44,7 +44,7 @@ class MobileTemplateRenderTest {
 
     /** 五个移动页 + 各自需要的模型变量。新增移动页必须加进来，否则它永远没人渲染过。 */
     private static final List<String> TEMPLATES = List.of(
-            "m/login", "m/dashboard", "m/pending", "m/tools", "m/me"
+            "m/login", "m/dashboard", "m/pending", "m/tools", "m/users", "m/me"
     );
 
     private static SpringTemplateEngine engine() {
@@ -146,6 +146,38 @@ class MobileTemplateRenderTest {
         assertTrue(html.contains("id=\"logs\""), "调用日志容器不存在");
         assertTrue(html.contains("id=\"trend\""), "趋势图容器不存在");
         assertTrue(html.contains("id=\"failOnlyBtn\""), "缺少「只看失败」开关");
+    }
+
+    @Test
+    @DisplayName("users 页两类用户各走各的接口，且助手不能走会返回明文 Key 的详情接口")
+    void usersHasWorkingScript() {
+        String html = engine().process("m/users", context());
+
+        // 门户用户走新建的只读接口
+        assertTrue(html.contains("/api/mobile/users"), "门户用户没走 /api/mobile/users");
+        // 助手列表复用现成接口（它已经做了 apiKey 掩码）
+        assertTrue(html.contains("/api/assistants?page=1"), "助手列表没走 /api/assistants");
+
+        // 安全红线：/api/assistants/{id} 返回完整实体，含 apiKey 与 apiKeySecret 明文。
+        // 移动端一旦调它，密钥就直接画在屏幕上了 —— 这条断言就是防这个。
+        assertFalse(html.contains("/api/assistants/' +"),
+                "助手详情不能调 /api/assistants/{id}：它返回明文 apiKey 与 apiKeySecret");
+        assertFalse(html.contains("apiKeySecret"),
+                "模板里不应该出现 apiKeySecret 这个词，出现就说明有人把密钥字段接进来了");
+
+        assertTrue(html.contains("id=\"userList\""), "门户用户列表容器不存在");
+        assertTrue(html.contains("id=\"assistantList\""), "助手列表容器不存在");
+        assertTrue(html.contains("id=\"userSearch\""), "缺少用户搜索框");
+    }
+
+    @Test
+    @DisplayName("底部导航必须五项齐全（少一项等于那个入口没了）")
+    void tabbarHasAllFiveTabs() {
+        String html = engine().process("m/dashboard", context());
+
+        for (String href : List.of("/m/dashboard", "/m/pending", "/m/tools", "/m/users", "/m/me")) {
+            assertTrue(html.contains(href), "底部导航缺入口：" + href);
+        }
     }
 
     @Test
