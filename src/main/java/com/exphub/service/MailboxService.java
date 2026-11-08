@@ -60,6 +60,21 @@ public class MailboxService {
     @Value("${exphub.mail.known-roles:}")
     private String knownRolesConfig;
 
+    /**
+     * 收件人别名表，格式 {@code 别名=正名,别名2=正名2}。单一数据源在 application.yml 的
+     * {@code exphub.mail.role-aliases}。
+     *
+     * <p><b>为什么需要它（2026-11-08，阁主 #72 / 白泽 #75 查出的真事故）</b>：`knownRoles()` 是
+     * 「配置表 ∪ 库里出现过的 role」，所以一个**拼错但历史上真存在过**的代号（`zhuolong`，多一个 o）
+     * 会被 dbRoles 兜底加进 accept 集合 —— 校验放行、信入库、`inbox()` 按 `to_role` 精确匹配，
+     * 于是谁都收不到，且全程无声。删配置表没用（库里还有），所以只能归一。
+     *
+     * <p>归一只作用于**发信时**，不动历史数据：老信的 `to_role` 保持原样（改历史破「只追加不可改」），
+     * 但 `thread()` 只按 thread_id 查、不校验 to_role，所以老线程照样能展开。
+     */
+    @Value("${exphub.mail.role-aliases:}")
+    private String roleAliasesConfig;
+
     /** 动态角色集合的缓存（库里出现过的 role 不常变，缓存 60 秒够用）。 */
     private volatile Set<String> cachedDbRoles;
     private volatile long cachedDbRolesAt;
@@ -127,6 +142,36 @@ public class MailboxService {
         return knownRoles().contains(role.trim().toLowerCase(Locale.ROOT));
     }
 
+    /** 别名表（别名 → 正名），全部小写；配置为空时返回空表，不抛错。 */
+    public Map<String, String> roleAliases() {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (roleAliasesConfig == null || roleAliasesConfig.isBlank()) return map;
+        for (String pair : roleAliasesConfig.split("[,，]")) {
+            if (pair == null || pair.isBlank()) continue;
+            int eq = pair.indexOf('=');
+            if (eq <= 0 || eq == pair.length() - 1) continue;
+            String k = pair.substring(0, eq).trim().toLowerCase(Locale.ROOT);
+            String v = pair.substring(eq + 1).trim().toLowerCase(Locale.ROOT);
+            if (!k.isEmpty() && !v.isEmpty() && !k.equals(v)) map.put(k, v);
+        }
+        return map;
+    }
+
+    /**
+     * 把收件人归一成正名（去空白、转小写、查别名表）。
+     *
+     * <p>只在空值上返回原样的空串；不认识的代号原样返回（交给 {@link #isKnownRole} 去拒），
+     * 所以本方法只「修已知的拼错」，不负责放行。
+     */
+    public String canonicalRole(String role) {
+        if (role == null) return null;
+        String v = role.trim().toLowerCase(Locale.ROOT);
+        if (v.isEmpty()) return v;
+        String mapped = roleAliases().get(v);
+        // 别名链只走一跳：a=b、b=c 时 a 归一到 b，不再递归 —— 配错循环不会把信吞进死胡同
+        return mapped == null ? v : mapped;
+    }
+
     /** 收件人不合法时的拒绝文案：中文显示名要单独说清，不然对方下次还写中文。 */
     public String unknownRecipientMessage(String to) {
         String t = to == null ? "" : to.trim();
@@ -162,6 +207,16 @@ public class MailboxService {
         }
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("主题是空的");
+        }
+
+        // 2026-11-08（阁主 #76，越哥批准）：**发信时归一别名，历史数据不动**。
+        // 事故链：`zhuolong`（多一个 o）在库里存在过 → 被 dbRoles 兜底进 accept 集合 →
+        // 校验放行 → 入库 → inbox() 按 to_role 精确匹配 → 谁都收不到，且发件方全程无感（#22/#45/#72）。
+        // 删配置表无效（库里还有），所以只能在这里把别名折成正名。
+        String rawTo = toRole.trim();
+        toRole = canonicalRole(rawTo);
+        if (!rawTo.equalsIgnoreCase(toRole)) {
+            log.info("MailboxService.send: 收件人别名归一 {} -> {}", rawTo, toRole);
         }
 
         // 2026-11-08（阁主 #51 拍板）：**只在校验开新线程**。

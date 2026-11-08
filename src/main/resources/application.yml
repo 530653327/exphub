@@ -75,6 +75,11 @@ exphub:
   # 新增助手：在这里加一个代号（小写英文），不用改代码。
   mail:
     known-roles: zhulong,baize,gezhu,piyao,yaci,qilin,fenghuang,chongmingniao,jiuweihu,dijiang
+    # 收件人别名 → 正名（发信时归一，历史老信的 to_role 不动）。
+    # 为什么需要：known-roles 是「配置 ∪ 库里出现过的 role」，拼错但历史上真存在过的代号
+    # （zhuolong，多一个 o）会被放行入库，而收件箱按 to_role 精确匹配 → 信在、没人收、全程无感。
+    # 事故：#22 / #45 / #72 三封（2026-11-08 白泽查库、阁主 #76 批准归一）。
+    role-aliases: zhuolong=zhulong,zhulogn=zhulong,zhulon=zhulong,beize=baize,gezu=gezhu
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml

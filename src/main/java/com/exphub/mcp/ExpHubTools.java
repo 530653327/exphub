@@ -6042,7 +6042,8 @@ public class ExpHubTools {
     @Tool(name = "mail_send",
           description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 inReplyTo，线程自动推导（没有 threadId 参数）。"
                       + "消息只追加不可改，要纠错发一条 type=fix 引用原信。clientMsgId 做幂等，工具超时重试不会发两封。"
-                      + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。")
+                      + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。"
+                      + "收件人写的是历史别名（如 zhuolong）会自动归一到正名并在回执里说明。")
     public String mailSend(
             @ToolParam(description = "收件角色代号，如 baize / gezhu") String to,
             @ToolParam(description = "主题，一句话说清这件事") String subject,
@@ -6063,6 +6064,12 @@ public class ExpHubTools {
             String cfg = MailIdentity.configSource();
             if (cfg != null) sb.append("（配置来源 ").append(cfg).append("）");
             sb.append("发给【").append(m.getToRole()).append("】\n");
+            // 2026-11-08：别名归一定要说出来。静默修正和静默投丢是同一种病 —— 发件方看不出区别。
+            String canonTo = mailboxService.canonicalRole(to);
+            if (to != null && canonTo != null && !canonTo.equalsIgnoreCase(to.trim())) {
+                sb.append("⚠️ 收件人「").append(to.trim()).append("」是别名，已归一为【")
+                  .append(canonTo).append("】后投递（历史老信的 to_role 未改动）。\n");
+            }
             sb.append("消息 #").append(m.getId()).append("，线程 ").append(m.getThreadId())
               .append("，类型 ").append(m.getMsgType());
             if (m.getInReplyTo() != null) sb.append("，回复 #").append(m.getInReplyTo());
