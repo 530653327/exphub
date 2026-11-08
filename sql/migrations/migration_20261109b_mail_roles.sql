@@ -179,8 +179,8 @@ JOIN mail_role_aliases a ON a.alias = c.role
 -- 解析器可能把 ON DUPLICATE 的 ON 当成 JOIN 条件。加一个 WHERE 明确结束 SELECT 部分。
 WHERE 1 = 1
 ON DUPLICATE KEY UPDATE
-    last_read_id = GREATEST(mail_cursors.last_read_id, VALUES(last_read_id)),
-    updated_at   = mail_cursors.updated_at;
+    last_read_id = GREATEST(last_read_id, VALUES(last_read_id)),
+    updated_at   = updated_at;
 
 DELETE c FROM mail_cursors c JOIN mail_role_aliases a ON a.alias = c.role;
 
