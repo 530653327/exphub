@@ -1,6 +1,7 @@
 package com.exphub.service;
 
 import com.exphub.entity.MailMessage;
+import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
 import com.exphub.mapper.MailCursorMapper;
 import com.exphub.mapper.MailMessageMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -8,7 +9,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,6 +106,58 @@ class MailboxRoleAliasTest {
         ReflectionTestUtils.setField(svc, "roleAliasesConfig", "a=b,b=c");
         assertEquals("b", svc.canonicalRole("a"), "多跳会让人猜不到最终落在哪，只允许一跳");
         assertEquals("c", svc.canonicalRole("b"));
+    }
+
+    @Test
+    @DisplayName("收件箱查询要带上历史别名：to_role=piyao 的老信仍能进貔貅(pixiu)收件箱")
+    void inboxQueryIncludesHistoricalAliasRows() {
+        // 2026-11-08 阁主 #119：只改 known-roles + 发信归一，历史行（#110 to_role=piyao）还是读不到
+        ReflectionTestUtils.setField(svc, "roleAliasesConfig", "piyao=pixiu");
+        List<Object> queriedRoles = new ArrayList<>();
+        when(msgMapper.selectList(any())).thenAnswer(inv -> {
+            AbstractWrapper<?, ?, ?> w = inv.getArgument(0);
+            // MP 3.5.7 的 Wrapper 是惰性的：不先算一次 SQL，参数还没落进 paramNameValuePairs
+            w.getSqlSegment();
+            queriedRoles.addAll(w.getParamNameValuePairs().values());
+            return List.of();
+        });
+
+        svc.inbox("pixiu", null, 20, true);
+
+        assertTrue(queriedRoles.contains("pixiu"), "正名要在查询里：" + queriedRoles);
+        assertTrue(queriedRoles.contains("piyao"),
+                "只查 pixiu 的话 #110 那封（to_role=piyao，至今没人读）永远归不到貔貅：" + queriedRoles);
+    }
+
+    @Test
+    @DisplayName("当事人自己用别名调用时，variants 落到同一组（大小写不敏感）")
+    void roleVariantsAreCanonicalised() {
+        ReflectionTestUtils.setField(svc, "roleAliasesConfig", "piyao=pixiu,yaci=yazi");
+        assertEquals(Set.of("pixiu", "piyao"), svc.roleVariants("PIYAO"));
+        assertEquals(Set.of("yazi", "yaci"), svc.roleVariants("yazi"));
+        assertEquals(Set.of("nobody"), svc.roleVariants(" nobody "),
+                "不认识的代号只返回自身，别凭空造别名");
+        assertTrue(svc.roleVariants(null).isEmpty());
+    }
+
+    @Test
+    @DisplayName("markProcessed 也要认别名，否则老信永远标不了「处理过」")
+    void markProcessedAcceptsAliasRows() {
+        ReflectionTestUtils.setField(svc, "roleAliasesConfig", "piyao=pixiu");
+        List<Object> whereValues = new ArrayList<>();
+        when(msgMapper.update(isNull(), any())).thenAnswer(inv -> {
+            AbstractWrapper<?, ?, ?> w = inv.getArgument(1);
+            // 同上：SET 与 WHERE 的参数都要先算一次 SQL 才会落进 map
+            w.getSqlSet();
+            w.getSqlSegment();
+            whereValues.addAll(w.getParamNameValuePairs().values());
+            return 1;
+        });
+
+        assertEquals(1, svc.markProcessed(110L, "pixiu"));
+
+        assertTrue(whereValues.contains("pixiu") && whereValues.contains("piyao"),
+                "更新条件要把别名一起带上：" + whereValues);
     }
 
     @Test

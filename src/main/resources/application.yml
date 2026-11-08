@@ -74,12 +74,17 @@ exphub:
   # mail_send 开新线程时校验收件人；实际可用代号 = 本表 ∪ 库里已出现过的 role（老角色即使这里漏写也认）
   # 新增助手：在这里加一个代号（小写英文），不用改代码。
   mail:
-    known-roles: zhulong,baize,gezhu,piyao,yaci,qilin,fenghuang,chongmingniao,jiuweihu,dijiang
+    known-roles: zhulong,baize,gezhu,pixiu,yazi,qilin,fenghuang,chongmingniao,jiuweihu,dijiang
     # 收件人别名 → 正名（发信时归一，历史老信的 to_role 不动）。
     # 为什么需要：known-roles 是「配置 ∪ 库里出现过的 role」，拼错但历史上真存在过的代号
     # （zhuolong，多一个 o）会被放行入库，而收件箱按 to_role 精确匹配 → 信在、没人收、全程无感。
     # 事故：#22 / #45 / #72 三封（2026-11-08 白泽查库、阁主 #76 批准归一）。
-    role-aliases: zhuolong=zhulong,zhulogn=zhulong,zhulon=zhulong,beize=baize,gezu=gezhu
+    #
+    # piyao / yaci（2026-11-08 阁主 #119，越哥已批）：上一版把貔貅/睚眦写成了 piyao/yaci，
+    # 而忆阁闸门与桥头身份用的是正名 pixiu/yazi → 两边名单对不上，yazi 被 ExpHub 拒、
+    # 貔貅也收不到新信。正名已改回；这两个拼写同时进别名表，历史行（#110 的 to_role=piyao）
+    # 不改数据，靠收件箱按别名并查归到正主。
+    role-aliases: zhuolong=zhulong,zhulogn=zhulong,zhulon=zhulong,beize=baize,gezu=gezhu,piyao=pixiu,yaci=yazi
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml

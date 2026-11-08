@@ -173,6 +173,25 @@ public class MailboxService {
         return mapped == null ? v : mapped;
     }
 
+    /**
+     * 某个代号「能收到什么」的全部写法 = 正名 ∪ 指向它的别名（小写）。
+     *
+     * <p><b>为什么光在发信时归一还不够（2026-11-08 阁主 #119）</b>：发信归一只能保证**新信**
+     * 落在正名下；历史行（如 #110 的 {@code to_role=piyao}）按「只追加不可改」原则不动，
+     * 而 {@code inbox()} 原本按 {@code to_role} 精确匹配 —— 只改配置的话，那封信照样烂在库里，
+     * 当事人永远看不见。所以读侧也要按别名并查。
+     */
+    public Set<String> roleVariants(String role) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        String canon = canonicalRole(role);
+        if (canon == null || canon.isBlank()) return out;
+        out.add(canon);
+        for (Map.Entry<String, String> e : roleAliases().entrySet()) {
+            if (canon.equals(e.getValue())) out.add(e.getKey());
+        }
+        return out;
+    }
+
     /** 收件人不合法时的拒绝文案：中文显示名要单独说清，不然对方下次还写中文。 */
     public String unknownRecipientMessage(String to) {
         String t = to == null ? "" : to.trim();
@@ -321,16 +340,18 @@ public class MailboxService {
     public List<Envelope> inbox(String role, String q, int limit, boolean includeRead) {
         if (role == null || role.isBlank()) return new ArrayList<>();
 
-        // 收件箱只关心「发给我的」
+        // 收件箱只关心「发给我的」；历史别名行（to_role=piyao）也要算进来（见 roleVariants）
+        Set<String> meVariants = roleVariants(role);
+        if (meVariants.isEmpty()) return new ArrayList<>();
         List<MailMessage> all = msgMapper.selectList(new QueryWrapper<MailMessage>()
-                .eq("to_role", role.trim())
+                .in("to_role", meVariants)
                 .orderByDesc("id")
                 .last("LIMIT " + SCAN_BATCH));
         if (all.isEmpty()) return new ArrayList<>();
 
         // 自己发的也算线程的一部分（不然回信时看不到自己上一封），单独查一次近期自己发的
         List<MailMessage> mine = msgMapper.selectList(new QueryWrapper<MailMessage>()
-                .eq("from_role", role.trim())
+                .in("from_role", meVariants)
                 .orderByDesc("id")
                 .last("LIMIT " + SCAN_BATCH));
 
@@ -442,11 +463,13 @@ public class MailboxService {
         return out;
     }
 
-    /** 全库未读计数（只展示，不参与推信）。 */
+    /** 全库未读计数（只展示，不参与推信）。历史别名行同样算我的（见 roleVariants）。 */
     public int unreadCount(String role) {
         if (role == null || role.isBlank()) return 0;
+        Set<String> meVariants = roleVariants(role);
+        if (meVariants.isEmpty()) return 0;
         List<MailMessage> all = msgMapper.selectList(new QueryWrapper<MailMessage>()
-                .eq("to_role", role.trim()).orderByDesc("id").last("LIMIT " + SCAN_BATCH));
+                .in("to_role", meVariants).orderByDesc("id").last("LIMIT " + SCAN_BATCH));
         int n = 0;
         for (MailMessage m : all) {
             if (m.getId() > cursorOf(role.trim(), m.getThreadId())) n++;
@@ -498,9 +521,11 @@ public class MailboxService {
      */
     public int markProcessed(Long messageId, String role) {
         if (messageId == null || role == null || role.isBlank()) return 0;
+        Set<String> meVariants = roleVariants(role);
+        if (meVariants.isEmpty()) return 0;
         return msgMapper.update(null, new UpdateWrapper<MailMessage>()
                 .eq("id", messageId)
-                .eq("to_role", role.trim())
+                .in("to_role", meVariants)
                 .isNull("processed_at")
                 .set("processed_at", LocalDateTime.now()));
     }
