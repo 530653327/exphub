@@ -57,11 +57,21 @@ fi
 
 # 1. 拉取最新代码
 #
-# ⚠️ 2026-10-29 结构修正（阁主验收意见）：根因是这个脚本**自己就在要被 reset 的仓库里**。
+# ⚠️ 2026-10-29 结构修正（阁主验收意见）：根因是这个脚本**自己就在要被同步的仓库里**。
 # 自重入（下面那段）是把补丁做对了，但补丁不该是常态机制 ——
 # 现在推荐用仓库外入口：/opt/deploy/exphub-run.sh，它先 git 同步、再带着 EXPHUB_SKIP_PULL=1
-# 调本脚本。入口文件不在仓库里，永远不会被 reset 替换，也就没有 inode 问题。
+# 调本脚本。入口文件不在仓库里，永远不会被同步替换，也就没有 inode 问题。
 # 直接 `bash deploy.sh` 仍然可用（兼容旧习惯），此时靠自重入兜底。
+#
+# ⚠️ 2026-11-09 阁主派单 T261109062914-652：这里原来有一行 `git reset --hard origin/master`，
+#    2026-11-09 已清掉，**不许加回来**。它的作用是「让服务器工作区等于 origin/master」，
+#    但实现方式是**无条件丢弃本地改动**：服务器上任何未提交的东西（热修过的 migration .sql、
+#    临时排查补丁、手改的配置）都会被静默抹掉。它不碰 schema_migrations（那是库表），
+#    所以并不存在「把已完成迁移打回 NOT_STARTED」这回事；迁移重跑的真实原因是
+#    「失败的文件没记账」或「文件 md5 与记账不一致」。
+#    现在改成两条：① 工作区有未提交改动 → 明拒（不静默丢东西）；
+#              ② 干净工作区 → 只允许 git merge --ff-only（本地有提交/历史分叉也明拒）。
+#    对齐 #9c「不许静默修正非法状态」：宁可部署失败得刺眼，也不要成功得可疑。
 DEPLOY_STEP="1/5 拉取代码"
 if [ "${EXPHUB_SKIP_PULL:-0}" = "1" ]; then
     echo "[1/5] 跳过拉取（外部入口已 git 同步：$(git log -1 --format='%h %s')）"
@@ -69,10 +79,36 @@ else
     echo "[1/5] 拉取最新代码..."
     git fetch --all
     SELF_SUM_BEFORE=$(md5sum "$0" | cut -d' ' -f1)
-    git reset --hard origin/master
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+        echo "=========================================="
+        echo "❌ 部署中止：[1/5] 服务器工作区有未提交的改动，拒绝自动覆盖"
+        echo "   旧行为是无条件覆盖工作区（可能抹掉线上热修）；现在不静默处理"
+        echo "   下面这些文件会被覆盖。确认无用就 git checkout -- <文件>，要保留就先提交或备份"
+        git status --porcelain --untracked-files=no | head -20
+        echo "=========================================="
+        exit 1
+    fi
+    if ! git merge --ff-only origin/master; then
+        echo "=========================================="
+        echo "❌ 部署中止：[1/5] 无法快进到 origin/master（本地有提交或历史已分叉）"
+        echo "   不会自动 reset / 强并本地提交；先人工确认这些提交是否要保留"
+        echo "=========================================="
+        exit 1
+    fi
+    # ⚠️ --ff-only 不够：当本地 HEAD 已经包含 origin/master（本地提交在前）时，
+    #    git 认为「Already up to date」直接返回 0，本地提交会被**静默保留并部署**。
+    #    所以必须再比一次 HEAD 与 origin/master，不一致就明拒。
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]; then
+        echo "=========================================="
+        echo "❌ 部署中止：[1/5] 本地 HEAD 与 origin/master 不一致（本地有提交或历史已分叉）"
+        echo "   本次要部署的必须是 origin/master；这些本地提交 origin 里没有："
+        git log --oneline origin/master..HEAD | head -10
+        echo "=========================================="
+        exit 1
+    fi
     SELF_SUM_AFTER=$(md5sum "$0" | cut -d' ' -f1)
 
-    # ⚠️ 自重入（2026-10-29 实测踩到）：bash 是按需读取脚本文件的，[1/5] 的 reset 会把
+    # ⚠️ 自重入（2026-10-29 实测踩到）：bash 是按需读取脚本文件的，[1/5] 的 git 同步会把
     # deploy.sh 换成新 inode，但**当前 bash 仍从旧文件继续读** —— 于是「改了这个脚本的
     # 那次部署」跑的是旧逻辑，本次改动要到下一次部署才生效。
     # 2026-10-28 加版本表那次就是这样：第一次部署输出「7 个迁移全跑」，但 schema_migrations
