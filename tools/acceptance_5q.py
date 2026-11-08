@@ -32,6 +32,7 @@
     python3 tools/acceptance_5q.py --top 20     # C75 的统计窗口
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -118,7 +119,10 @@ def parse_receipt(text):
         return rows, proc
     in_proc = False
     for line in text.split('\n'):
-        if '过程记录里也命中' in line:
+        # ⚠️ 必须匹配段头那行（📝 开头），不能只匹配「过程记录里也命中」——
+        #    首行的作用域说明里就写着「…或在结果末尾的『过程记录里也命中』找」，
+        #    用它判段会把整张 explain 表当成补位段（第一版就是这么静默丢光的）。
+        if line.strip().startswith('📝 过程记录里也命中'):
             in_proc = True
             continue
         if in_proc:
@@ -159,7 +163,12 @@ def capture(key, limit, path):
     for q, _expect, _note, _counted in CASES:
         text = call_explain(q, key, limit)
         rows, proc = parse_receipt(text)
-        results.append(dict(query=q, rows=rows, process=proc, receipt=text))
+        # 只留「判定要用的数字」+ 回执头（口径行）。完整回执里含别人的文档标题/摘要，
+        # 这个仓库可能有公开远端，快照进 git 不能把内部内容一起搬出去；
+        # sha256 留作「这份快照确实来自那次回执」的凭证，复跑不依赖它。
+        results.append(dict(query=q, rows=rows, process=proc,
+                            receipt_head=text[:600],
+                            receipt_sha256=hashlib.sha256(text.encode('utf-8')).hexdigest()))
         print('  已取: %-28s 主排名 %d 条 / 补位 %d 条'
               % (q, len(rows), len(proc)))
     payload = dict(saved_at=_now(), limit=limit, results=results)

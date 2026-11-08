@@ -478,6 +478,12 @@ def main():
         live_rows, live_text = live_explain(query, api_key, a.top or 30)
         if live_rows:
             live = [r['id'] for r in live_rows]
+            # 历史口径（10/33、23/33）里的 33 = 主排名 30 + 补位段 3：
+            # 旧 live_ids 是从整份回执里抓所有【ID:】，补位段也在内。复刻那侧本来也不排除
+            # 过程记录，所以对账必须两边同口径，否则「33」会变成「30」，数字就没法比。
+            if '📝 过程记录里也命中' in live_text:
+                tail = live_text.split('📝 过程记录里也命中')[-1]
+                live += [int(x) for x in re.findall(r'【ID:(\d+)】', tail)]
             mine = [d['id'] for d in rows[:len(live)]]
             same = sum(1 for x, y in zip(live, mine) if x == y)
             bad = [r for r in live_rows
