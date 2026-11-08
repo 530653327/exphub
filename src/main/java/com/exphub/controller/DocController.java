@@ -102,6 +102,46 @@ public class DocController {
         return R.ok(data);
     }
 
+    // 问题文档（移动端 /m/problems 用）
+    // 5 类的筛选条件集中在 DocService.problemWrapper，与 PC 的 /docs?problem= 同源 ——
+    // 这样「看板上的数」和「点进来筛出的条数」不会各算各的。
+    @GetMapping("/problems")
+    public R<Map<String, Object>> problems(
+            @RequestParam String type,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        if (!DocService.isProblemType(type)) {
+            return R.fail("未知的问题类型：" + type);
+        }
+        Page<Doc> result = docService.listProblems(type, page, size);
+
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("type", type);
+        data.put("total", result.getTotal());
+        data.put("page", result.getCurrent());
+        data.put("size", result.getSize());
+        data.put("pages", result.getPages());
+        data.put("counts", docService.countProblemDocsByType(DocService.STALE_DAYS));
+        data.put("staleDays", DocService.STALE_DAYS);
+        data.put("list", result.getRecords().stream().map(doc -> {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("id", doc.getId());
+            m.put("title", doc.getTitle());
+            m.put("category", doc.getCategory());
+            m.put("authorName", doc.getAuthorName());
+            m.put("summary", doc.getSummary());
+            m.put("status", doc.getStatus());
+            m.put("flags", doc.getFlags());
+            m.put("deleteReason", doc.getDeleteReason());
+            m.put("lastVerifiedAt", doc.getLastVerifiedAt());
+            m.put("supersededBy", doc.getSupersededBy());
+            m.put("updatedAt", doc.getUpdatedAt());
+            m.put("contentLength", doc.getContent() == null ? 0 : doc.getContent().length());
+            return m;
+        }).collect(Collectors.toList()));
+        return R.ok(data);
+    }
+
     // 待删队列（移动端 /m/pending 用）
     // 为什么单开一个端点而不复用 /search：search 是「按相关度找经验」，语义是检索；
     // 待删队列是「按时间列出等我确认的东西」，语义是清单。混在一起以后一定会有人给 search 加排序参数，

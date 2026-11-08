@@ -129,10 +129,16 @@ public class PageController extends BaseController {
                        @RequestParam(required = false) String status,
                        @RequestParam(required = false) String flag,
                        @RequestParam(required = false) String view,
+                       @RequestParam(required = false) String problem,
                        @RequestParam(defaultValue = "1") int page,
                        Model model, HttpServletRequest request) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
+
+        // 问题文档视图（2026-11-08）：stale / superseded / flagged / pending_delete / broken
+        // 只认白名单值，非法值当没传 —— 否则拼错一个词会静默返回全部文档，看着像"筛出来了"
+        String problemType = (problem != null && DocService.isProblemType(problem.trim().toLowerCase()))
+                ? problem.trim().toLowerCase() : "";
 
         addContextPath(model, request);
         model.addAttribute("active", "docs");
@@ -142,9 +148,13 @@ public class PageController extends BaseController {
         model.addAttribute("status", status != null ? status : "");
         model.addAttribute("flag", flag != null ? flag : "");
         model.addAttribute("view", view != null ? view : "");
+        model.addAttribute("problem", problemType);
 
         Page<Doc> result;
-        if (keyword != null && !keyword.trim().isEmpty()) {
+        if (!problemType.isEmpty()) {
+            // 问题视图优先：它的判据（如超期、被取代）用 status/flag 参数表达不出来
+            result = docService.listProblems(problemType, page, 20);
+        } else if (keyword != null && !keyword.trim().isEmpty()) {
             String kw = keyword.trim();
             // 如果输入的是纯数字，先尝试按 ID 精确查找
             try {
@@ -187,6 +197,14 @@ public class PageController extends BaseController {
         model.addAttribute("totalRows", result.getTotal());
         // 压缩页码窗口：首尾各1页 + 当前页前后各2页，中间用省略号分隔（0 作占位）
         model.addAttribute("pageNumbers", paginationWindow(curPage, totalPages));
+
+        // 问题文档 5 类计数：既做 Tab 角标，也做子分类的数字。
+        // 注意口径 —— 同一篇可能命中多类（既超期又被 flag），所以各项之和 != 去重后的文档数。
+        java.util.Map<String, Long> problemCounts = docService.countProblemDocsByType(DocService.STALE_DAYS);
+        model.addAttribute("problemCounts", problemCounts);
+        model.addAttribute("problemTotal",
+                problemCounts.values().stream().mapToLong(Long::longValue).sum());
+        model.addAttribute("staleDays", DocService.STALE_DAYS);
 
         // M10：待删数量用于顶部入口的角标（AI 标记后用户能看到「有几条等确认」）
         model.addAttribute("pendingDeleteCount",

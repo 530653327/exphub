@@ -1875,6 +1875,73 @@ public class DocService {
         return countProblemDocsByType(missedDays).values().stream().mapToLong(Long::longValue).sum();
     }
 
+    // ===== 问题文档（2026-11-08）=====
+    // 看板上「问题文档 N」这个数字一直是「看得见、点不进去」——5 类风险里只有 3 类有入口，
+    // 超期未验证与被取代根本筛不出来。这里把 5 类的条件集中成一份，PC 与移动端共用，
+    // 避免又出现「同一个指标两套口径」的老问题。
+
+    public static final String PROBLEM_STALE = "stale";
+    public static final String PROBLEM_SUPERSEDED = "superseded";
+    public static final String PROBLEM_FLAGGED = "flagged";
+    public static final String PROBLEM_PENDING_DELETE = "pending_delete";
+    public static final String PROBLEM_BROKEN = "broken";
+
+    /** 「超期未验证」的天数阈值。必须与 DocMapper.countProblemDocsByType 的入参同源，否则数字对不上。 */
+    public static final int STALE_DAYS = 90;
+
+    public static boolean isProblemType(String type) {
+        return PROBLEM_STALE.equals(type) || PROBLEM_SUPERSEDED.equals(type)
+                || PROBLEM_FLAGGED.equals(type) || PROBLEM_PENDING_DELETE.equals(type)
+                || PROBLEM_BROKEN.equals(type);
+    }
+
+    /**
+     * 某一类问题文档的分页查询。
+     *
+     * <p><b>排序是这里最容易做错的地方</b>：
+     * <ul>
+     *   <li>超期未验证按 {@code last_verified_at} <b>升序</b> —— 最久没确认的排最前。
+     *       MySQL 升序时 NULL 排在最前，正好把「从未验证过」的顶上来，这是对的。</li>
+     *   <li>其余按 {@code updated_at} 降序 —— 最近被动过的先看。</li>
+     * </ul>
+     */
+    public Page<Doc> listProblems(String type, int page, int size) {
+        QueryWrapper<Doc> wrapper = problemWrapper(type);
+        if (wrapper == null) {
+            return new Page<>(page, size);
+        }
+        return docMapper.selectPage(new Page<>(page, size), wrapper);
+    }
+
+    /**
+     * 5 类问题的筛选条件。<b>改这里必须同时改 {@link DocMapper#countProblemDocsByType(int)}</b>，
+     * 否则「看板上的数」与「筛出来的条数」会对不上 —— 这类不一致查起来极费劲。
+     *
+     * @return 未知类型返回 null（调用方按空结果处理，不要静默变成「全部文档」）
+     */
+    public QueryWrapper<Doc> problemWrapper(String type) {
+        QueryWrapper<Doc> w = new QueryWrapper<>();
+        if (PROBLEM_STALE.equals(type)) {
+            // 与 SQL 的 DATE_SUB(CURDATE(), INTERVAL 90 DAY) 对齐：用「今天 0 点往前 90 天」，
+            // 不要用 LocalDateTime.now().minusDays(90) —— 那是精确到秒的，边界上会多算或少算几小时。
+            java.time.LocalDateTime cutoff = java.time.LocalDate.now().minusDays(STALE_DAYS).atStartOfDay();
+            w.eq("status", "ACTIVE")
+                    .and(q -> q.isNull("last_verified_at").or().lt("last_verified_at", cutoff))
+                    .orderByAsc("last_verified_at");
+        } else if (PROBLEM_SUPERSEDED.equals(type)) {
+            w.isNotNull("superseded_by").orderByDesc("updated_at");
+        } else if (PROBLEM_FLAGGED.equals(type)) {
+            w.isNotNull("flags").ne("flags", "").orderByDesc("updated_at");
+        } else if (PROBLEM_PENDING_DELETE.equals(type)) {
+            w.eq("status", PENDING_DELETE).orderByDesc("updated_at");
+        } else if (PROBLEM_BROKEN.equals(type)) {
+            w.eq("status", "BROKEN").orderByDesc("updated_at");
+        } else {
+            return null;
+        }
+        return w;
+    }
+
     /**
      * 分类的问题文档计数。type ∈ BROKEN / PENDING_DELETE / SUPERSEDED / FLAGGED / STALE。
      * 同一篇可能命中多类（如超期 + flag），分类计数会重复计入，总量 {@link #countProblemDocs(int)} 亦然。

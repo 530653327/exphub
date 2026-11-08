@@ -77,6 +77,14 @@ public class MobileController {
         return "m/users";
     }
 
+    @GetMapping("/problems")
+    public String problems(HttpSession session, Model model) {
+        markMobile(session);
+        model.addAttribute("title", "问题文档");
+        model.addAttribute("activeTab", "dashboard");
+        return "m/problems";
+    }
+
     @GetMapping("/me")
     public String me(HttpSession session, Model model) {
         markMobile(session);

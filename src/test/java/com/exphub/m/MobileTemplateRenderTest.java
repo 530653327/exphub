@@ -44,7 +44,7 @@ class MobileTemplateRenderTest {
 
     /** 五个移动页 + 各自需要的模型变量。新增移动页必须加进来，否则它永远没人渲染过。 */
     private static final List<String> TEMPLATES = List.of(
-            "m/login", "m/dashboard", "m/pending", "m/tools", "m/users", "m/me"
+            "m/login", "m/dashboard", "m/pending", "m/tools", "m/users", "m/problems", "m/me"
     );
 
     private static SpringTemplateEngine engine() {
@@ -178,6 +178,23 @@ class MobileTemplateRenderTest {
         for (String href : List.of("/m/dashboard", "/m/pending", "/m/tools", "/m/users", "/m/me")) {
             assertTrue(html.contains(href), "底部导航缺入口：" + href);
         }
+    }
+
+    @Test
+    @DisplayName("problems 页必须覆盖 5 类，且看板的「问题文档」卡要能点进来")
+    void problemsCoverAllTypes() {
+        String html = engine().process("m/problems", context());
+
+        assertTrue(html.contains("/api/docs/problems"), "问题文档页没有调用 /api/docs/problems");
+        // 5 类一个都不能少：少一类就等于那类问题又变成「看得见点不进去」
+        for (String t : List.of("pending_delete", "broken", "superseded", "flagged", "stale")) {
+            assertTrue(html.contains("'" + t + "'"), "问题文档页缺分类：" + t);
+        }
+
+        String dash = engine().process("m/dashboard", context());
+        // 断言渲染后的 URL，不是 th:href 原文 —— 模板渲染过之后属性已经变成普通 href 了
+        assertTrue(dash.contains("/m/problems"),
+                "看板的「问题文档」卡没有链接到 /m/problems —— 那 105 就还是个死数字");
     }
 
     @Test

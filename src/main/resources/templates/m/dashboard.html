@@ -40,11 +40,12 @@
 
         <div class="h2">质量与风险</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div class="card" style="margin:0">
-                <div class="muted">问题文档</div>
+            <!-- 这张卡可点：数字看得见却点不进去，是之前最大的可用性缺口 -->
+            <a class="card" th:href="@{/m/problems}" style="margin:0;display:block">
+                <div class="muted">问题文档 ›</div>
                 <div class="num" id="m-problemDocs" style="color:var(--warn)">—</div>
                 <div class="muted">超期/取代/待删/异常</div>
-            </div>
+            </a>
             <div class="card" style="margin:0">
                 <div class="muted">超 90 天未验证</div>
                 <div class="num" id="m-staleDocs" style="color:var(--warn)">—</div>

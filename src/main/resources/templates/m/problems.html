@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('问题文档')}"></head>
+<body>
+<div class="page">
+    <div class="row-between" style="margin-bottom:12px">
+        <div class="grow">
+            <a th:href="@{/m/dashboard}" class="muted" style="font-size:13px">‹ 返回看板</a>
+            <div class="h1" style="margin:2px 0 0">问题文档</div>
+        </div>
+        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
+    </div>
+
+    <!-- 5 个分类横向滚动：360px 宽放不下 5 个 chip，竖着换行会把列表挤到第二屏以后 -->
+    <div class="row" id="typeBar" style="gap:8px;margin-bottom:10px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px">
+        <!-- chip 由 JS 渲染，计数来自接口 -->
+    </div>
+
+    <div class="muted" id="typeHint" style="margin:0 2px 10px;font-size:12px">—</div>
+
+    <div class="card" id="errBox" style="display:none;border:1px solid var(--danger)">
+        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">加载失败</div>
+        <div class="muted" id="errMsg" style="word-break:break-all"></div>
+        <button class="btn ghost" style="margin-top:10px" id="retryBtn">重试</button>
+    </div>
+
+    <div id="list"></div>
+    <div id="hint" class="muted" style="text-align:center;padding:14px 0;display:none"></div>
+    <div id="sentinel" style="height:1px"></div>
+</div>
+
+<nav th:replace="~{m/layout :: tabbar('dashboard')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+
+<script th:inline="javascript">
+    // contextPath 用 @{/}（不要用 servlet 请求对象，Thymeleaf 3.1 下为 null 会炸模板）
+    var CTX = /*[[@{/}]]*/ '/';
+    CTX = CTX.replace(/\/$/, '');
+
+    // 与 DocService 的 5 个常量一一对应。顺序按「最该先处理」排：
+    // 待删和已失效是明确的坏数据，超期未验证只是一段时间没确认，优先级低一些。
+    var TYPES = [
+        { k: 'pending_delete', name: '待删', hint: 'AI 标了待删，等你确认后才会真删', countKey: 'PENDING_DELETE' },
+        { k: 'broken', name: '已失效', hint: '状态被置为已失效，正文不可用', countKey: 'BROKEN' },
+        { k: 'superseded', name: '被取代', hint: '已有新版本指向它，旧结论可能误导人', countKey: 'SUPERSEDED' },
+        { k: 'flagged', name: '被打标记', hint: '被标过重复 / 低质 / 需复核', countKey: 'FLAGGED' },
+        { k: 'stale', name: '超期未验证', hint: '正常状态，但很久没人确认它还成立', countKey: 'STALE' }
+    ];
+
+    var curType = 'stale';
+    var page = 1, pages = 1, loading = false;
+    var counts = {};
+    var staleDays = 90;
+    var expanded = {};
+
+    function esc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/[&<>"']/g, function (c) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+            });
+    }
+
+    function num(v) {
+        if (v === null || v === undefined || v === '') return '0';
+        var n = Number(v);
+        return isNaN(n) ? String(v) : n.toLocaleString('zh-CN');
+    }
+
+    function fmtDate(s, emptyText) {
+        if (!s) return emptyText || '—';
+        var t = String(s).replace('T', ' ');
+        return t.length >= 10 ? t.substring(0, 10) : t;
+    }
+
+    function setText(id, t) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = t;
+    }
+
+    function showError(msg) {
+        setText('errMsg', msg);
+        document.getElementById('errBox').style.display = 'block';
+    }
+
+    function renderTypes() {
+        var bar = document.getElementById('typeBar');
+        bar.innerHTML = TYPES.map(function (t) {
+            var active = t.k === curType;
+            return '<button class="btn ghost' + (active ? ' chip active' : '') + '" data-type="' + t.k + '"'
+                + ' style="flex:0 0 auto;padding:8px 12px;font-size:13px;min-height:34px;white-space:nowrap">'
+                + t.name + ' <span style="opacity:.75">' + num(counts[t.countKey]) + '</span>'
+                + '</button>';
+        }).join('');
+
+        bar.querySelectorAll('[data-type]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var t = btn.getAttribute('data-type');
+                if (t === curType) return;
+                curType = t;
+                renderTypes();
+                load(true);
+            });
+        });
+
+        var meta = TYPES.filter(function (t) { return t.k === curType; })[0];
+        setText('typeHint', meta ? meta.hint : '');
+    }
+
+    /** 每类问题要摊开的信息不同：看「超期」时最想知道上次验证是什么时候，看「被取代」时最想知道指向谁 */
+    function extraHtml(d) {
+        if (curType === 'stale') {
+            return '<div class="muted" style="margin-top:6px;font-size:12px">'
+                + (d.lastVerifiedAt
+                    ? '最后验证 ' + fmtDate(d.lastVerifiedAt)
+                    : '<span style="color:var(--warn)">从未验证过</span>')
+                + ' · 最后修改 ' + fmtDate(d.updatedAt)
+                + '</div>';
+        }
+        if (curType === 'superseded') {
+            return '<div class="muted" style="margin-top:6px;font-size:12px">'
+                + '已被 #' + esc(d.supersededBy) + ' 取代</div>';
+        }
+        if (curType === 'flagged') {
+            return '<div style="margin-top:8px;background:var(--card-2);border-radius:10px;padding:9px 11px">'
+                + '<div class="muted" style="margin-bottom:2px;font-size:12px">标记</div>'
+                + '<div style="font-size:13px">' + esc(d.flags || '—') + '</div></div>';
+        }
+        if (curType === 'pending_delete') {
+            return '<div style="margin-top:8px;background:var(--card-2);border-radius:10px;padding:9px 11px">'
+                + '<div class="muted" style="margin-bottom:2px;font-size:12px">待删原因</div>'
+                + '<div style="font-size:13px">' + esc(d.deleteReason || '（标记时未写原因）') + '</div></div>';
+        }
+        return '';
+    }
+
+    function cardHtml(d) {
+        var statusBadge = '';
+        if (d.status === 'BROKEN') statusBadge = '<span class="tag danger">已失效</span>';
+        else if (d.status === 'PENDING_DELETE') statusBadge = '<span class="tag danger">待删</span>';
+        else if (d.supersededBy) statusBadge = '<span class="tag warn">被取代</span>';
+
+        return '<div class="card" data-id="' + d.id + '">'
+            + '<div class="row-between" style="gap:8px">'
+            + '<div class="grow ell" style="font-weight:600;line-height:1.4">' + esc(d.title || '（无标题）') + '</div>'
+            + statusBadge
+            + '</div>'
+            + '<div class="muted" style="margin-top:4px;font-size:12px">#'
+            + d.id + ' · ' + esc(d.category || '未分类')
+            + ' · ' + esc(d.authorName || '—')
+            + ' · ' + num(d.contentLength) + ' 字</div>'
+            + (d.summary ? '<div class="clamp2" style="margin-top:8px;font-size:14px">' + esc(d.summary) + '</div>' : '')
+            + extraHtml(d)
+            + '<div id="body-' + d.id + '" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">'
+            + '<div style="white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.65"></div></div>'
+            + '<button class="btn ghost" style="margin-top:12px;padding:9px 12px;font-size:14px;min-height:40px" '
+            + 'data-act="view" data-id="' + d.id + '">看正文</button>'
+            + '</div>';
+    }
+
+    function getJson(url) {
+        return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+            if (r.status === 401 || r.status === 403) throw new Error('登录已过期，请重新登录（HTTP ' + r.status + '）');
+            if (!r.ok) throw new Error('服务端返回 HTTP ' + r.status);
+            return r.json();
+        }).then(function (res) {
+            if (res.code !== 0) throw new Error(res.message || '接口返回失败');
+            return res.data;
+        });
+    }
+
+    function load(reset) {
+        if (loading) return;
+        loading = true;
+        document.getElementById('errBox').style.display = 'none';
+
+        if (reset) {
+            page = 1;
+            pages = 1;
+            document.getElementById('list').innerHTML = '';
+            document.getElementById('list').innerHTML = '<div class="empty">加载中…</div>';
+        }
+
+        getJson(CTX + '/api/docs/problems?type=' + curType + '&page=' + page + '&size=20')
+            .then(function (d) {
+                counts = d.counts || {};
+                staleDays = d.staleDays || 90;
+                pages = d.pages || 1;
+
+                // 计数变了要重画 chip（否则第一次进来数字全是 0）
+                renderTypes();
+
+                var rows = d.list || [];
+                if (reset) document.getElementById('list').innerHTML = '';
+                if (rows.length) {
+                    document.getElementById('list').insertAdjacentHTML('beforeend', rows.map(cardHtml).join(''));
+                } else if (page === 1) {
+                    document.getElementById('list').innerHTML =
+                        '<div class="empty">这一类的没有问题文档</div>';
+                }
+
+                var hint = document.getElementById('hint');
+                if (page < pages) {
+                    hint.style.display = 'block';
+                    hint.textContent = '继续下滑加载更多…';
+                } else {
+                    hint.style.display = 'none';
+                }
+            })
+            .catch(function (e) {
+                showError(e.message || String(e));
+                if (reset) document.getElementById('list').innerHTML = '';
+            })
+            .then(function () {
+                loading = false;
+            });
+    }
+
+    function toggleBody(id, btn) {
+        var box = document.getElementById('body-' + id);
+        if (expanded[id]) {
+            var open = box.style.display !== 'none';
+            box.style.display = open ? 'none' : 'block';
+            btn.textContent = open ? '看正文' : '收起';
+            return;
+        }
+        btn.textContent = '加载中…';
+        btn.disabled = true;
+
+        getJson(CTX + '/api/docs/' + id).then(function (d) {
+            box.querySelector('div').textContent = (d && d.content) || '（正文为空）';
+            box.style.display = 'block';
+            expanded[id] = true;
+            btn.textContent = '收起';
+        }).catch(function (e) {
+            btn.textContent = '看正文';
+            showError('读正文失败：' + (e.message || e));
+        }).then(function () {
+            btn.disabled = false;
+        });
+    }
+
+    document.getElementById('list').addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-act="view"]');
+        if (!btn) return;
+        toggleBody(btn.getAttribute('data-id'), btn);
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', function () { load(true); });
+    document.getElementById('retryBtn').addEventListener('click', function () { load(true); });
+
+    if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) {
+            if (!entries[0].isIntersecting) return;
+            if (loading || page >= pages) return;
+            page += 1;
+            load(false);
+        }, { rootMargin: '200px' }).observe(document.getElementById('sentinel'));
+    }
+
+    renderTypes();
+    load(true);
+</script>
+</body>
+</html>

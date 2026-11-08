@@ -95,7 +95,9 @@
         </div>
 
         <!-- 第二层：过滤工具栏（搜索 + 类型 + 状态） -->
-        <div class="card mb-3" th:if="${view != 'candidates'}">
+        <!-- 问题文档视图下隐藏这套筛选：它的判据（超期/被取代）用 status/flag 表达不出来，
+             摆在这里只会让人以为是筛出来的，其实一改就把 problem 丢了 -->
+        <div class="card mb-3" th:if="${view != 'candidates' and (problem == null or problem == '')}">
             <div class="card-body py-3 d-flex align-items-center" style="gap:10px;flex-wrap:wrap;">
                 <div class="input-group" style="flex:1;min-width:240px;">
                     <input type="text" class="form-control" placeholder="搜索标题 / ID / 摘要 / 标签..." id="searchInput" th:value="${keyword}">
@@ -132,7 +134,7 @@
         <div class="card">
             <div class="card-header px-3 py-0 d-flex" style="gap:2px;border-bottom:1px solid #f0f0f0;">
                 <a th:href="@{/docs(keyword=${keyword}, templateType=${templateType})}"
-                   th:classappend="${status != 'PENDING_DELETE' and flag != 'needs_review' and view != 'candidates'} ? 'active'"
+                   th:classappend="${status != 'PENDING_DELETE' and flag != 'needs_review' and view != 'candidates' and (problem == null or problem == '')} ? 'active'"
                    class="nav-tab">全部</a>
                 <a th:href="@{/docs(flag='needs_review')}" th:classappend="${flag == 'needs_review'} ? 'active'" class="nav-tab">
                     待复核
@@ -146,6 +148,40 @@
                     待删
                     <span class="badge badge-danger ml-1" th:if="${pendingDeleteCount != null and pendingDeleteCount > 0}" th:text="${pendingDeleteCount}">0</span>
                 </a>
+                <a th:href="@{/docs(problem='stale')}"
+                   th:classappend="${problem != null and problem != ''} ? 'active'" class="nav-tab">
+                    问题文档
+                    <span class="badge badge-danger ml-1"
+                          th:if="${problemTotal != null and problemTotal > 0}" th:text="${problemTotal}">0</span>
+                </a>
+            </div>
+
+            <!-- 问题文档的 5 个分类。计数口径提醒：同一篇可能命中多类，各项之和会大于去重后的文档数 -->
+            <div th:if="${problem != null and problem != ''}"
+                 class="px-3 py-2 d-flex align-items-center" style="gap:8px;flex-wrap:wrap;">
+                <a class="btn btn-sm" th:classappend="${problem == 'stale'} ? 'btn-danger' : 'btn-outline-secondary'"
+                   th:href="@{/docs(problem='stale')}" th:title="'正常状态但超过 ' + ${staleDays} + ' 天没被确认过'">
+                    超期未验证 <span class="badge badge-light ml-1" th:text="${problemCounts['STALE']} ?: 0">0</span>
+                </a>
+                <a class="btn btn-sm" th:classappend="${problem == 'superseded'} ? 'btn-danger' : 'btn-outline-secondary'"
+                   th:href="@{/docs(problem='superseded')}" title="已经有新版本指向它">
+                    被取代 <span class="badge badge-light ml-1" th:text="${problemCounts['SUPERSEDED']} ?: 0">0</span>
+                </a>
+                <a class="btn btn-sm" th:classappend="${problem == 'flagged'} ? 'btn-danger' : 'btn-outline-secondary'"
+                   th:href="@{/docs(problem='flagged')}" title="有人或机器给它打过标记">
+                    被打标记 <span class="badge badge-light ml-1" th:text="${problemCounts['FLAGGED']} ?: 0">0</span>
+                </a>
+                <a class="btn btn-sm" th:classappend="${problem == 'pending_delete'} ? 'btn-danger' : 'btn-outline-secondary'"
+                   th:href="@{/docs(problem='pending_delete')}" title="标记待删，等你确认">
+                    待删 <span class="badge badge-light ml-1" th:text="${problemCounts['PENDING_DELETE']} ?: 0">0</span>
+                </a>
+                <a class="btn btn-sm" th:classappend="${problem == 'broken'} ? 'btn-danger' : 'btn-outline-secondary'"
+                   th:href="@{/docs(problem='broken')}" title="状态被置为已失效">
+                    已失效 <span class="badge badge-light ml-1" th:text="${problemCounts['BROKEN']} ?: 0">0</span>
+                </a>
+                <span class="text-muted ml-2" style="font-size:0.8rem;">
+                    同一篇可能命中多类，合计会大于文档数
+                </span>
             </div>
 
         <!-- D1 施工包 3：整理候选队列。判断只打标记 / 写指针，界面里没有「合并」「删除」按钮 -->
@@ -238,6 +274,11 @@
                                 <i class="fas fa-user ml-2 mr-1"></i><span th:text="${doc.authorName}">-</span>
                                 <i class="fas fa-folder ml-3 mr-1"></i><span th:text="${doc.category ?: '未分类'}">-</span>
                                 <i class="fas fa-clock ml-3 mr-1"></i><span th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}">-</span>
+                                <!-- 最后验证时间：筛「超期未验证」时，不给这一列等于让人自己数日子 -->
+                                <i class="fas fa-check-circle ml-3 mr-1"></i>
+                                <span th:if="${doc.lastVerifiedAt != null}"
+                                      th:text="'验证 ' + ${#temporals.format(doc.lastVerifiedAt, 'yyyy-MM-dd')}">-</span>
+                                <span th:if="${doc.lastVerifiedAt == null}" class="text-warning">从未验证</span>
                                 <i class="fas fa-eye ml-3 mr-1"></i><span th:text="${doc.callCount}">0</span>次调用
                                 <span class="badge badge-version ml-2" th:title="'当前版本：v' + ${doc.version}">v<span th:text="${doc.version}">1</span></span>
                             </div>
@@ -303,15 +344,15 @@
                 <nav>
                     <ul class="pagination justify-content-center mb-0">
                         <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${currentPage - 1})}">&laquo; 上一页</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, problem=${problem}, page=${currentPage - 1})}">&laquo; 上一页</a>
                         </li>
                         <li class="page-item" th:each="i : ${pageNumbers}"
                             th:classappend="${i != 0 and i == currentPage} ? 'active'">
-                            <a th:if="${i != 0}" class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${i})}" th:text="${i}">1</a>
+                            <a th:if="${i != 0}" class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, problem=${problem}, page=${i})}" th:text="${i}">1</a>
                             <span th:if="${i == 0}" class="page-link disabled-link text-muted">&hellip;</span>
                         </li>
                         <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled'">
-                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, page=${currentPage + 1})}">下一页 &raquo;</a>
+                            <a class="page-link" th:href="@{/docs(keyword=${keyword}, templateType=${templateType}, status=${status}, flag=${flag}, problem=${problem}, page=${currentPage + 1})}">下一页 &raquo;</a>
                         </li>
                     </ul>
                 </nav>
