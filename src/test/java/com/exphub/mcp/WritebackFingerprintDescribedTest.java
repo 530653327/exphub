@@ -54,6 +54,12 @@ class WritebackFingerprintDescribedTest {
                     tool + " 的描述里没写 64 位。位数是语义的一部分：12 位填进 originalHash 必被拒");
             assertTrue(block.contains("originalHash"),
                     tool + " 的描述里没说它能填哪个参数 —— 只说「有个凭证」等于没说");
+            assertTrue(block.contains("content_sha256"),
+                    tool + " 的描述没说它和 export_document 的 content_sha256 同值 —— "
+                            + "阁主 #47 的验收口径是「只读描述就知道三者同源」，缺这句就只满足 2/3");
+            assertTrue(block.contains("不必再 export") || block.contains("不用再 export"),
+                    tool + " 的描述没说「不必再 export 重读」——「能当 originalHash」与「省掉一次 export」是两件事，"
+                            + "后者才是这个字段省下的动作");
         }
     }
 
