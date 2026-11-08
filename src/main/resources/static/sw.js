@@ -6,7 +6,10 @@
  *   2. 页面与 API 一律走网络；失败时页面回离线提示，API 直接失败（让前端自己显示错误）。
  *   3. 版本号变了才清旧缓存；不要用 skipWaiting 抢更新，避免用户正写着东西被刷新。
  */
-const VERSION = 'exphub-shell-v1';
+// v2（2026-11-08）：manifest 改名（去掉「· 后台」后缀）。必须 bump 版本号，
+// 因为 manifest.json 在本 SW 的 SHELL 里是**缓存优先**——不 bump 的话已安装的客户端
+// 会一直读到旧 manifest，改名字等于没改。
+const VERSION = 'exphub-shell-v2';
 const SCOPE = self.registration.scope;   // 形如 https://cloudim.club/exphub/
 
 const SHELL = [
