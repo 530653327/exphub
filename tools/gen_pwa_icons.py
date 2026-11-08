@@ -50,7 +50,9 @@ def rounded_bg(size: int, radius_ratio: float, safe_ratio: float):
     img.alpha_composite(band)
 
     # 中心字：占安全区的比例
-    text = "阁"
+    # 用「验」（经验阁的第二个字）而不是「阁」—— 越哥 2026-11-08 定：
+    # 桌面图标上「阁」字在圆形裁切下辨识度低，且和同屏其他 App 图标区分不开。
+    text = "验"
     font_size = int(size * safe_ratio)
     font = load_font(font_size)
     tmp = ImageDraw.Draw(img)
