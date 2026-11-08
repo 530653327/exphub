@@ -73,8 +73,11 @@ exphub:
   # （2026-11-08 阁主定：文案/名单散在代码里没人知道该改哪，上一轮就吃过这个亏）
   # mail_send 开新线程时校验收件人；实际可用代号 = 本表 ∪ 库里已出现过的 role（老角色即使这里漏写也认）
   # 新增助手：在这里加一个代号（小写英文），不用改代码。
+  # 2026-11-09：新增发版角色 fuzhu（夫诸，MemHaven 发版专用；阁主 #219 派单、越哥已批）。
+  # 同日：新增哨兵阁负责人 qiongqi（穷奇；阁主 #222 授权与 fuzhu 并进同一次提交，越哥已批
+  # 「哨兵阁/项目26」由穷奇负责）。两者都是正名，别名表不动。
   mail:
-    known-roles: zhulong,baize,gezhu,pixiu,yazi,qilin,fenghuang,chongmingniao,jiuweihu,dijiang
+    known-roles: zhulong,baize,gezhu,pixiu,yazi,qilin,fenghuang,chongmingniao,jiuweihu,dijiang,fuzhu,qiongqi
     # 收件人别名 → 正名（发信时归一，历史老信的 to_role 不动）。
     # 为什么需要：known-roles 是「配置 ∪ 库里出现过的 role」，拼错但历史上真存在过的代号
     # （zhuolong，多一个 o）会被放行入库，而收件箱按 to_role 精确匹配 → 信在、没人收、全程无感。

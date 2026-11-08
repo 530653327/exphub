@@ -43,6 +43,24 @@ class MailRoleCatalogConfigTest {
     }
 
     @Test
+    @DisplayName("发版角色 fuzhu（夫诸）必须在基准表里——漏写会让 mail_send 直接拒收「收件人不存在」")
+    void releaseRoleFuzhuIsListed() throws Exception {
+        // 2026-11-09 阁主 #219：新建发版角色夫诸（fuzhu），ExpHub 侧白名单漏写 →
+        // 回执「收件人 fuzhu 不存在」，可用代号清单里也看不到它。
+        assertTrue(knownRoles().contains("fuzhu"),
+                "夫诸的代号是 fuzhu（正名，不是别名），当前表：" + knownRoles());
+    }
+
+    @Test
+    @DisplayName("哨兵阁角色 qiongqi（穷奇）必须在基准表里——漏写会让 mail_send 直接拒收「收件人不存在」")
+    void sentinelRoleQiongqiIsListed() throws Exception {
+        // 2026-11-09 阁主 #222：哨兵阁（项目 26）负责人穷奇的代号是 qiongqi（正名）。
+        // 白泽 11-08 22:28 那封信提过「下次改配置时补」；与夫诸并进同一次提交，省一次重启。
+        assertTrue(knownRoles().contains("qiongqi"),
+                "穷奇的代号是 qiongqi（正名，不是别名），当前表：" + knownRoles());
+    }
+
+    @Test
     @DisplayName("历史错拼进别名表：piyao→pixiu、yaci→yazi（只改配置不归一，老信仍烂在库里）")
     void legacyMisspellingsAreCanonicalised() throws Exception {
         Map<String, String> aliases = roleAliases();
