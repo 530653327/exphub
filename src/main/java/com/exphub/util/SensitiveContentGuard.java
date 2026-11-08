@@ -99,7 +99,32 @@ public final class SensitiveContentGuard {
     }
 
     /**
-     * 批量校验一批字段；有命中就抛 {@link IllegalArgumentException}（工具层的 catch 会原样回给模型）。
+     * 专用拒绝异常。工具层用它和「网络抖动 / 数据库故障」区分开：
+     * 前者改内容才有救，后者重试也许就好。混成一句「创建失败」会诱导模型反复重试同一份含凭据的正文。
+     *
+     * <p>文案按阁主 #84 定的形态：一眼看出「永远重试不过去、要改内容」，
+     * 且必须带「重试同样内容不会通过」这半句 —— 去掉它人还是会重试。
+     */
+    public static final class Rejected extends IllegalArgumentException {
+        public Rejected(List<Hit> hits) {
+            super(buildMessage(hits));
+        }
+
+        private static String buildMessage(List<Hit> hits) {
+            Hit first = hits.get(0);
+            StringBuilder sb = new StringBuilder();
+            sb.append("❌ 已拒绝写入：疑似凭据（第 ").append(first.line)
+              .append(" 行，类别：").append(first.kind)
+              .append("）。请改成类别名或掩码后重新提交，重试同样内容不会通过。");
+            sb.append("\n汇报拦截情况时也别贴凭据字面值 —— 那是说明性文本，但同样会被拒（阁主 #84 约定）。");
+            sb.append("\n\n命中明细（原值未回显）：\n");
+            for (Hit h : hits) sb.append(h.describe()).append('\n');
+            return sb.toString();
+        }
+    }
+
+    /**
+     * 批量校验一批字段；有命中就抛 {@link Rejected}（工具层会原样回给模型，不再包成「创建失败」）。
      * 必须在任何写库动作之前调用。
      */
     public static void check(Map<String, String> fields) {
@@ -109,11 +134,7 @@ public final class SensitiveContentGuard {
             all.addAll(scan(e.getKey(), e.getValue()));
         }
         if (all.isEmpty()) return;
-        StringBuilder sb = new StringBuilder();
-        sb.append("疑似凭据，已拒绝写入（未写入任何数据）：\n");
-        for (Hit h : all) sb.append(h.describe()).append('\n');
-        sb.append("请把凭据换成环境变量引用（如 ${XXX}）或占位写法后再提交；确属误判请联系越哥，不要绕过校验。");
-        throw new IllegalArgumentException(sb.toString());
+        throw new Rejected(all);
     }
 
     /** 单字段便捷入口。 */

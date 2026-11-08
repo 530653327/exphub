@@ -19,6 +19,7 @@ import com.exphub.service.ProjectService;
 import com.exphub.service.VersionArchiveService;
 import com.exphub.service.WriteOrigin;
 import com.exphub.util.ContentHashGuard;
+import com.exphub.util.SensitiveContentGuard;
 import com.exphub.entity.DocVersionArchive;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -425,6 +426,10 @@ public class ExpHubTools {
                 sb.append(similarityDigest(similarityService.checkOnCreate(updated)));
             }
             return sb.toString();
+        } catch (SensitiveContentGuard.Rejected e) {
+            // 凭据拒绝：改内容才有救，重试同样内容永远过不去。不能包成「导入失败」
+            callLogService.incrementFailCalls();
+            return e.getMessage();
         } catch (Exception e) {
             log.error("ExpHubTools.importDocument: FAILED", e);
             callLogService.incrementFailCalls();
@@ -1920,6 +1925,9 @@ public class ExpHubTools {
             // 2026-10-29 P2-8：一上来就写超长文的情况（把整份报告当一篇存），这里就该提醒
             result.append(longDocHint(created.getContent() == null ? 0 : created.getContent().length()));
             return result.toString();
+        } catch (SensitiveContentGuard.Rejected e) {
+            callLogService.incrementFailCalls();
+            return e.getMessage();
         } catch (Exception e) {
             log.error("ExpHubTools.createExperience: FAILED", e);
             callLogService.incrementFailCalls();
@@ -2135,6 +2143,9 @@ public class ExpHubTools {
             res.append(longDocHint(afterUpdate == null || afterUpdate.getContent() == null
                     ? 0 : afterUpdate.getContent().length()));
             return res.toString();
+        } catch (SensitiveContentGuard.Rejected e) {
+            callLogService.incrementFailCalls();
+            return e.getMessage();
         } catch (Exception e) {
             log.error("ExpHubTools.updateExperience: FAILED", e);
             callLogService.incrementFailCalls();
@@ -2246,6 +2257,9 @@ public class ExpHubTools {
             // 2026-10-29 P2-8：滚动日志/施工日志就是靠 append 一次次涨到 2 万字的，这里提醒最有效
             sb.append(longDocHint(newLen));
             return sb.toString();
+        } catch (SensitiveContentGuard.Rejected e) {
+            callLogService.incrementFailCalls();
+            return e.getMessage();
         } catch (Exception e) {
             log.error("ExpHubTools.appendExperience: FAILED", e);
             callLogService.incrementFailCalls();
@@ -2480,6 +2494,9 @@ public class ExpHubTools {
             // 2026-11-08：写回凭证（patch 必然写了正文，无条件给）
             sb.append(ContentHashGuard.writebackLine(newBody));
             return sb.toString();
+        } catch (SensitiveContentGuard.Rejected e) {
+            callLogService.incrementFailCalls();
+            return e.getMessage();
         } catch (Exception e) {
             log.error("ExpHubTools.patchExperience: FAILED", e);
             callLogService.incrementFailCalls();
@@ -6086,6 +6103,8 @@ public class ExpHubTools {
                 }
             }
             return sb.toString();
+        } catch (SensitiveContentGuard.Rejected e) {
+            return e.getMessage();
         } catch (IllegalArgumentException iae) {
             return "❌ " + iae.getMessage();
         } catch (Exception e) {

@@ -116,6 +116,19 @@ class SensitiveContentGuardTest {
     }
 
     @Test
+    @DisplayName("拒绝文案一眼看出「改内容才有救」；且必须是专用异常，工具层才不会包成「创建失败」")
+    void rejectionWordingIsUnmistakable() {
+        SensitiveContentGuard.Rejected ex = assertThrows(SensitiveContentGuard.Rejected.class,
+                () -> SensitiveContentGuard.check("正文", "sk-proj-AbCdEfGh1234567890XyZ"));
+        assertTrue(ex.getMessage().startsWith("❌ 已拒绝写入：疑似凭据（第 1 行，类别："),
+                ex.getMessage());
+        assertTrue(ex.getMessage().contains("重试同样内容不会通过"),
+                "去掉这半句人还是会重试：" + ex.getMessage());
+        assertTrue(ex.getMessage().contains("请改成类别名或掩码"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("别贴凭据字面值"), "约定要写在最需要的时刻：" + ex.getMessage());
+    }
+
+    @Test
     @DisplayName("scan 只返回命中不抛错，便于事后跑全库误伤对账")
     void scanIsNonThrowing() {
         assertEquals(0, SensitiveContentGuard.scan("正文", "普通文本").size());
