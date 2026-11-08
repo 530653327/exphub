@@ -83,6 +83,14 @@ public class MailboxService {
     private static final long ROLE_CACHE_MS = 60_000L;
 
     /**
+     * 授权链标识的长度上限，<b>与 {@code mail_messages.chain_id VARCHAR(64)} 对齐</b>。
+     *
+     * <p>超长直接拒，<b>不截断</b>：截断后两条不同的链可能折成同一个标识，
+     * 而「第几跳」是按链算的 —— 静默截断会让深度校验作用在错误的链上（AGENTS 9c）。
+     */
+    private static final int MAX_CHAIN_ID_LEN = 64;
+
+    /**
      * 可用角色代号 = 配置基准表 ∪ 库里真实出现过的 role。
      *
      * <p><b>为什么还要并上库里的</b>：只认配置的话，新增助手必须先改配置、发版、重启才能收信 ——
@@ -214,11 +222,33 @@ public class MailboxService {
     /**
      * 发一封信。{@code fromRole} 由调用方（工具层）按配置来源填，不接受模型传入。
      *
+     * <p>保留这个 8 参重载是为了<b>现有调用零改动</b>：老路径明确按「不属于任何授权链」
+     * （chainId=null / auto=false / depth=0）入库，与加字段前逐字段一致。
+     *
      * @param inReplyTo 父消息 ID；有值时线程从父消息推导，无值时服务端生成新线程
      */
     public MailMessage send(String fromRole, String toRole, String subject, String body,
                             Long inReplyTo, String msgType, String clientMsgId,
                             String configSourceId) {
+        return send(fromRole, toRole, subject, body, inReplyTo, msgType, clientMsgId,
+                configSourceId, null, null, null);
+    }
+
+    /**
+     * 发一封信（带可选的授权链元数据）。
+     *
+     * <p><b>为什么加这三个字段</b>（阁主 T261109035247-364）：忆阁代理人模式要做授权链深度控制，
+     * 但服务端原本既没有链字段、也分不出「代理自动回合发的信」和「阁主本人发的信」——
+     * 两者的 {@code from_role} 都是 {@code gezhu}。所以只能由调用方在发信时自报，
+     * 服务端记住并回显，<b>不做任何推导</b>。
+     *
+     * @param chainId 授权链根标识；null=不属于任何授权链。传空白或超过 64 字符直接拒（不静默修正）
+     * @param auto    是否自动回合发出；null 视为 false
+     * @param depth   当前跳数，null 视为 0；负数直接拒（不静默改成 0）
+     */
+    public MailMessage send(String fromRole, String toRole, String subject, String body,
+                            Long inReplyTo, String msgType, String clientMsgId,
+                            String configSourceId, String chainId, Boolean auto, Integer depth) {
         if (fromRole == null || fromRole.isBlank()) {
             throw new IllegalArgumentException("没有角色，发不了信：客户端配置里没有声明角色");
         }
@@ -228,6 +258,10 @@ public class MailboxService {
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("主题是空的");
         }
+        // 授权链元数据：校验在入库前，非法值明拒，不截断、不折成默认值（AGENTS 9c）。
+        String chain = normalizeChainId(chainId);
+        int hop = normalizeDepth(depth);
+        boolean autoRound = Boolean.TRUE.equals(auto);
 
         // 信箱正文也要过同一道闸：历史上真发生过 Key 明文扩散到消息表（#1313 第 4 条）。
         // 与 docs 共用判据，但字段名分开，回执里能一眼看出是哪一处。
@@ -286,6 +320,9 @@ public class MailboxService {
         m.setBody(body == null ? "" : body);
         m.setClientMsgId(blankToNull(clientMsgId));
         m.setConfigSourceId(blankToNull(configSourceId));
+        m.setChainId(chain);
+        m.setAutoFlag(autoRound);
+        m.setChainDepth(hop);
         msgMapper.insert(m);
 
         // 发件人自己的游标推到这条：自己写的不用再「未读」给自己
@@ -313,6 +350,38 @@ public class MailboxService {
 
     private String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s.trim();
+    }
+
+    /**
+     * 校验并规整 chainId。
+     *
+     * <p>三种输入分清：<b>没传</b>（null → 不属于任何链）是合法的；
+     * <b>传了空白</b>与<b>超长</b>是非法输入，直接拒。空白不折成 null ——
+     * 否则调用方以为「我标了链」，库里却是「没链」，正是 AGENTS 9c 禁止的静默修正。
+     */
+    private String normalizeChainId(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isEmpty()) {
+            throw new IllegalArgumentException("chainId 是空白值（ExpHub 实际收到的是空白字符串）。"
+                    + "不传表示「不属于任何授权链」；传空白既不是「没传」也不是有效链标识，已拒绝（未发出任何信）。");
+        }
+        if (v.length() > MAX_CHAIN_ID_LEN) {
+            throw new IllegalArgumentException("chainId 超长：ExpHub 实际收到 " + v.length()
+                    + " 字符，上限 " + MAX_CHAIN_ID_LEN + "（列 mail_messages.chain_id VARCHAR(64)）。"
+                    + "不会截断 —— 截断会把两条不同的链折成同一个标识，请缩短后再发。");
+        }
+        return v;
+    }
+
+    /** 校验 depth：只接受非负整数；null 按 0 处理（不传=链根），负数明拒。 */
+    private int normalizeDepth(Integer depth) {
+        if (depth == null) return 0;
+        if (depth < 0) {
+            throw new IllegalArgumentException("depth 必须是非负整数（0 = 链根），ExpHub 实际收到 "
+                    + depth + "，已拒绝（未发出任何信；不静默改成 0）。");
+        }
+        return depth;
     }
 
     // ---------------------------------------------------------------- 收件箱
@@ -492,12 +561,25 @@ public class MailboxService {
      * @return 消息（按 id 升序）
      */
     public List<MailMessage> thread(String role, String threadId, boolean full, int limit) {
+        return thread(role, threadId, full, limit, false);
+    }
+
+    /**
+     * 读一根线程（可选只读）。
+     *
+     * @param full true=从头发（分页），false=只给游标之后的新消息
+     * @param peek true=<b>只读</b>：读完不推游标。调用方消费成功后再用
+     *             {@link #advanceCursorTo} 显式推进 —— 服务端无法知道调用方是否真的用上了正文，
+     *             只能把「推进」这个动作交给调用方
+     * @return 消息（按 id 升序）
+     */
+    public List<MailMessage> thread(String role, String threadId, boolean full, int limit, boolean peek) {
         long cursor = full ? 0 : cursorOf(role.trim(), threadId);
         List<MailMessage> list = msgMapper.selectList(new QueryWrapper<MailMessage>()
                 .eq("thread_id", threadId).gt("id", cursor)
                 .orderByAsc("id").last("LIMIT " + limit));
-        // 读完推游标：去重靠服务端，不靠模型记性
-        if (!list.isEmpty()) {
+        // 读完推游标：去重靠服务端，不靠模型记性；peek 时由调用方后续显式推进
+        if (!peek && !list.isEmpty()) {
             advanceCursor(role.trim(), threadId, list.get(list.size() - 1).getId());
         }
         return list;
@@ -506,6 +588,13 @@ public class MailboxService {
     /** 线程里的总条数（用于「还有几封」提示）。 */
     public long countThread(String threadId) {
         return msgMapper.selectCount(new QueryWrapper<MailMessage>().eq("thread_id", threadId));
+    }
+
+    /** 游标之后还有几封（只读；用于回执自证「推进后还剩多少没读」）。 */
+    public long countAfterCursor(String role, String threadId) {
+        long cursor = cursorOf(role.trim(), threadId);
+        return msgMapper.selectCount(new QueryWrapper<MailMessage>()
+                .eq("thread_id", threadId).gt("id", cursor));
     }
 
     // ---------------------------------------------------------------- 认领
@@ -563,6 +652,40 @@ public class MailboxService {
             // 并发插入撞主键：说明别的请求已建，条件更新那条路已经覆盖
             log.debug("advanceCursor: concurrent insert ignored, role={}, thread={}", role, threadId);
         }
+    }
+
+    /**
+     * 显式把游标推进到某条消息，<b>不返回正文</b>。
+     *
+     * <p>给「{@code mail_thread(peek=true)} 读完 → 确认处理成功 → 再推进」这条链路用：
+     * 服务端看不到调用方是否真的把正文用上了，推进时机只能由调用方决定。
+     *
+     * <p>校验放在服务端：消息必须存在、必须属于该线程、只前进不后退。
+     * 「跨线程推进」会把另一个线程的信静默标成已读，宁可明拒。
+     *
+     * @return 1=已推进；0=目标不比当前游标新（幂等，不是错误）
+     * @throws IllegalArgumentException 缺角色 / 消息不存在 / 消息不属于该线程
+     */
+    public int advanceCursorTo(String role, String threadId, long messageId) {
+        if (role == null || role.isBlank()) {
+            throw new IllegalArgumentException("缺角色，无法推进游标");
+        }
+        if (threadId == null || threadId.isBlank()) {
+            throw new IllegalArgumentException("缺 threadId，无法推进游标");
+        }
+        MailMessage m = msgMapper.selectById(messageId);
+        if (m == null) {
+            throw new IllegalArgumentException("消息 #" + messageId + " 不存在（ID 写错？）");
+        }
+        if (!threadId.trim().equals(m.getThreadId())) {
+            throw new IllegalArgumentException("#" + messageId + " 属于线程 " + m.getThreadId()
+                    + "，不是 " + threadId + " —— 跨线程推进会把别的线程的信标成已读，拒绝");
+        }
+        long cur = cursorOf(role.trim(), threadId.trim());
+        if (messageId <= cur) return 0;
+        advanceCursor(role.trim(), threadId.trim(), messageId);
+        // 回读实际值再返回：并发下别的会话可能已推得更远，不能按「我传了」就说推到了
+        return cursorOf(role.trim(), threadId.trim()) >= messageId ? 1 : 0;
     }
 
     // ---------------------------------------------------------------- 小工具

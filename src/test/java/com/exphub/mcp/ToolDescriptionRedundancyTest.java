@@ -330,8 +330,14 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-08 搜索打分解释（阁主 #134）：仍 50 个工具（加参数不加工具，红线 13），
         //            search_experience 加 explain，参数 200 → 201。理由：验收脚本靠 Python 复刻
         //            打分，实测同源只有 10/33、23/33；服务端自己吐分项才没有「两套实现对齐」这件事。
+        // 2026-11-09 信箱只读游标（阁主 T261109015413-804）：仍 50 个工具，mail_thread 加
+        //            peek + advanceTo，参数 201 → 203。理由：游标一推就再也读不回来，
+        //            模型调用失败/进程被杀时信会静默消失；推进权必须留给调用方。
+        // 2026-11-09 授权链元数据（阁主 T261109035247-364）：仍 50 个工具，mail_send 加
+        //            chainId + auto + depth，参数 203 → 206。理由：服务端分不出「代理自动回合」
+        //            与「本人发的」（from_role 都是 gezhu），只能由调用方自报；加参数不加工具。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(201, paramCount, "参数数变了（200 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(206, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,6 +1,7 @@
 package com.exphub.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -57,6 +58,32 @@ public class MailMessage {
 
     /** 配置来源标识：证明出自哪份配置，不证明是谁写的。 */
     private String configSourceId;
+
+    /**
+     * 授权链根标识（可选元数据，2026-11-09 阁主 T261109035247-364）。
+     *
+     * <p>{@code null} = 不属于任何授权链 —— 老数据与「不传此参数」的新调用都是 null，
+     * 所以加这一列不改变任何既有调用的行为。
+     */
+    private String chainId;
+
+    /**
+     * 是否自动回合发出。
+     *
+     * <p><b>为什么列名不叫 auto</b>：{@code AUTO} 在 SQL 里是 {@code AUTO_INCREMENT} 的前缀关键字，
+     * 直接拿它当列名在不同方言/工具里表现不一致；{@code auto_flag} 没有歧义。
+     * 老数据与不传时都是 0（人工）。
+     */
+    @TableField("auto_flag")
+    private Boolean autoFlag;
+
+    /**
+     * 授权链当前跳数，0 起（0 = 链根 / 无链）。
+     *
+     * <p>老数据与不传时都是 0。服务端只存不推：跳数是调用方（忆阁代理人循环）报上来的，
+     * 服务端无法自行推导。
+     */
+    private Integer chainDepth;
 
     private LocalDateTime createdAt;
 }

@@ -6152,14 +6152,19 @@ public class ExpHubTools {
           description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 inReplyTo，线程自动推导（没有 threadId 参数）。"
                       + "消息只追加不可改，要纠错发一条 type=fix 引用原信。clientMsgId 做幂等，工具超时重试不会发两封。"
                       + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。"
-                      + "收件人写的是历史别名（如 zhuolong）会自动归一到正名并在回执里说明。")
+                      + "收件人写的是历史别名（如 zhuolong）会自动归一到正名并在回执里说明。"
+                      + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。")
     public String mailSend(
             @ToolParam(description = "收件角色代号，如 baize / gezhu") String to,
             @ToolParam(description = "主题，一句话说清这件事") String subject,
             @ToolParam(description = "正文。建议不超过 8000 字，超了拆成多条；禁止写账号密码密钥") String body,
             @ToolParam(description = "可选。回信填父消息ID；不填=开新线程", required = false) Long inReplyTo,
             @ToolParam(description = "可选。类型：dispatch/receipt/accept/note/fix，默认 note", required = false) String type,
-            @ToolParam(description = "可选。幂等键。工具超时重试时带同一个值，不会重复发", required = false) String clientMsgId) {
+            @ToolParam(description = "可选。幂等键。工具超时重试时带同一个值，不会重复发", required = false) String clientMsgId,
+            @ToolParam(description = "可选。授权链根标识（≤64 字符），如 T261109035247-364 或调用方自定义链号。"
+                    + "不传=这封信不属于任何授权链。传空白或超长会明拒，不会截断", required = false) String chainId,
+            @ToolParam(description = "可选。true=这封是代理人自动回合发出的；false 或不传=人工发出（默认 false）", required = false) Boolean auto,
+            @ToolParam(description = "可选。授权链第几跳，非负整数，0=链根（默认 0）。传负数直接拒，不会静默归零", required = false) Integer depth) {
         try {
             String me = mailRole(null);
             if (me == null) {
@@ -6167,7 +6172,7 @@ public class ExpHubTools {
                         + "` 头，服务端不知道该署谁的名。先配好角色再发。";
             }
             MailMessage m = mailboxService.send(me, to, subject, body, inReplyTo, type, clientMsgId,
-                    MailIdentity.configSource());
+                    MailIdentity.configSource(), chainId, auto, depth);
             StringBuilder sb = new StringBuilder();
             sb.append("✅ 已以【").append(me).append("】");
             String cfg = MailIdentity.configSource();
@@ -6194,6 +6199,10 @@ public class ExpHubTools {
                       .append("但这封信确实投给了前者，请确认没发错人。\n");
                 }
             }
+            // 传了授权链元数据 → 回读库里的实际值再报，不按入参复述（AGENTS 第 10 章）
+            if (chainId != null || auto != null || depth != null) {
+                appendChainMetadataReceipt(sb, m.getId(), chainId, auto, depth);
+            }
             return sb.toString();
         } catch (SensitiveContentGuard.Rejected e) {
             return e.getMessage();
@@ -6205,16 +6214,64 @@ public class ExpHubTools {
         }
     }
 
+    /**
+     * 授权链元数据的发信回执：<b>回读库里的值</b>再报，并把「默认值」与「幂等未覆盖」说清。
+     *
+     * <p>两条纪律：① 不把入参复述当成入库结果（AGENTS 第 10 章）；
+     * ② 不一致时必须给出可执行的解释（同一 clientMsgId 重试以首次为准），不许只说一句「已保存」。
+     */
+    private void appendChainMetadataReceipt(StringBuilder sb, Long messageId,
+                                            String reqChain, Boolean reqAuto, Integer reqDepth) {
+        sb.append("\n**授权链元数据（入库后回读）**\n");
+        MailMessage stored = mailboxService.byId(messageId);
+        if (stored == null) {
+            sb.append("- ⚠️ 回读失败：消息 #").append(messageId).append(" 查不到，无法自证入库值。\n");
+            return;
+        }
+        String storedChain = stored.getChainId();
+        boolean storedAuto = Boolean.TRUE.equals(stored.getAutoFlag());
+        int storedDepth = stored.getChainDepth() == null ? 0 : stored.getChainDepth();
+        sb.append("- chainId: ").append(storedChain == null ? "（未记录，不属于任何授权链）" : storedChain).append("\n");
+        sb.append("- auto: ").append(storedAuto).append("\n");
+        sb.append("- depth: ").append(storedDepth).append("\n");
+
+        String reqChainTrimmed = reqChain == null ? null : reqChain.trim();
+        boolean reqAutoVal = Boolean.TRUE.equals(reqAuto);
+        int reqDepthVal = reqDepth == null ? 0 : reqDepth;
+        boolean mismatch = !java.util.Objects.equals(reqChainTrimmed, storedChain)
+                || reqAutoVal != storedAuto || reqDepthVal != storedDepth;
+        if (mismatch) {
+            sb.append("⚠️ 与本次传入不一致（传入 chainId=")
+              .append(reqChainTrimmed == null ? "未传" : reqChainTrimmed)
+              .append(" / auto=").append(reqAutoVal).append(" / depth=").append(reqDepthVal)
+              .append("）。若是同一 clientMsgId 重试，元数据以首次入库为准、不会被覆盖；")
+              .append("否则请把这条回执报给维护者。\n");
+        }
+        if (reqDepth == null) sb.append("- depth 未传，入库用默认 0（链根）。\n");
+        if (reqAuto == null) sb.append("- auto 未传，入库用默认 false（人工发出）。\n");
+        if (storedChain == null && storedDepth > 0) {
+            sb.append("⚠️ depth>0 但 chainId 为空：跳数离开授权链没有可追溯的根，已按原样入库（没有替你补 chainId）。\n");
+        }
+    }
+
     @Tool(name = "mail_thread",
           description = "展开一根线程。默认只给**游标之后的新消息**（最多 10 条），full=true 才从头分页回溯。"
                       + "读完服务端自动推游标 —— 同样的参数不用再调一次，不会重复给同一批。"
-                      + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ackIds 只记「处理过」，不参与去重。")
+                      + "peek=true 则只读：推游标由调用方用 advanceTo 显式确认，适合「读成功才算读过」的自动唤醒。"
+                      + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ackIds 只记「处理过」，不参与去重。"
+                      + "带授权链元数据的消息会在头部回显 链/第几跳/自动或人工（没有元数据的历史消息不多印一个字）。")
     public String mailThread(
             @ToolParam(description = "线程号，从 mail_start 的信封列表里抄") String threadId,
             @ToolParam(description = "可选。true=从线程头开始（分页回溯）；默认 false 只给游标之后的新消息", required = false) Boolean full,
             @ToolParam(description = "可选。条数上限：默认 10，回溯模式默认 30，都封顶 50", required = false) Integer limit,
             @ToolParam(description = "可选。逗号分隔的消息ID，标记「我处理过了」。只做展示，不推游标、不影响去重", required = false) String ackIds,
-            @ToolParam(description = "可选。要认领的消息ID（派单用）。抢锁失败会回是谁认领的", required = false) Long claimId) {
+            @ToolParam(description = "可选。要认领的消息ID（派单用）。抢锁失败会回是谁认领的", required = false) Long claimId,
+            @ToolParam(description = "可选。true=**只读**：正常返回正文，但游标原地不动，可反复调同一批。"
+                    + "给「模型调用/进程被杀就丢掉这封信」的场景用；确认消费成功后必须再调一次 advanceTo 才算读过。"
+                    + "与 advanceTo 互斥。默认 false 行为不变", required = false) Boolean peek,
+            @ToolParam(description = "可选。把游标显式推进到这条消息ID，**不返回正文**（peek 之后的确认步）。"
+                    + "只接受本线程里真实存在的消息ID，且只前进不后退；跨线程的ID会被拒。"
+                    + "目标之后还有几封会写在回执里", required = false) Long advanceTo) {
         try {
             String me = mailRole(null);
             if (me == null) {
@@ -6223,7 +6280,13 @@ public class ExpHubTools {
             if (threadId == null || threadId.isBlank()) {
                 return "❌ 要 threadId。从 mail_start 的信封列表里抄，别自己编。";
             }
+            boolean peekMode = Boolean.TRUE.equals(peek);
             boolean backfill = Boolean.TRUE.equals(full);
+            if (advanceTo != null && (peekMode || backfill)) {
+                return "❌ advanceTo 不能和 " + (peekMode ? "peek" : "full") + " 一起传："
+                        + "advanceTo 只推游标、不返回正文，peek 是只读，full 是回溯读正文 —— 三者语义冲突。"
+                        + "要推进请单独调一次 `mail_thread(threadId=…, advanceTo=消息ID)`。";
+            }
             int def = backfill ? 30 : 10;
             int lim = (limit == null || limit <= 0) ? def : Math.min(limit, 50);
 
@@ -6246,7 +6309,30 @@ public class ExpHubTools {
                 }
             }
 
-            List<MailMessage> list = mailboxService.thread(me, threadId.trim(), backfill, lim);
+            // 显式推进：只动游标，不返回正文（peek 之后的确认步）
+            if (advanceTo != null) {
+                long cursorBefore = mailboxService.cursorOf(me, threadId.trim());
+                int moved = mailboxService.advanceCursorTo(me, threadId.trim(), advanceTo);
+                long cursorAfter = mailboxService.cursorOf(me, threadId.trim());
+                long left = mailboxService.countAfterCursor(me, threadId.trim());
+                StringBuilder sb = new StringBuilder(head);
+                if (moved == 1) {
+                    sb.append("✅ 游标已推进：#").append(cursorBefore).append(" → #").append(cursorAfter);
+                    if (cursorAfter > advanceTo) {
+                        sb.append("（目标 #").append(advanceTo).append(" 已被更靠后的推进覆盖）");
+                    }
+                    sb.append("\n");
+                } else {
+                    sb.append("ℹ️ 游标未变：当前已读到 #").append(cursorAfter)
+                      .append("，目标 #").append(advanceTo).append(" 不比它新（只前进不后退）。\n");
+                }
+                sb.append("该线程游标之后还有 ").append(left).append(" 封；本次没有返回正文，要读用 `mail_thread(threadId=\"")
+                  .append(threadId.trim()).append("\")`。\n");
+                appendAckReceipt(sb, ackIds, me);
+                return sb.toString();
+            }
+
+            List<MailMessage> list = mailboxService.thread(me, threadId.trim(), backfill, lim, peekMode);
             long total = mailboxService.countThread(threadId.trim());
 
             if (list.isEmpty()) {
@@ -6262,6 +6348,7 @@ public class ExpHubTools {
                   .append(m.getFromRole()).append(" → ").append(m.getToRole())
                   .append(" · ").append(com.exphub.service.MailboxService.time(m.getCreatedAt()));
                 if (m.getConfigSourceId() != null) sb.append(" · 配置 ").append(m.getConfigSourceId());
+                appendChainMeta(sb, m);
                 if (m.getClaimedBy() != null) sb.append(" · 已认领(").append(m.getClaimedBy()).append(")");
                 if (m.getProcessedAt() != null) sb.append(" · 已处理");
                 sb.append("\n**").append(m.getSubject()).append("**\n")
@@ -6269,27 +6356,56 @@ public class ExpHubTools {
             }
 
             long tail = list.get(list.size() - 1).getId();
-            sb.append("> 已读到 #").append(tail).append("，服务端游标已推进。**同样参数别重复调**，没有新信时会直接告诉你到头了。\n");
+            if (peekMode) {
+                long cursorNow = mailboxService.cursorOf(me, threadId.trim());
+                sb.append("> 👀 peek 只读：游标**未推进**，仍停在 #").append(cursorNow)
+                  .append("。确认这批已处理成功后调 `mail_thread(threadId=\"").append(threadId.trim())
+                  .append("\", advanceTo=").append(tail).append(")` 才算读过；中途失败直接重来，这封信还在。\n");
+            } else {
+                sb.append("> 已读到 #").append(tail).append("，服务端游标已推进。**同样参数别重复调**，没有新信时会直接告诉你到头了。\n");
+            }
 
             // ack：只记「处理过」，不推游标
-            if (ackIds != null && !ackIds.isBlank()) {
-                int acked = 0;
-                for (String t : ackIds.split("[,，\\s]+")) {
-                    if (t.isBlank()) continue;
-                    try {
-                        Long id = Long.parseLong(t.trim());
-                        int n = mailboxService.markProcessed(id, me);
-                        if (n > 0) acked++;
-                    } catch (NumberFormatException ignore) {
-                        // 非数字项跳过，不因为一个脏参数整封失败
-                    }
-                }
-                sb.append("> 已标记 ").append(acked).append(" 封为处理过（只是记录，不影响游标）。\n");
-            }
+            appendAckReceipt(sb, ackIds, me);
             return sb.toString();
+        } catch (IllegalArgumentException iae) {
+            return "❌ " + iae.getMessage();
         } catch (Exception e) {
             log.error("ExpHubTools.mailThread: FAILED", e);
             return "读线程失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * 线程回显授权链元数据。
+     *
+     * <p><b>只在有非默认值时才渲染</b>：chainId 为空、auto=false、depth=0 的消息（全部历史消息 +
+     * 不传元数据的新消息）一个字符都不多印 —— 这是本单「不传时行为完全一致」的一部分
+     * （老线程的展开结果必须逐字不变，否则等于修一个字段顺手改了所有人的回执）。
+     */
+    private static void appendChainMeta(StringBuilder sb, MailMessage m) {
+        boolean hasChain = m.getChainId() != null && !m.getChainId().isBlank();
+        boolean auto = Boolean.TRUE.equals(m.getAutoFlag());
+        int depth = m.getChainDepth() == null ? 0 : m.getChainDepth();
+        if (!hasChain && !auto && depth == 0) return;
+        sb.append(" · 链 ").append(hasChain ? m.getChainId() : "（未记录）")
+          .append(" · 第 ").append(depth).append(" 跳")
+          .append(auto ? " · 自动回合" : " · 人工");
+    }
+
+    /** ack：只记「处理过」，不推游标。回执写实际成功几条，避免「传了≠标上了」。 */
+    private void appendAckReceipt(StringBuilder sb, String ackIds, String me) {        if (ackIds == null || ackIds.isBlank()) return;
+        int acked = 0;
+        for (String t : ackIds.split("[,，\\s]+")) {
+            if (t.isBlank()) continue;
+            try {
+                Long id = Long.parseLong(t.trim());
+                int n = mailboxService.markProcessed(id, me);
+                if (n > 0) acked++;
+            } catch (NumberFormatException ignore) {
+                // 非数字项跳过，不因为一个脏参数整封失败
+            }
+        }
+        sb.append("> 已标记 ").append(acked).append(" 封为处理过（只是记录，不影响游标）。\n");
     }
 }
