@@ -45,7 +45,7 @@ spring:
       server:
         name: exphub
         # 与 health / 无状态端点同源，别再各写一份数字
-        version: ${exphub.version:2.3.0}
+        version: ${exphub.version:2.4.0}
         stdio: false
 
 # MCP SSE 心跳间隔（秒）。
@@ -55,12 +55,15 @@ spring:
 # 用户体感为「偶尔连不上」）。服务端每 30s 发一个 SSE 注释行保活。
 # ⚠️ 调整时须小于上述各层的最小空闲超时，否则心跳无效。
 exphub:
-  # 产品版本号（2026-11-08 起为 2.3.0；2.2.1 是 2026-11-05 ~ 11-08）。health、SSE 的 serverInfo、无状态端点的
+  # 产品版本号（2026-11-09 起为 2.4.0；2.3.0 是 2026-11-08 ~ 11-09）。health、SSE 的 serverInfo、无状态端点的
   # serverInfo 全部读这一处，改版本只改这里。
+  # 2.4.0 = 信箱角色清单迁库（A+B 合并 + 正名改汉字）：校验改读 mail_roles（status='ACTIVE'），
+  #         **正名是汉字（烛龙/重明鸟…），拼音降为别名**（兼容期入参两种都收，出口一律汉字）；
+  #         删 application.yml 的 known-roles / role-aliases，回信收件人强制取父消息发件人。
   # ⚠️ 这不是 pom.xml 的 Maven artifact 版本（仍是 1.0.0）：改 pom 会改 jar 文件名，
   #    而 systemd service 与 deploy.sh 里写死了 target/exphub-1.0.0.jar，一改就得
   #    同步服务器配置，否则线上服务起不来。产品版本单独放，改它零部署风险。
-  version: 2.3.0
+  version: 2.4.0
   mcp:
     sse-heartbeat-seconds: 30
     # MCP 单次请求体上限（字节）。默认 5MB；Nginx 对应 client_max_body_size 10m。
@@ -69,25 +72,13 @@ exphub:
     # 超过后提示用 export_document 读取完整内容。
     detail-max-chars: 20000
 
-  # 信箱角色代号基准表 —— **单一数据源，改这里，不要改成 Java 常量**
-  # （2026-11-08 阁主定：文案/名单散在代码里没人知道该改哪，上一轮就吃过这个亏）
-  # mail_send 开新线程时校验收件人；实际可用代号 = 本表 ∪ 库里已出现过的 role（老角色即使这里漏写也认）
-  # 新增助手：在这里加一个代号（小写英文），不用改代码。
-  # 2026-11-09：新增发版角色 fuzhu（夫诸，MemHaven 发版专用；阁主 #219 派单、越哥已批）。
-  # 同日：新增哨兵阁负责人 qiongqi（穷奇；阁主 #222 授权与 fuzhu 并进同一次提交，越哥已批
-  # 「哨兵阁/项目26」由穷奇负责）。两者都是正名，别名表不动。
-  mail:
-    known-roles: zhulong,baize,gezhu,pixiu,yazi,qilin,fenghuang,chongmingniao,jiuweihu,dijiang,fuzhu,qiongqi
-    # 收件人别名 → 正名（发信时归一，历史老信的 to_role 不动）。
-    # 为什么需要：known-roles 是「配置 ∪ 库里出现过的 role」，拼错但历史上真存在过的代号
-    # （zhuolong，多一个 o）会被放行入库，而收件箱按 to_role 精确匹配 → 信在、没人收、全程无感。
-    # 事故：#22 / #45 / #72 三封（2026-11-08 白泽查库、阁主 #76 批准归一）。
-    #
-    # piyao / yaci（2026-11-08 阁主 #119，越哥已批）：上一版把貔貅/睚眦写成了 piyao/yaci，
-    # 而忆阁闸门与桥头身份用的是正名 pixiu/yazi → 两边名单对不上，yazi 被 ExpHub 拒、
-    # 貔貅也收不到新信。正名已改回；这两个拼写同时进别名表，历史行（#110 的 to_role=piyao）
-    # 不改数据，靠收件箱按别名并查归到正主。
-    role-aliases: zhuolong=zhulong,zhulogn=zhulong,zhulon=zhulong,beize=baize,gezu=gezhu,piyao=pixiu,yaci=yazi
+  # 信箱角色代号清单（known-roles / role-aliases）已于 2026-11-09 **迁出配置**，
+  # 现在单一数据源是数据库两张表：mail_roles（status='ACTIVE' 才可投递）+ mail_role_aliases。
+  # 出处：阁主 T261109053740-701（P9 定案，越哥拍板）—— 忆阁不取、不存、不校验代号，
+  #      名字对不对由 ExpHub 说了算；A+B 合成一次发版，所以这里不再保留任何名单。
+  # 加角色/停用/改名：改库（迁移脚本 sql/migrations/migration_20261109b_mail_roles.sql 或后台），
+  #      加人不用发版；最多 30 秒生效（MailRoleCatalog 的缓存 TTL）。
+  # ⚠️ 不要再把名单加回这里：运行时没有任何代码读它，加了只会让人以为改配置就能生效。
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/*.xml

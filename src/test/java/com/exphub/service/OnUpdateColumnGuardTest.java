@@ -61,7 +61,12 @@ class OnUpdateColumnGuardTest {
             "users", Set.of("updated_at"),
             // 2026-11-06 协作信箱：游标表的 updated_at 声明了 ON UPDATE，
             // 建表脚本执行后线上同样具备（migration_20261106a_mailbox.sql）。
-            "mail_cursors", Set.of("updated_at"));
+            "mail_cursors", Set.of("updated_at"),
+            // 2026-11-09 信箱角色清单（A+B 合并）：mail_roles.updated_at 声明了 ON UPDATE
+            // （migration_20261109b_mail_roles.sql，部署后线上同构）。
+            // 迁移内有两条 UPDATE（停用旧拼音正名行、把 OBSERVED 压回 PENDING_REVIEW），均显式写回 updated_at；
+            // B 段以后做后台写入口时，改 display_name/status 同样必须写 updated_at = updated_at。
+            "mail_roles", Set.of("updated_at"));
 
     /**
      * 仓库 DDL 声明了 ON UPDATE、但线上实测**没有**的列。必须逐条说明理由，
@@ -139,8 +144,10 @@ class OnUpdateColumnGuardTest {
                 if (st.startsWithUpdate()) seen++;
             }
         }
-        // 2026-10-29 实数：8 条（3 条合规 + 3 条 upgrade_call_logs + 1 条 update_template_type + 1 条 v2）
-        assertEquals(8, seen,
+        // 2026-10-29 实数：8 条；2026-11-09 migration_20261109b +3 条 = 11 条：
+        //   ① 停用旧版 A 段的拼音正名行；② 历史消息 from/to/claimed_by 刷成汉字；
+        //   ③ 把 OBSERVED 压回 PENDING_REVIEW。
+        assertEquals(11, seen,
                 "扫到的 UPDATE 条数变了（实际 " + seen + "）。新增脚本请同步这个数字；"
                         + "数字变**少**通常意味着分号/注释解析退化，守卫会在没人察觉的情况下失效");
     }

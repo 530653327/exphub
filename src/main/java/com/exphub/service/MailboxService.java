@@ -10,7 +10,6 @@ import com.exphub.util.SensitiveContentGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -18,9 +17,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
@@ -55,32 +52,19 @@ public class MailboxService {
     private MailCursorMapper cursorMapper;
 
     /**
-     * 角色代号基准表。**单一数据源在 application.yml 的 {@code exphub.mail.known-roles}**，
-     * 不写成 Java 常量 —— 名单散在代码里没人知道该改哪（2026-11-08 阁主定）。
-     */
-    @Value("${exphub.mail.known-roles:}")
-    private String knownRolesConfig;
-
-    /**
-     * 收件人别名表，格式 {@code 别名=正名,别名2=正名2}。单一数据源在 application.yml 的
-     * {@code exphub.mail.role-aliases}。
+     * 可投递角色清单（DB 唯一真源，表 {@code mail_roles} / {@code mail_role_aliases}）。
      *
-     * <p><b>为什么需要它（2026-11-08，阁主 #72 / 白泽 #75 查出的真事故）</b>：`knownRoles()` 是
-     * 「配置表 ∪ 库里出现过的 role」，所以一个**拼错但历史上真存在过**的代号（`zhuolong`，多一个 o）
-     * 会被 dbRoles 兜底加进 accept 集合 —— 校验放行、信入库、`inbox()` 按 `to_role` 精确匹配，
-     * 于是谁都收不到，且全程无声。删配置表没用（库里还有），所以只能归一。
+     * <p><b>2026-11-09 阁主 T261109053740-701（P9 定案）：代号校验只在 ExpHub 做。</b>
+     * 忆阁不取、不存、不校验，也不做拼错纠正 —— 名字对不对由这里说了算。
      *
-     * <p>归一只作用于**发信时**，不动历史数据：老信的 `to_role` 保持原样（改历史破「只追加不可改」），
-     * 但 `thread()` 只按 thread_id 查、不校验 to_role，所以老线程照样能展开。
+     * <p>旧实现读 {@code application.yml} 的 {@code known-roles} 并 ∪「库里出现过的 role」，
+     * 两处都有洞：停用一个角色后，只要历史信里还留着它的 {@code to_role}，并集就把它原地复活
+     * （停用永远停不掉）；而 {@code zhuolong} 这种拼错因为「历史上真存在过」被当成合法代号，
+     * 于是信入库、收件箱精确匹配不上、发件方全程无感（#22/#45/#72，#1459 同机制）。
+     * 现在历史脏代号只以 {@code OBSERVED → PENDING_REVIEW} 落库等人工复核，<b>不再作为合法来源</b>。
      */
-    @Value("${exphub.mail.role-aliases:}")
-    private String roleAliasesConfig;
-
-    /** 动态角色集合的缓存（库里出现过的 role 不常变，缓存 60 秒够用）。 */
-    private volatile Set<String> cachedDbRoles;
-    private volatile long cachedDbRolesAt;
-
-    private static final long ROLE_CACHE_MS = 60_000L;
+    @Autowired
+    private MailRoleCatalog roleCatalog;
 
     /**
      * 授权链标识的长度上限，<b>与 {@code mail_messages.chain_id VARCHAR(64)} 对齐</b>。
@@ -90,95 +74,37 @@ public class MailboxService {
      */
     private static final int MAX_CHAIN_ID_LEN = 64;
 
-    /**
-     * 可用角色代号 = 配置基准表 ∪ 库里真实出现过的 role。
-     *
-     * <p><b>为什么还要并上库里的</b>：只认配置的话，新增助手必须先改配置、发版、重启才能收信 ——
-     * 而它只要发过一封或收过一封，库里就有记录。反过来，只认库里的也不行：新助手第一次发信时
-     * 库里还没有它，会把自己也拒掉（鸡生蛋）。两边并起来才没有这个死结。
-     */
+    /** 当前可投递正名（{@code mail_roles} 里 {@code status='ACTIVE'} 的汉字行，已去空白）。 */
     public Set<String> knownRoles() {
-        LinkedHashSet<String> set = new LinkedHashSet<>();
-        if (knownRolesConfig != null) {
-            for (String s : knownRolesConfig.split(",")) {
-                String v = s.trim().toLowerCase(Locale.ROOT);
-                if (!v.isEmpty()) set.add(v);
-            }
-        }
-        for (String r : dbRoles()) {
-            if (r != null && !r.isBlank()) set.add(r.trim().toLowerCase(Locale.ROOT));
-        }
-        return set;
-    }
-
-    /** 只取配置表的代号（**给人看的**列表）。 */
-    public Set<String> displayRoles() {
-        LinkedHashSet<String> set = new LinkedHashSet<>();
-        if (knownRolesConfig != null) {
-            for (String s : knownRolesConfig.split(",")) {
-                String v = s.trim().toLowerCase(Locale.ROOT);
-                if (!v.isEmpty()) set.add(v);
-            }
-        }
-        return set;
-    }
-
-    private Set<String> dbRoles() {
-        long now = System.currentTimeMillis();
-        Set<String> cached = cachedDbRoles;
-        if (cached != null && now - cachedDbRolesAt < ROLE_CACHE_MS) return cached;
-        Set<String> fresh = new LinkedHashSet<>();
-        try {
-            List<String> rs = msgMapper.distinctRoles();
-            if (rs != null) for (String r : rs) if (r != null) fresh.add(r);
-        } catch (Exception e) {
-            // 查不出来不能阻断发信：退化成「只认配置表」，并留日志
-            log.warn("MailboxService.dbRoles: 查询历史角色失败，退化为仅用配置表：{}", e.getMessage());
-        }
-        cachedDbRoles = fresh;
-        cachedDbRolesAt = now;
-        return fresh;
+        return roleCatalog.activeRoles();
     }
 
     /**
-     * 收件代号是否合法（大小写不敏感）。
+     * 收件代号是否合法（大小写不敏感、别名先归一）。
      *
-     * <p>校的是「这个代号有没有人用」，**不是权限** —— 信箱本身是委托信任。
-     * 目的是拦住「传了显示名导致信投进没人收的地方」这一类静默失败。
+     * <p>校的是「这个代号现在能不能投递」，<b>不是权限</b> —— 信箱本身是委托信任。
+     * 目的是拦住「传了显示名 / 拼错了 / 角色已停用」这一类<b>静默投丢</b>。
+     *
+     * <p>⚠️ 清单<b>读不到</b>时本方法一律返回 false。发信入口不要只调它，
+     * 否则会把「服务端故障」显示成「收件人写错」—— 请走 {@link MailRoleCatalog#check}。
      */
     public boolean isKnownRole(String role) {
-        if (role == null || role.isBlank()) return false;
-        return knownRoles().contains(role.trim().toLowerCase(Locale.ROOT));
+        return roleCatalog.isDeliverable(role);
     }
 
-    /** 别名表（别名 → 正名），全部小写；配置为空时返回空表，不抛错。 */
+    /** 别名表（别名 → 正名），全部小写；读不到时返回空表，不抛错。 */
     public Map<String, String> roleAliases() {
-        Map<String, String> map = new LinkedHashMap<>();
-        if (roleAliasesConfig == null || roleAliasesConfig.isBlank()) return map;
-        for (String pair : roleAliasesConfig.split("[,，]")) {
-            if (pair == null || pair.isBlank()) continue;
-            int eq = pair.indexOf('=');
-            if (eq <= 0 || eq == pair.length() - 1) continue;
-            String k = pair.substring(0, eq).trim().toLowerCase(Locale.ROOT);
-            String v = pair.substring(eq + 1).trim().toLowerCase(Locale.ROOT);
-            if (!k.isEmpty() && !v.isEmpty() && !k.equals(v)) map.put(k, v);
-        }
-        return map;
+        return roleCatalog.aliases();
     }
 
     /**
      * 把收件人归一成正名（去空白、转小写、查别名表）。
      *
-     * <p>只在空值上返回原样的空串；不认识的代号原样返回（交给 {@link #isKnownRole} 去拒），
-     * 所以本方法只「修已知的拼错」，不负责放行。
+     * <p>不认识的原样返回（交给校验去拒），所以本方法只「修已知的拼错」，不负责放行。
+     * 别名链只走一跳：a=b、b=c 时 a 归一到 b，不再递归 —— 配错循环不会把信吞进死胡同。
      */
     public String canonicalRole(String role) {
-        if (role == null) return null;
-        String v = role.trim().toLowerCase(Locale.ROOT);
-        if (v.isEmpty()) return v;
-        String mapped = roleAliases().get(v);
-        // 别名链只走一跳：a=b、b=c 时 a 归一到 b，不再递归 —— 配错循环不会把信吞进死胡同
-        return mapped == null ? v : mapped;
+        return roleCatalog.canonicalRole(role);
     }
 
     /**
@@ -186,35 +112,72 @@ public class MailboxService {
      *
      * <p><b>为什么光在发信时归一还不够（2026-11-08 阁主 #119）</b>：发信归一只能保证**新信**
      * 落在正名下；历史行（如 #110 的 {@code to_role=piyao}）按「只追加不可改」原则不动，
-     * 而 {@code inbox()} 原本按 {@code to_role} 精确匹配 —— 只改配置的话，那封信照样烂在库里，
-     * 当事人永远看不见。所以读侧也要按别名并查。
+     * 而 {@code inbox()} 按 {@code to_role} 匹配 —— 只归一读侧不并查的话，那封信照样烂在库里，
+     * 当事人永远看不见。
      */
     public Set<String> roleVariants(String role) {
-        LinkedHashSet<String> out = new LinkedHashSet<>();
-        String canon = canonicalRole(role);
-        if (canon == null || canon.isBlank()) return out;
-        out.add(canon);
-        for (Map.Entry<String, String> e : roleAliases().entrySet()) {
-            if (canon.equals(e.getValue())) out.add(e.getKey());
-        }
-        return out;
+        return roleCatalog.variants(role);
     }
 
-    /** 收件人不合法时的拒绝文案：中文显示名要单独说清，不然对方下次还写中文。 */
-    public String unknownRecipientMessage(String to) {
-        String t = to == null ? "" : to.trim();
+    /**
+     * 收件人被拒时的<b>结构化错误</b>（2026-11-09 阁主 P9 第 2 条 + T261109054938-679）。
+     *
+     * <p>只给三块：被拒收件人（原样回显）/ 不超过 {@value MailRoleCatalog#MAX_CANDIDATES} 个候选
+     * / 一句提示。<b>不再拼全清单</b> —— 一百多个收件人会撑成一屏，客户端还会截断，最后谁都看不到。
+     * 忆阁原样转给用户即可，不需要解析。
+     *
+     * <p><b>出口一律汉字</b>：候选、提示、名单都写「烛龙 / 貔貅」。被拒值原样回显（用户传了什么就显示什么），
+     * 但它不是正名，不会写进库里。
+     *
+     * <p><b>候选只用于展示</b>（阁主 T261109054529-699）：调用方不得据此自动改写收件人并重发。
+     *
+     * <p>清单读不到时（冷启动 / 库连不上）走单独一支：<b>明说这是 ExpHub 的故障</b>，
+     * 不许说成「收件人不存在」—— 那是 #1459 把服务端故障说成用户写错的老毛病。
+     */
+    public String recipientRejectionMessage(String raw, MailRoleCatalog.Check check) {
+        String shown = raw == null ? "" : raw.trim();
         StringBuilder sb = new StringBuilder();
-        boolean nonAscii = t.codePoints().anyMatch(c -> c > 127);
-        if (nonAscii) {
-            sb.append("收件人写成了显示名「").append(t).append("」，已拒绝（未发出任何信）。\n\n");
-            sb.append("角色代号一律**小写英文**、不带引号、不带中文。你要找的大概是下面某一个。\n");
-        } else {
-            sb.append("收件人「").append(t).append("」不是已知角色代号，已拒绝（未发出任何信）。\n\n");
+        if (check.kind() == MailRoleCatalog.Check.Kind.UNAVAILABLE) {
+            sb.append("收件人无法校验（未发出任何信）\n");
+            sb.append("- 被拒收件人：").append(code(shown)).append("\n");
+            sb.append("- 候选（最多 ").append(MailRoleCatalog.MAX_CANDIDATES).append(" 个）：—\n");
+            sb.append("- 提示：ExpHub 的角色清单暂时读不到，这不是你把收件人写错了；")
+              .append("这是服务端故障，请稍后重试并报维护者，别靠改名字去试。\n");
+            sb.append("- ⚠️ 调用方不得依据本响应自动改写收件人并重发：候选是给人看的，不是给程序猜的。");
+            return sb.toString();
         }
-        sb.append("可用代号：").append(String.join(" / ", displayRoles())).append("\n\n");
-        sb.append("代号表是单一数据源：`application.yml` 的 `exphub.mail.known-roles`（另并上库里已出现过的代号）。\n");
-        sb.append("这条校验只在**开新线程**时生效；回信（带 inReplyTo）不拦，避免历史线程被卡死。");
+
+        List<String> cands = check.candidates();
+        sb.append("收件人无效（未发出任何信）\n");
+        sb.append("- 被拒收件人：").append(code(shown)).append("\n");
+        sb.append("- 候选（最多 ").append(MailRoleCatalog.MAX_CANDIDATES).append(" 个）：");
+        if (cands.isEmpty()) {
+            sb.append("— （没有足够接近的正名；当前可投递 ")
+              .append(check.snapshot().activeRoles().size()).append(" 个）");
+        } else {
+            sb.append(cands.stream().map(c -> "`" + c + "`").collect(Collectors.joining("、")));
+        }
+        sb.append("\n- 提示：没有这个收件人：").append(shown.isEmpty() ? "（空）" : shown).append("。");
+        if (!cands.isEmpty()) sb.append("你是想发 ").append(cands.get(0)).append("？");
+        sb.append("收件人正名是汉字（如「烛龙」）；拼音别名（如 zhulong）仍可投递，会被归一到汉字。");
+        sb.append("本份清单加载于 ").append(stamp(check.snapshot().loadedAt()))
+          .append("（每 30 秒刷新一次，刚加的角色可能还没生效）");
+        if (check.snapshot().degraded()) {
+            sb.append("；⚠️ 最近一次刷新失败，用的仍是这份旧名单");
+        }
+        sb.append("；回信（带 inReplyTo）不走这条校验，收件人取父消息的发件人。\n");
+        sb.append("- ⚠️ 调用方不得依据本响应自动改写收件人并重发：候选是给人看的，不是给程序猜的。");
         return sb.toString();
+    }
+
+    /** 毫秒时间戳 → {@code MM-dd HH:mm}（与信封列表同一口径）。 */
+    private static String stamp(long epochMillis) {
+        return TS.format(java.time.Instant.ofEpochMilli(epochMillis)
+                .atZone(java.time.ZoneId.systemDefault()));
+    }
+
+    private String code(String shown) {
+        return shown.isEmpty() ? "（空）" : "`" + shown + "`";
     }
 
     // ---------------------------------------------------------------- 发信
@@ -239,7 +202,7 @@ public class MailboxService {
      *
      * <p><b>为什么加这三个字段</b>（阁主 T261109035247-364）：忆阁代理人模式要做授权链深度控制，
      * 但服务端原本既没有链字段、也分不出「代理自动回合发的信」和「阁主本人发的信」——
-     * 两者的 {@code from_role} 都是 {@code gezhu}。所以只能由调用方在发信时自报，
+     * 两者的 {@code from_role} 都是「阁主」。所以只能由调用方在发信时自报，
      * 服务端记住并回显，<b>不做任何推导</b>。
      *
      * @param chainId 授权链根标识；null=不属于任何授权链。传空白或超过 64 字符直接拒（不静默修正）
@@ -252,9 +215,11 @@ public class MailboxService {
         if (fromRole == null || fromRole.isBlank()) {
             throw new IllegalArgumentException("没有角色，发不了信：客户端配置里没有声明角色");
         }
-        if (toRole == null || toRole.isBlank()) {
-            throw new IllegalArgumentException("收件人是空的");
-        }
+        // 2026-11-09 阁主 T261109054938-679：入口统一归一到汉字正名再入库。
+        // 客户端配置里可能仍是拼音（zhulong），这里统一换成「烛龙」——出口/日志/审计一律汉字。
+        String from = roleCatalog == null ? fromRole.trim() : roleCatalog.canonicalRole(fromRole);
+        if (from == null || from.isBlank()) from = fromRole.trim();
+        // 收件人可以为空 <b>仅限回信</b>：带 inReplyTo 时收件人由父消息发件人决定（见下方 resolve）。
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("主题是空的");
         }
@@ -270,26 +235,10 @@ public class MailboxService {
         mailFields.put("信箱正文", body == null ? "" : body);
         SensitiveContentGuard.check(mailFields);
 
-        // 2026-11-08（阁主 #76，越哥批准）：**发信时归一别名，历史数据不动**。
-        // 事故链：`zhuolong`（多一个 o）在库里存在过 → 被 dbRoles 兜底进 accept 集合 →
-        // 校验放行 → 入库 → inbox() 按 to_role 精确匹配 → 谁都收不到，且发件方全程无感（#22/#45/#72）。
-        // 删配置表无效（库里还有），所以只能在这里把别名折成正名。
-        String rawTo = toRole.trim();
-        toRole = canonicalRole(rawTo);
-        if (!rawTo.equalsIgnoreCase(toRole)) {
-            log.info("MailboxService.send: 收件人别名归一 {} -> {}", rawTo, toRole);
-        }
+        String rawTo = toRole == null ? "" : toRole.trim();
 
-        // 2026-11-08（阁主 #51 拍板）：**只在校验开新线程**。
-        // 根因：to 是自由文本，传了显示名（如「烛龙」）时服务端既不校验也不报错，
-        // 只会存一条谁都匹配不上的记录 —— 发件方全程黑盒，还得靠对方反馈才知道发丢了（#45）。
-        // 回信不校验：带 inReplyTo 时收件人已由父消息确定，把回信拒掉比发丢更伤，
-        // 而且历史里已存在的拼错 role 会把老线程永久卡死。
-        if (inReplyTo == null && !isKnownRole(toRole)) {
-            throw new IllegalArgumentException(unknownRecipientMessage(toRole));
-        }
-
-        // 幂等：重试不重复发（工具超时重试很常见）
+        // 幂等：重试不重复发（工具超时重试很常见）。放在收件人解析之前 ——
+        // 重试命中时父消息已存在，没必要再跑一遍校验/解析。
         if (clientMsgId != null && !clientMsgId.isBlank()) {
             MailMessage exist = msgMapper.selectOne(new QueryWrapper<MailMessage>()
                     .eq("client_msg_id", clientMsgId).last("LIMIT 1"));
@@ -306,14 +255,50 @@ public class MailboxService {
                 throw new IllegalArgumentException("父消息不存在：#" + inReplyTo + "（不新建线程，避免回信开成孤儿）");
             }
             threadId = parent.getThreadId();
+
+            // 2026-11-09 阁主 P9 第 3 条（白泽查出来的漏）：<b>回信的收件人必须取父消息的发件人</b>。
+            // 旧实现「回信不校验收件人、to 按入参入库」，于是一封 to 写错的回信照样入库、
+            // 线程里看得见，对方收件箱里却没有 —— 发件方还以为送到了。
+            String parentFrom = parent.getFromRole() == null ? "" : parent.getFromRole().trim();
+            if (parentFrom.isEmpty()) {
+                throw new IllegalArgumentException("父消息 #" + inReplyTo + " 没有记录发件人，无法确定回信收件人；"
+                        + "请不传 inReplyTo 新开线程并指定 to（未发出任何信）。");
+            }
+            String derived = canonicalRole(parentFrom);
+            if (!rawTo.isEmpty()) {
+                String given = canonicalRole(rawTo);
+                if (given == null || !given.equalsIgnoreCase(derived)) {
+                    // 不静默改成父消息发件人：调用方以为自己发给了 A，实际给了 B，比报错更危险（AGENTS 9c）
+                    throw new IllegalArgumentException("回信的收件人不能自己指定：带 inReplyTo 时收件人取父消息 #"
+                            + inReplyTo + " 的发件人【" + derived + "】，而这次传的 to 是「" + rawTo + "」（归一为 "
+                            + given + "）。要发给 " + given + " 请新开线程（不传 inReplyTo）；要回给 "
+                            + derived + " 就删掉 to 再发（未发出任何信）。");
+                }
+            }
+            toRole = derived;
+            // 回信**不校验** ACTIVE 名单：父消息的发件人可能是已停用 / 历史代号，
+            // 拦掉会让老线程永久卡死（把回信拒掉比投错更伤）。线程归属仍由父消息决定。
         } else {
+            if (rawTo.isEmpty()) {
+                throw new IllegalArgumentException("收件人是空的：开新线程必须传 to（回信可留空，收件人取父消息发件人）");
+            }
+            // 2026-11-09 阁主 P9 第 1 条：**只在 DB 清单（status=ACTIVE）里校验**，不再与「库里出现过的代号」并集。
+            // 并集会把已停用的角色按历史信原地复活（停用永远停不掉），也会让拼错代号因「历史上存在过」而合法（#1459）。
+            MailRoleCatalog.Check check = roleCatalog.check(rawTo);
+            if (check.kind() != MailRoleCatalog.Check.Kind.OK) {
+                throw new IllegalArgumentException(recipientRejectionMessage(rawTo, check));
+            }
+            toRole = check.canonical();
+            if (!rawTo.equalsIgnoreCase(toRole)) {
+                log.info("MailboxService.send: 收件人别名归一 {} -> {}", rawTo, toRole);
+            }
             threadId = newThreadId();
         }
 
         MailMessage m = new MailMessage();
         m.setThreadId(threadId);
         m.setInReplyTo(inReplyTo);
-        m.setFromRole(fromRole.trim());
+        m.setFromRole(from);
         m.setToRole(toRole.trim());
         m.setMsgType(normalizeType(msgType));
         m.setSubject(subject.trim());
@@ -326,8 +311,8 @@ public class MailboxService {
         msgMapper.insert(m);
 
         // 发件人自己的游标推到这条：自己写的不用再「未读」给自己
-        advanceCursor(fromRole.trim(), threadId, m.getId());
-        log.info("MailboxService.send: {} -> {}, thread={}, id={}", fromRole, toRole, threadId, m.getId());
+        advanceCursor(from, threadId, m.getId());
+        log.info("MailboxService.send: {} -> {}, thread={}, id={}", from, toRole, threadId, m.getId());
         return m;
     }
 
@@ -496,8 +481,12 @@ public class MailboxService {
      */
     public List<Envelope> outbox(String role, String q, int limit) {
         if (role == null || role.isBlank()) return new ArrayList<>();
+        // 读侧并查别名：历史行的 from_role 可能是拼音（迁移前的信 / 刷不动的脏值），
+        // 只按汉字精确匹配会让发件箱少一段历史。
+        Set<String> myVariants = roleVariants(role);
+        if (myVariants.isEmpty()) myVariants = Set.of(role.trim());
         List<MailMessage> mine = msgMapper.selectList(new QueryWrapper<MailMessage>()
-                .eq("from_role", role.trim())
+                .in("from_role", myVariants)
                 .orderByDesc("id").last("LIMIT " + SCAN_BATCH));
         if (mine.isEmpty()) return new ArrayList<>();
 

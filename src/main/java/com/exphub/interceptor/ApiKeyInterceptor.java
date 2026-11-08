@@ -136,9 +136,11 @@ public class ApiKeyInterceptor implements HandlerInterceptor {
                 request.getHeader(com.exphub.mcp.MailIdentity.HEADER_ROLE),
                 request.getHeader(com.exphub.mcp.MailIdentity.HEADER_CONFIG_SOURCE));
 
-        log.info("validateApiKey: assistant set, assistantId={}, assistantName={}, role={}, configSource={}",
+        // 2026-11-09 #679：不打印原始角色头（兼容期可能是拼音），出口/日志一律汉字；
+        // 规范正名由工具层归一并在回执里自证，这里保留 assistantId + configSource 定位配置。
+        log.info("validateApiKey: assistant set, assistantId={}, assistantName={}, configSource={}",
             assistant.getAssistantId(), assistant.getAssistantName(),
-            com.exphub.mcp.MailIdentity.role(), com.exphub.mcp.MailIdentity.configSource());
+            com.exphub.mcp.MailIdentity.configSource());
         return true;
     }
 

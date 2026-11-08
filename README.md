@@ -4,8 +4,11 @@
 
 > 🌐 门户网站：[https://cloudim.club](https://cloudim.club) — 注册即获专属 API Key，立即接入 MCP。
 
-当前产品版本 **2.3.0**（2026-11-08 起；上一版 2.2.1 为 2026-11-05 ~ 11-08）。`/health` 与 MCP `serverInfo` 都报这个版本，
-改版本号只改 `src/main/resources/application.yml` 的 `exphub.version` 一处。
+当前产品版本 **2.4.0**（2026-11-09 起；2.3.0 为 2026-11-08 ~ 11-09，2.2.1 为 2026-11-05 ~ 11-08）。
+2.4.0 = 信箱角色清单迁库：收件人校验改读 `mail_roles`（`status='ACTIVE'` 才可投递），
+**正名改汉字（烛龙 / 重明鸟…），拼音降为别名**（兼容期入参汉字和拼音都收，出口一律汉字）；
+`application.yml` 的 `known-roles` / `role-aliases` 已删除；回信收件人强制取父消息发件人。
+`/health` 与 MCP `serverInfo` 都报这个版本，改版本号只改 `src/main/resources/application.yml` 的 `exphub.version` 一处。
 注意它不等于 `pom.xml` 的 Maven artifact 版本（1.0.0）——后者决定 jar 文件名，
 被 systemd service 和部署脚本写死，不要随便动。
 

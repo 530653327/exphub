@@ -35,8 +35,11 @@ class MailboxChainMetadataTest {
         cursorMapper = mock(MailCursorMapper.class);
         ReflectionTestUtils.setField(svc, "msgMapper", msgMapper);
         ReflectionTestUtils.setField(svc, "cursorMapper", cursorMapper);
-        // 开新线程要校验收件人；配置表是单一数据源，这里直接注进去，不读 yml
-        ReflectionTestUtils.setField(svc, "knownRolesConfig", "zhulong,gezhu,baize");
+        // 开新线程要校验收件人；清单单一数据源是 mail_roles —— 注入「真 catalog + mock mapper」，不打库
+        ReflectionTestUtils.setField(svc, "roleCatalog", MailRoleFixtures.catalog(
+                java.util.Set.of("烛龙", "阁主", "白泽"),
+                java.util.Map.of("zhulong", "烛龙", "gezhu", "阁主", "baize", "白泽"),
+                java.util.Map.of()));
         // MyBatis 的 insert 会回填自增主键；mock 也得回填，否则 send() 推游标时拿到 null id
         when(msgMapper.insert(any(MailMessage.class))).thenAnswer(inv -> {
             ((MailMessage) inv.getArgument(0)).setId(99L);

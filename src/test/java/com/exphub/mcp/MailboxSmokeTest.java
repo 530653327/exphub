@@ -64,6 +64,20 @@ class MailboxSmokeTest {
     }
 
     @Test
+    @DisplayName("smoke: 配置里写拼音，回执第一行也显示汉字正名（出口一律汉字）")
+    void mailStartShowsCanonicalChineseName() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+        when(mailboxService.canonicalRole("zhulong")).thenReturn("烛龙");
+        when(mailboxService.unreadCount("烛龙")).thenReturn(0);
+        when(mailboxService.inbox(eq("烛龙"), isNull(), anyInt(), eq(false))).thenReturn(List.of());
+
+        String r = tools.mailStart(null, null, null, null, null);
+
+        assertTrue(r.startsWith("你是【烛龙】，配置来源 cfg-zhulong-01"),
+                "兼容期配置仍写拼音，但出口必须是汉字：\n" + r);
+    }
+
+    @Test
     @DisplayName("smoke: 没角色发不了信（from 不许模型自己填）")
     void mailSendWithoutRoleMustRefuse() {
         String r = tools.mailSend("baize", "主题", "正文", null, "note", null, null, null, null);

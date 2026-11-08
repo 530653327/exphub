@@ -266,5 +266,82 @@ CREATE TABLE IF NOT EXISTS mail_cursors (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='信箱阅读游标';
 
 -- ============================================================
+-- 15/16. 信箱角色清单（2026-11-09，阁主 #255 P9 定案 · A+B 合并；#679 正名改汉字）
+-- DB 唯一真源：status='ACTIVE' 才可投递。运行时读它，application.yml 不再有名单。
+-- **正名是汉字，拼音降为别名**：烛龙 / 白泽 / … / 穷奇；zhulong / baize / … 及其历史错拼
+-- 全部落在 mail_role_aliases。兼容期发信入参两种都收，入口统一归一到汉字。
+-- 种子必须与 sql/migrations/migration_20261109b_mail_roles.sql 一致（单测 MailRoleSeedMigrationTest 守卫）。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS mail_roles (
+    role         VARCHAR(32)  NOT NULL                COMMENT '角色正名（汉字，如 烛龙/重明鸟）；拼音是别名，与 mail_messages.to_role VARCHAR(32) 对齐',
+    display_name VARCHAR(64)  DEFAULT NULL            COMMENT '给人看的名字；正名已是汉字后与本行 role 同值，保留列只为兼容旧后台数据',
+    status       VARCHAR(16)  NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE=可投递 / PENDING_REVIEW=历史脏代号等人工复核 / DISABLED=停用（不删行）',
+    source       VARCHAR(16)  NOT NULL DEFAULT 'MANUAL' COMMENT 'MANUAL=后台新增 / SEEDED=随产物种子 / OBSERVED=从历史信一次性导入',
+    project_id   BIGINT       DEFAULT NULL            COMMENT '负责的项目ID；NULL=不绑定',
+    note         VARCHAR(255) DEFAULT NULL            COMMENT '备注：来源、待复核说明等',
+    created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by   VARCHAR(64)  DEFAULT NULL            COMMENT '谁建的（后台账号 / migration 标识）',
+    updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    updated_by   VARCHAR(64)  DEFAULT NULL            COMMENT '谁改的',
+    PRIMARY KEY (role),
+    KEY idx_mail_role_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='信箱可投递角色清单（DB 唯一真源；正名汉字，status=ACTIVE 才可投递）';
+
+CREATE TABLE IF NOT EXISTS mail_role_aliases (
+    alias      VARCHAR(32)  NOT NULL                COMMENT '别名 / 历史错拼（拼音，小写）',
+    role       VARCHAR(32)  NOT NULL                COMMENT '指向的正名（汉字）',
+    note       VARCHAR(255) DEFAULT NULL            COMMENT '为什么有这条别名（事故号/日期）',
+    created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (alias),
+    KEY idx_mail_alias_role (role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='收件人别名（拼音/错拼）→ 汉字正名（只走一跳）';
+
+INSERT IGNORE INTO mail_roles (role, display_name, status, source, note, created_by) VALUES
+ ('烛龙',   '烛龙',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 zhulong 见别名表', 'migration_20261109b'),
+ ('白泽',   '白泽',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 baize 见别名表', 'migration_20261109b'),
+ ('阁主',   '阁主',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 gezhu 见别名表', 'migration_20261109b'),
+ ('夫诸',   '夫诸',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子（阁主 #219 发版角色）；拼音 fuzhu 见别名表', 'migration_20261109b'),
+ ('貔貅',   '貔貅',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 pixiu、错拼 piyao 见别名表', 'migration_20261109b'),
+ ('睚眦',   '睚眦',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 yazi、错拼 yaci 见别名表', 'migration_20261109b'),
+ ('麒麟',   '麒麟',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 qilin 见别名表', 'migration_20261109b'),
+ ('凤凰',   '凤凰',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 fenghuang 见别名表', 'migration_20261109b'),
+ ('重明鸟', '重明鸟', 'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 chongmingniao 见别名表', 'migration_20261109b'),
+ ('九尾狐', '九尾狐', 'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 jiuweihu 见别名表', 'migration_20261109b'),
+ ('帝江',   '帝江',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 dijiang 见别名表', 'migration_20261109b'),
+ ('穷奇',   '穷奇',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子（阁主 #222 哨兵阁负责人）；拼音 qiongqi 见别名表', 'migration_20261109b');
+
+INSERT IGNORE INTO mail_role_aliases (alias, role, note) VALUES
+ ('zhulong',       '烛龙',   '拼音别名：兼容客户端仍写 zhulong'),
+ ('baize',         '白泽',   '拼音别名：兼容客户端仍写 baize'),
+ ('gezhu',         '阁主',   '拼音别名：兼容客户端仍写 gezhu'),
+ ('fuzhu',         '夫诸',   '拼音别名：兼容客户端仍写 fuzhu'),
+ ('pixiu',         '貔貅',   '拼音别名：兼容客户端仍写 pixiu'),
+ ('yazi',          '睚眦',   '拼音别名：兼容客户端仍写 yazi'),
+ ('qilin',         '麒麟',   '拼音别名：兼容客户端仍写 qilin'),
+ ('fenghuang',     '凤凰',   '拼音别名：兼容客户端仍写 fenghuang'),
+ ('chongmingniao', '重明鸟', '拼音别名：兼容客户端仍写 chongmingniao'),
+ ('jiuweihu',      '九尾狐', '拼音别名：兼容客户端仍写 jiuweihu'),
+ ('dijiang',       '帝江',   '拼音别名：兼容客户端仍写 dijiang'),
+ ('qiongqi',       '穷奇',   '拼音别名：兼容客户端仍写 qiongqi'),
+ ('zhuolong',      '烛龙',   '历史错拼（#22/#45/#72 事故：多一个 o 曾让信静默投丢）'),
+ ('zhulogn',       '烛龙',   '历史错拼（键序颠倒）'),
+ ('zhulon',        '烛龙',   '历史错拼（少一个 g）'),
+ ('beize',         '白泽',   '历史错拼'),
+ ('gezu',          '阁主',   '历史错拼'),
+ ('piyao',         '貔貅',   '2026-11-08 阁主 #119：上一版把貔貅写成 piyao，历史行 #110 的 to_role=piyao 靠它读回'),
+ ('yaci',          '睚眦',   '2026-11-08 阁主 #119：睚眦的旧拼写');
+
+-- 历史出现过的未知收件人 → OBSERVED + PENDING_REVIEW（新库此时 mail_messages 为空，导入 0 行；升级库见 migration_20261109b）
+INSERT IGNORE INTO mail_roles (role, status, source, note, created_by)
+SELECT h.r, 'PENDING_REVIEW', 'OBSERVED', '历史信里出现过、尚未人工复核（复核后改 ACTIVE 或 DISABLED）', 'migration_20261109b'
+FROM (
+    SELECT DISTINCT LOWER(TRIM(from_role)) AS r FROM mail_messages
+    UNION
+    SELECT DISTINCT LOWER(TRIM(to_role))   AS r FROM mail_messages
+) h
+WHERE h.r IS NOT NULL AND h.r <> ''
+  AND NOT EXISTS (SELECT 1 FROM mail_role_aliases a WHERE a.alias = h.r);
+
+-- ============================================================
 -- 完成
 -- ============================================================

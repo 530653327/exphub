@@ -40,7 +40,10 @@ class MailSendChainMetadataReceiptTest {
         cursorMapper = mock(MailCursorMapper.class);
         ReflectionTestUtils.setField(svc, "msgMapper", msgMapper);
         ReflectionTestUtils.setField(svc, "cursorMapper", cursorMapper);
-        ReflectionTestUtils.setField(svc, "knownRolesConfig", "zhulong,gezhu,baize");
+        ReflectionTestUtils.setField(svc, "roleCatalog", com.exphub.service.MailRoleFixtures.catalog(
+                java.util.Set.of("烛龙", "阁主", "白泽"),
+                java.util.Map.of("zhulong", "烛龙", "gezhu", "阁主", "baize", "白泽"),
+                java.util.Map.of()));
 
         // 模拟入库：assign id，并把这条消息当成「库里读回来的那份」
         when(msgMapper.insert(any(MailMessage.class))).thenAnswer(inv -> {
@@ -135,8 +138,8 @@ class MailSendChainMetadataReceiptTest {
         MailMessage exist = new MailMessage();
         exist.setId(77L);
         exist.setThreadId("T-OLD");
-        exist.setFromRole("gezhu");
-        exist.setToRole("zhulong");
+        exist.setFromRole("阁主");
+        exist.setToRole("烛龙");
         exist.setMsgType("note");
         exist.setSubject("通知");
         exist.setChainId("CHAIN-OLD");

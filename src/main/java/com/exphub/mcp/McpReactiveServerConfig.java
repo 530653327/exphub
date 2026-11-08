@@ -164,8 +164,11 @@ public class McpReactiveServerConfig {
                 MailIdentity.set(
                         request.headers().firstHeader(MailIdentity.HEADER_ROLE),
                         request.headers().firstHeader(MailIdentity.HEADER_CONFIG_SOURCE));
-                log.debug("MCP WebFlux: authorized, assistantId={}, role={}, configSource={}, path={}, thread={}",
-                        assistant.getAssistantId(), MailIdentity.role(), MailIdentity.configSource(),
+                // 2026-11-09 #679：这里不打印原始角色头 —— 兼容期它可能仍是拼音（zhulong），
+                // 而出口/日志约定一律汉字。规范正名由工具层归一并在 mail_start / mail_send 回执里自证；
+                // 日志保留 assistantId + configSource 已足够定位是哪份配置。
+                log.debug("MCP WebFlux: authorized, assistantId={}, configSource={}, path={}, thread={}",
+                        assistant.getAssistantId(), MailIdentity.configSource(),
                         request.path(), Thread.currentThread().getName());
 
                 // 【重要】只在 SSE 长连接真正关闭时清理身份。

@@ -13,7 +13,12 @@ package com.exphub.mcp;
  */
 public final class MailIdentity {
 
-    /** 客户端配置里写死的角色代号，如 zhulong / baize / gezhu。 */
+    /**
+     * 客户端配置里写死的角色，如「烛龙」/ 白泽。
+     *
+     * <p>2026-11-09 起<b>正名是汉字</b>；拼音（zhulong / baize / gezhu）仍兼容，
+     * 服务端入口统一归一到汉字再入库/输出（阁主 T261109054938-679）。
+     */
     public static final String HEADER_ROLE = "x-exphub-role";
 
     /**

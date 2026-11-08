@@ -6013,22 +6013,32 @@ public class ExpHubTools {
     // 身份 = 共享 Key + 客户端配置里写死的请求头，属「委托信任」，不是鉴权。
     // ================================================================
 
-    /** 当前角色：优先客户端配置注入的请求头，其次参数兜底（只有带不了 header 的客户端才用）。 */
+    /**
+     * 当前角色：优先客户端配置注入的请求头，其次参数兜底（只有带不了 header 的客户端才用）。
+     *
+     * <p><b>2026-11-09 阁主 T261109054938-679</b>：正名已是汉字，客户端配置里可能仍写着拼音
+     * （{@code x-exphub-role: zhulong}）。这里统一归一到汉字（{@code 烛龙}）——
+     * 兼容期两种写法都收，但出口、日志、审计一律汉字，不允许「库里汉字、日志拼音」这种半套。
+     */
     private String mailRole(String fallback) {
         String r = MailIdentity.role();
         if (r == null || r.isBlank()) r = fallback;
-        return (r == null) ? null : r.trim();
+        if (r == null) return null;
+        String trimmed = r.trim();
+        String canon = mailboxService == null ? null : mailboxService.canonicalRole(trimmed);
+        return (canon == null || canon.isBlank()) ? trimmed : canon;
     }
 
     @Tool(name = "mail_start",
           description = "【开工先调这个】取「你是谁 + 未读信封」。身份来自客户端配置注入的 x-exphub-role 头（委托信任，不是鉴权）；"
+                      + "**角色正名是汉字（如「烛龙」），拼音（zhulong）仍兼容并会自动归一成汉字**；回执里的角色一律汉字。"
                       + "没配角色就只回提示、不给任何私信。信封按线程聚合，每根一行：主题/发件人/新消息数/正文首 100 字。"
                       + "要展开某根用 mail_thread；q 只搜主题/发件人/类型，不搜正文。"
                       + "sent=true 切到**发件视角**（看你发出去的、含发给谁），默认 false=收件视角。")
     public String mailStart(
             @ToolParam(description = "可选。搜信封的关键词（只匹配主题/发件人/类型，不搜正文）", required = false) String q,
             @ToolParam(description = "可选。最多列几根线程，默认 20，上限 50", required = false) Integer limit,
-            @ToolParam(description = "可选。角色代号兜底。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role,
+            @ToolParam(description = "可选。角色兜底（汉字正名或拼音别名都行，服务端会归一成汉字）。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role,
             @ToolParam(description = "可选。true=发件视角（我发出去的，列出收件人）；**默认 false**，不传就是收件视角。"
                     + "发信方自查「到底发给了谁」用它 —— 收件视角永远看不到自己发的信", required = false) Boolean sent,
             @ToolParam(description = "可选。true=**只读未读摘要**：只给线程数/消息数/每根的主题类型，"
@@ -6044,7 +6054,7 @@ public class ExpHubTools {
                 sb.append("本机制是**委托信任、不是鉴权** —— 服务端不认人，只按配置给信件贴收件人标签。\n");
                 sb.append("配好之前**不给任何私信**，免得串信。\n");
                 sb.append("配法：MCP 客户端配置加请求头 `").append(MailIdentity.HEADER_ROLE)
-                  .append(": 你的代号`、`").append(MailIdentity.HEADER_CONFIG_SOURCE)
+                  .append(": 你的角色（汉字正名，拼音也兼容）`、`").append(MailIdentity.HEADER_CONFIG_SOURCE)
                   .append(": 唯一配置标识`（九份配置别从模板复制，实例 ID 必须各不相同）。\n");
                 return sb.toString();
             }
@@ -6152,10 +6162,13 @@ public class ExpHubTools {
           description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 inReplyTo，线程自动推导（没有 threadId 参数）。"
                       + "消息只追加不可改，要纠错发一条 type=fix 引用原信。clientMsgId 做幂等，工具超时重试不会发两封。"
                       + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。"
-                      + "收件人写的是历史别名（如 zhuolong）会自动归一到正名并在回执里说明。"
+                      + "**收件人正名是汉字（如「烛龙」）；拼音（zhulong）和错拼（zhuolong）仍兼容，会归一到汉字并在回执里说明**。"
+                      + "**回信（带 inReplyTo）的收件人强制取父消息发件人**，不接受自选。"
                       + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。")
     public String mailSend(
-            @ToolParam(description = "收件角色代号，如 baize / gezhu") String to,
+            @ToolParam(description = "收件人：正名优先写汉字（如「烛龙」「重明鸟」）；拼音（zhulong）也收，"
+                    + "会归一到汉字后入库。开新线程必填；回信（带 inReplyTo）可留空 —— "
+                    + "收件人取父消息的发件人，传了且与父消息发件人不一致会被明拒", required = false) String to,
             @ToolParam(description = "主题，一句话说清这件事") String subject,
             @ToolParam(description = "正文。建议不超过 8000 字，超了拆成多条；禁止写账号密码密钥") String body,
             @ToolParam(description = "可选。回信填父消息ID；不填=开新线程", required = false) Long inReplyTo,
@@ -6188,16 +6201,14 @@ public class ExpHubTools {
               .append("，类型 ").append(m.getMsgType());
             if (m.getInReplyTo() != null) sb.append("，回复 #").append(m.getInReplyTo());
             sb.append("\n");
-            // 2026-11-08：回信不校验收件人（不收件人已由父消息确定，拒掉比发丢更伤），
-            // 但对不上就明确提醒 —— 静默投错人比报错危险。
+            // 2026-11-09 阁主 P9 第 3 条：回信的收件人**取父消息发件人**（服务端强制），
+            // 不再按入参入库 —— 旧行为下 to 写错的回信照样入库、线程里看得见，
+            // 对方收件箱里却没有，发件方还以为送到了。这里回读库里的 to_role 自证。
             if (m.getInReplyTo() != null) {
-                MailMessage parent = mailboxService.byId(m.getInReplyTo());
-                if (parent != null && parent.getFromRole() != null
-                        && !m.getToRole().equalsIgnoreCase(parent.getFromRole())) {
-                    sb.append("⚠️ 收件人【").append(m.getToRole()).append("】与父消息发件人【")
-                      .append(parent.getFromRole()).append("】不一致。回信不拦（旧线程不能卡死），")
-                      .append("但这封信确实投给了前者，请确认没发错人。\n");
-                }
+                MailMessage storedMsg = mailboxService.byId(m.getId());
+                String storedTo = storedMsg == null ? m.getToRole() : storedMsg.getToRole();
+                sb.append("收件人取自父消息 #").append(m.getInReplyTo()).append(" 的发件人【")
+                  .append(storedTo).append("】（回信不许自选收件人，避免 to 写错却照样入库）\n");
             }
             // 传了授权链元数据 → 回读库里的实际值再报，不按入参复述（AGENTS 第 10 章）
             if (chainId != null || auto != null || depth != null) {
@@ -6273,10 +6284,8 @@ public class ExpHubTools {
                     + "只接受本线程里真实存在的消息ID，且只前进不后退；跨线程的ID会被拒。"
                     + "目标之后还有几封会写在回执里", required = false) Long advanceTo) {
         try {
-            String me = mailRole(null);
-            if (me == null) {
-                return "❌ 读不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE + "` 头。";
-            }
+            // 参数自身的错误先判：这些分支不需要读名单（mailRole 会归一角色，可能触发一次清单读取），
+            // 「缺 threadId」「peek 与 advanceTo 互斥」应当在碰任何信箱数据之前就拒掉。
             if (threadId == null || threadId.isBlank()) {
                 return "❌ 要 threadId。从 mail_start 的信封列表里抄，别自己编。";
             }
@@ -6286,6 +6295,10 @@ public class ExpHubTools {
                 return "❌ advanceTo 不能和 " + (peekMode ? "peek" : "full") + " 一起传："
                         + "advanceTo 只推游标、不返回正文，peek 是只读，full 是回溯读正文 —— 三者语义冲突。"
                         + "要推进请单独调一次 `mail_thread(threadId=…, advanceTo=消息ID)`。";
+            }
+            String me = mailRole(null);
+            if (me == null) {
+                return "❌ 读不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE + "` 头。";
             }
             int def = backfill ? 30 : 10;
             int lim = (limit == null || limit <= 0) ? def : Math.min(limit, 50);
