@@ -112,7 +112,7 @@ class MainEntrySmokeTest {
     @DisplayName("smoke: 主要 MCP 入口按默认参数真跑一遍，不抛异常、不返回异常回执")
     void mainEntriesWithDefaultArgsMustNotBlowUp() {
         Map<String, Callable<String>> cases = new LinkedHashMap<>();
-        cases.put("search_experience", () -> tools.searchExperience("部署", null, null, null, null, null, null, null));
+        cases.put("search_experience", () -> tools.searchExperience("部署", null, null, null, null, null, null, null, null));
         cases.put("get_experience_detail", () -> tools.getExperienceDetail(1L, null));
         cases.put("get_experience_history", () -> tools.getExperienceHistory(1L, null, null));
         cases.put("get_template", () -> tools.getTemplate(null));
@@ -151,8 +151,8 @@ class MainEntrySmokeTest {
     @DisplayName("smoke: 可选参数为 null / 空串的组合，同样不得抛异常或返回异常回执")
     void emptyOptionalArgsAreSafe() {
         Map<String, Callable<String>> cases = new LinkedHashMap<>();
-        cases.put("search_experience(scope=all)", () -> tools.searchExperience("部署", null, null, null, "all", null, null, null));
-        cases.put("search_experience(brief=true)", () -> tools.searchExperience("部署", null, null, null, null, 5, 0, true));
+        cases.put("search_experience(scope=all)", () -> tools.searchExperience("部署", null, null, null, "all", null, null, null, null));
+        cases.put("search_experience(brief=true,explain=true)", () -> tools.searchExperience("部署", null, null, null, null, 5, 0, true, true));
         cases.put("get_tool_stats(7,20)", () -> tools.getToolStats(7, 20));
         cases.put("list_recent_memories(since=today)", () -> tools.listRecentMemories(10, null, "today"));
         cases.put("list_recent_memories(badCursor)", () -> tools.listRecentMemories(null, "not-a-cursor", null));

@@ -70,6 +70,17 @@ public class DocService {
         return fields;
     }
 
+    /**
+     * 给「不走 {@link #update} 的写路径」留的统一凭据检测入口（2026-11-08 阁主 #134）。
+     *
+     * <p>门户「更新我的经验」PUT 直接 {@code docMapper.updateById}，绕开业务层 ——
+     * 它是拦截上线后唯一还漏的写入口。改法必须是「调这一个方法」，不要在控制器里
+     * 另抄一份字段清单：抄一份就必然有一份是旧的（同 AGENTS 第 1 章「建议文案只能有一处出处」）。
+     */
+    public static void checkSensitive(Doc d) {
+        SensitiveContentGuard.check(guardFields(d));
+    }
+
     @Transactional
     public Doc create(Doc doc) {
         SensitiveContentGuard.check(guardFields(doc));
@@ -191,6 +202,100 @@ public class DocService {
          * 换成重排数又对不上库。两个数分开报，翻页仍以重排接受数为界。</p>
          */
         public long matchedTotal = -1L;
+
+        /**
+         * true=把打分过程回传（{@link #explain}）。默认 false：老调用方零改动、回执零增长。
+         *
+         * <p>为什么要它（2026-11-08 阁主 #134）：验收脚本只能靠 Python 复刻打分，
+         * 实测与线上逐位一致只有 10/33 和 23/33 —— 复刻是「另一套实现」，永远可能漂。
+         * 服务端自己吐分项之后，验收不再需要「两个实现对齐」，也不存在对不上的可能。
+         */
+        public boolean explain = false;
+
+        /** explain=true 且走到内存重排时填；其余情况为 null。 */
+        public SearchExplain explainResult;
+    }
+
+    /**
+     * 一次检索的打分快照（explain=true 时回传）。
+     *
+     * <p><b>证据同源约束</b>：这里的每个数字都必须是<b>本次实际参与打分</b>的那一份，
+     * 不许为了「看起来完整」另外重算一遍 —— 另算就等于又造了一套复刻。
+     * 所以 {@link #docs} 是 rankAndFilter 排序时顺手记下的，不是事后重跑。
+     */
+    public static final class SearchExplain {
+        public SearchTier tier = SearchTier.NONE;
+        /** 查询概念（去停用词后） */
+        public List<String> concepts = new ArrayList<>();
+        /** 送进 rankAndFilter 的候选条数（DB 召回池，≤ CANDIDATE_LIMIT） */
+        public int candidateCount;
+        /** 与候选集同条件的 DB 计数；-1=未知 */
+        public long matchedTotal = -1L;
+        /** 本次查询的门槛：至少命中几个概念 */
+        public int requiredMatches;
+        /** 一个概念都没命中而被跳过 */
+        public int droppedNoConcept;
+        /** 命中了但不足门槛而被跳过 */
+        public int droppedByThreshold;
+        /** 真正进入排序的条数 */
+        public int scoredCount;
+        /** 总分完全相同的组数（它们由 updated_at 决胜） */
+        public int tieGroupCount;
+        /** 按最终位次排列，只含进入排序的文档 */
+        public List<DocExplain> docs = new ArrayList<>();
+
+        public DocExplain byId(long id) {
+            for (DocExplain d : docs) {
+                if (d.id == id) return d;
+            }
+            return null;
+        }
+    }
+
+    /** 单篇文档的打分拆解。 */
+    public static final class DocExplain {
+        public long id;
+        public String title;
+        public String templateType;
+        /** 最终位次（1-based） */
+        public int rank;
+        /** 在 DB 召回池里的原始位次（1-based，NATURAL 分 × call_count 降序） */
+        public int candidateRank;
+        public int matched;
+        public int conceptTotal;
+        public double conceptScore;
+        public double coverage;
+        public double field;
+        public double recency;
+        public double popularity;
+        public double total;
+        /** 与本条总分完全相同的其它文档（按 updated_at 决胜） */
+        public List<Long> tiePeers = new ArrayList<>();
+        /** 同分组里本条是否排在最前（true=按更新时间胜出） */
+        public boolean tieWon;
+    }
+
+    /**
+     * 打分公式的**唯一出口**：回执里那几个常量串由这里生成，别在工具层再抄一份。
+     *
+     * <p>三个常量（阈值规则、预过滤、同分决胜）此前在 Python 复刻里各有一份，
+     * 改一处必须改另一处 —— 这正是 #131 实测 10/33、23/33 的根。现在统一从这里吐，
+     * Python 那份只做离线诊断，不再当判定依据。
+     */
+    public static String formulaNote() {
+        return String.format(
+                "total = %.2f*coverage + %.2f*field + %.2f*recency + %.2f*popularity"
+                        + "｜CONTENT_ONLY_FACTOR=%.2f｜CANDIDATE_LIMIT=%d"
+                        + "｜recency 权重为 0 时只在总分完全相同处决胜（updated_at 越新越前）",
+                0.55, 0.25, W_RECENCY, 0.08, CONTENT_ONLY_FACTOR, CANDIDATE_LIMIT);
+    }
+
+    /** 门槛规则的可读说明（同样只在这里生成）。 */
+    public static String thresholdNote(int required, int total) {
+        if (total <= 2) {
+            return "需命中 ≥" + required + " 个概念（共 " + total + " 个；单/双概念至少命中 1 个）";
+        }
+        return "需命中 ≥" + required + " 个概念（共 " + total + " 个；3 个以上取 40% 向上取整，且不少于 2）";
     }
 
     /**
@@ -226,6 +331,7 @@ public class DocService {
         // （项目文档常由后台/系统创建，api_key 为空，重复过滤会把所有者自己也挡掉）。
         if (projectId != null && !canAccessProject(projectId, apiKey)) {
             log.warn("DocService.search: 无权访问项目 {}, key={}", projectId, maskKey(apiKey));
+            attachExplain(meta, SearchTier.NONE, 0, -1L);
             return emptyPage(page, size);
         }
 
@@ -245,6 +351,7 @@ public class DocService {
         SearchTerms terms = buildSearchTerms(keyword);
         if (terms.concepts.isEmpty()) {
             log.info("search rejected: 查询词无实质内容 kw='{}' projectId={}", keyword, projectId);
+            attachExplain(meta, SearchTier.NONE, 0, -1L);
             return emptyPage(page, size);
         }
 
@@ -260,6 +367,7 @@ public class DocService {
             if (page > 1) {
                 log.info("search tier=strict kw='{}' projectId={} scopeAll={} hits={}", kw, projectId, all, strictTotal);
                 if (meta != null) meta.tier = SearchTier.STRICT;
+                attachExplain(meta, SearchTier.STRICT, 0, strictTotal);
                 return buildFulltextResult(cleanKeyword, strictQuery, cleanKeyword, apiKey, projectId, tt, statusList, page, size, strictTotal, all, ownerKey, excludeProgress);
             }
             // 覆盖度探针固定看前 STRICT_DIRECT_MIN_HITS 条（与调用方 size 解耦），
@@ -274,6 +382,7 @@ public class DocService {
                 log.info("search tier=strict kw='{}' projectId={} hits={}", kw, projectId, strictTotal);
                 List<Doc> strictDocs = probeSize > size ? strictProbe.subList(0, Math.min(size, strictProbe.size())) : strictProbe;
                 if (meta != null) meta.tier = SearchTier.STRICT;
+                attachExplain(meta, SearchTier.STRICT, strictProbe.size(), strictTotal);
                 return buildResultFromRecords(kw, new ArrayList<>(strictDocs), strictTotal, page, size);
             }
             log.info("search tier=strict-weak kw='{}' projectId={} hits={} → 放宽重排", kw, projectId, strictTotal);
@@ -283,7 +392,8 @@ public class DocService {
         if (!terms.expanded.isEmpty()) {
             String orQuery = terms.toOrQuery();
             List<Doc> candidates = docMapper.searchByFulltext(orQuery, cleanKeyword, apiKey, projectId, tt, statusList, 0, CANDIDATE_LIMIT, all, ownerKey, excludeProgress);
-            List<Doc> ranked = rankAndFilter(candidates, terms, true);
+            SearchExplain explain = (meta != null && meta.explain) ? new SearchExplain() : null;
+            List<Doc> ranked = rankAndFilter(candidates, terms, true, explain);
             if (!ranked.isEmpty()) {
                 // L0-2：补一条与候选集**同条件**的 count，拿到数据库口径的真实匹配数。
                 // 候选集固定上限 CANDIDATE_LIMIT，ranked.size() 既不是全库匹配数、
@@ -300,8 +410,19 @@ public class DocService {
                 if (meta != null) {
                     meta.tier = SearchTier.RERANK;
                     meta.matchedTotal = orTotal;
+                    if (explain != null) {
+                        explain.tier = SearchTier.RERANK;
+                        explain.matchedTotal = orTotal;
+                        meta.explainResult = explain;
+                    }
                 }
                 return pagedResult(kw, ranked, page, size);
+            }
+            // 全被门槛/去重滤掉时也要能解释「为什么 0 条」——把统计留住
+            if (explain != null && meta != null) {
+                explain.tier = SearchTier.RERANK;
+                explain.matchedTotal = -1L;
+                meta.explainResult = explain;
             }
             log.info("search tier=relaxed-empty kw='{}' projectId={} scopeAll={} candidates={} concepts={}",
                     kw, projectId, all, candidates.size(), terms.concepts.size());
@@ -309,7 +430,24 @@ public class DocService {
 
         // ===== 第 3 级：LIKE 兜底（单字/标点等全文索引覆盖不到的场景）=====
         if (meta != null) meta.tier = SearchTier.LIKE;
-        return searchWithLike(keyword, templateType, includeStatus, projectId, page, size, all, ownerKey, excludeProgress);
+        Page<Doc> likePage = searchWithLike(keyword, templateType, includeStatus, projectId, page, size, all, ownerKey, excludeProgress);
+        attachExplain(meta, SearchTier.LIKE, 0, likePage == null ? -1L : likePage.getTotal());
+        return likePage;
+    }
+
+    /**
+     * explain=true 时给非重排档位留一份最小说明；不解释就不做任何事（老调用方零改动）。
+     *
+     * <p>已有说明时<b>不覆盖</b>：重排档被门槛滤空后回退 LIKE 的场景，真正有信息量的是
+     * 「重排阶段多少候选、被谁滤掉」，而不是 LIKE 的条数。覆盖等于把根因擦掉。
+     */
+    private static void attachExplain(SearchMeta meta, SearchTier tier, int candidateCount, long matchedTotal) {
+        if (meta == null || !meta.explain || meta.explainResult != null) return;
+        SearchExplain ex = new SearchExplain();
+        ex.tier = tier;
+        ex.candidateCount = candidateCount;
+        ex.matchedTotal = matchedTotal;
+        meta.explainResult = ex;
     }
 
     /**
@@ -705,11 +843,23 @@ public class DocService {
         final double score;
         /** 只用于「总分完全相同」时的决胜（#1309 C94），不参与计分。 */
         final double recency;
+        // 以下仅供 explain 回传（算的时候顺手记下，不额外重算）
+        final double coverage;
+        final double field;
+        final double popularity;
+        final int matched;
+        final int candidateRank;
 
-        ScoredDoc(Doc doc, double score, double recency) {
+        ScoredDoc(Doc doc, double score, double recency, double coverage, double field,
+                  double popularity, int matched, int candidateRank) {
             this.doc = doc;
             this.score = score;
             this.recency = recency;
+            this.coverage = coverage;
+            this.field = field;
+            this.popularity = popularity;
+            this.matched = matched;
+            this.candidateRank = candidateRank;
         }
     }
 
@@ -788,12 +938,30 @@ public class DocService {
      *                       false=全部保留，用于“相近经验”兜底
      */
     private List<Doc> rankAndFilter(List<Doc> candidates, SearchTerms terms, boolean applyThreshold) {
+        return rankAndFilter(candidates, terms, applyThreshold, null);
+    }
+
+    /**
+     * 按覆盖率 + 字段权重 + 热度排序（时效只在完全同分时决胜，见 {@link #W_RECENCY}）。
+     * @param applyThreshold true=只保留达到最低覆盖率的结果（正常搜索）；
+     *                       false=全部保留，用于“相近经验”兜底
+     * @param explain 非 null 时把本次打分的分项/过滤计数写进去；null=老行为（零开销）
+     */
+    private List<Doc> rankAndFilter(List<Doc> candidates, SearchTerms terms, boolean applyThreshold,
+                                    SearchExplain explain) {
         List<Doc> empty = new ArrayList<>();
+        if (explain != null) {
+            explain.concepts = new ArrayList<>(terms.concepts);
+            explain.requiredMatches = requiredMatches(terms.variants.size());
+            explain.candidateCount = candidates == null ? 0 : candidates.size();
+        }
         if (candidates == null || candidates.isEmpty() || terms.concepts.isEmpty()) {
             return empty;
         }
         List<ScoredDoc> scored = new ArrayList<>();
+        int candidateRank = 0;
         for (Doc doc : candidates) {
+            candidateRank++;
             double conceptScore = 0;
             int matched = 0;
             for (List<String> variants : terms.variants) {
@@ -803,10 +971,17 @@ public class DocService {
                     conceptScore += strength;
                 }
             }
-            if (matched == 0) continue;
-            if (applyThreshold && !passesThreshold(matched, terms.variants.size())) continue;
-            scored.add(new ScoredDoc(doc, score(doc, terms.variants, conceptScore),
-                    recencyScore(doc.getUpdatedAt())));
+            if (matched == 0) {
+                if (explain != null) explain.droppedNoConcept++;
+                continue;
+            }
+            if (applyThreshold && !passesThreshold(matched, terms.variants.size())) {
+                if (explain != null) explain.droppedByThreshold++;
+                continue;
+            }
+            Parts p = parts(doc, terms.variants, conceptScore);
+            scored.add(new ScoredDoc(doc, p.total, p.recency, p.coverage, p.field, p.popularity,
+                    matched, candidateRank));
         }
         // 主键是分数；完全同分时才用「谁更新」决胜（#1309 C94：recency 从加项降为决胜项）。
         // 诚实说明：分数是连续值，实际几乎不会碰到完全相等 —— 等价于 recency 彻底退出打分。
@@ -816,7 +991,52 @@ public class DocService {
         });
         List<Doc> ranked = new ArrayList<>(scored.size());
         for (ScoredDoc s : scored) ranked.add(s.doc);
+        if (explain != null) fillExplain(explain, scored);
         return ranked;
+    }
+
+    /** 把排序后的分项写进 explain，并标出「同分组里谁赢了」（证据来自刚排完的 list，不重算）。 */
+    private void fillExplain(SearchExplain explain, List<ScoredDoc> scored) {
+        explain.scoredCount = scored.size();
+        int rank = 0;
+        for (ScoredDoc s : scored) {
+            DocExplain d = new DocExplain();
+            d.id = s.doc.getId() == null ? -1L : s.doc.getId();
+            d.title = s.doc.getTitle();
+            d.templateType = s.doc.getTemplateType();
+            d.rank = ++rank;
+            d.candidateRank = s.candidateRank;
+            d.matched = s.matched;
+            d.conceptTotal = explain.concepts.size();
+            d.coverage = s.coverage;
+            d.field = s.field;
+            d.recency = s.recency;
+            d.popularity = s.popularity;
+            d.total = s.score;
+            explain.docs.add(d);
+        }
+        // 同分决胜：连续相等即一组（排序已按 recency 决胜，组内第一个就是赢家）。
+        // explain.docs 与 scored 顺序严格一致，直接按下标取，不另建索引。
+        int i = 0;
+        while (i < scored.size()) {
+            int j = i + 1;
+            while (j < scored.size()
+                    && Double.compare(scored.get(j).score, scored.get(i).score) == 0) {
+                j++;
+            }
+            if (j - i > 1) {
+                explain.tieGroupCount++;
+                for (int k = i; k < j; k++) {
+                    DocExplain self = explain.docs.get(k);
+                    self.tieWon = (k == i);
+                    for (int k2 = i; k2 < j; k2++) {
+                        if (k2 == k) continue;
+                        self.tiePeers.add(explain.docs.get(k2).id);
+                    }
+                }
+            }
+            i = j;
+        }
     }
 
     private boolean passesThreshold(int matched, int total) {
@@ -834,20 +1054,31 @@ public class DocService {
         return Math.min(total, Math.max(2, (int) Math.ceil(total * 0.4)));
     }
 
-    private double score(Doc doc, List<List<String>> variants, double conceptScore) {
-        double coverage = conceptScore / Math.max(1, variants.size());
+    /** 单篇文档的打分结果（各维度都是「这一次实际用的值」）。 */
+    private static final class Parts {
+        double coverage;
+        double field;
+        double recency;
+        double popularity;
+        double total;
+    }
+
+    private Parts parts(Doc doc, List<List<String>> variants, double conceptScore) {
+        Parts p = new Parts();
+        p.coverage = conceptScore / Math.max(1, variants.size());
 
         double fieldSum = 0;
         for (List<String> conceptVariants : variants) {
             fieldSum += fieldWeight(doc, conceptVariants);
         }
-        double fieldScore = Math.min(1.0, fieldSum / Math.max(1, variants.size()) / 3.0);
+        p.field = Math.min(1.0, fieldSum / Math.max(1, variants.size()) / 3.0);
 
-        double recency = recencyScore(doc.getUpdatedAt());
+        p.recency = recencyScore(doc.getUpdatedAt());
         int calls = doc.getCallCount() == null ? 0 : doc.getCallCount();
-        double popularity = Math.min(1.0, Math.log1p(calls) / Math.log1p(50));
+        p.popularity = Math.min(1.0, Math.log1p(calls) / Math.log1p(50));
 
-        return 0.55 * coverage + 0.25 * fieldScore + W_RECENCY * recency + 0.08 * popularity;
+        p.total = 0.55 * p.coverage + 0.25 * p.field + W_RECENCY * p.recency + 0.08 * p.popularity;
+        return p;
     }
 
     /** 一个概念的最佳字段权重：概念内任一 2-gram 命中该字段即算命中 */

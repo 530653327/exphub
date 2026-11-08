@@ -327,8 +327,11 @@ class ToolDescriptionRedundancyTest {
         //            理由：发件方必须能自查「我发给了谁」——#45 丢信那次就是发件方无法自证。
         // 2026-11-08 只读未读摘要：仍不加工具（越哥批准走「改现有工具」），mail_start 再加 unreadOnly，
         //            参数 199 → 200。忆阁拿它做聊天界面角标，不能给它 mail_start 的信封（含正文摘要）。
+        // 2026-11-08 搜索打分解释（阁主 #134）：仍 50 个工具（加参数不加工具，红线 13），
+        //            search_experience 加 explain，参数 200 → 201。理由：验收脚本靠 Python 复刻
+        //            打分，实测同源只有 10/33、23/33；服务端自己吐分项才没有「两套实现对齐」这件事。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(200, paramCount, "参数数变了（198 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(201, paramCount, "参数数变了（200 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

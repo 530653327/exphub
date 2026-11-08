@@ -150,7 +150,7 @@ java -jar target/exphub-1.0.0.jar
 |---|---|
 | `check_my_todos` | List todos (call first on every session). Optional `projectId` / `status` filters |
 | `list_recent_memories` | List memories by `updated_at` desc (own global + own projects, cursor pagination) |
-| `search_experience` | Search experiences (`projectName` scopes to a project; `limit`/`offset` paging, `brief` compact output) |
+| `search_experience` | Search experiences (`projectName` scopes to a project; `limit`/`offset` paging, `brief` compact output; `explain=true` returns per-dimension scores for acceptance checks) |
 | `get_experience_detail` | Get experience detail |
 | `get_experience_history` | View historical versions (snapshots kept automatically) |
 | `get_template` | Get creation templates |

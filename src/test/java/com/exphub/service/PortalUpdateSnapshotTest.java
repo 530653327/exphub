@@ -47,6 +47,41 @@ class PortalUpdateSnapshotTest {
     }
 
     /**
+     * 门户 PUT 还必须过凭据检测（2026-11-08 阁主 #134 第 2 件）。
+     *
+     * <p>它是凭据拦截上线后**唯一还漏的写入口**：{@code docMapper.updateById} 绕开
+     * {@code DocService.update}，含 Key 的正文会被写进主表，再被快照搬进 doc_versions。
+     * 顺序也锁死：必须先拦再写 —— 拦在快照之后等于「旧正文已存、新正文也已写」。
+     */
+    @Test
+    void portalUpdateRunsSensitiveGuardBeforeSnapshot() throws Exception {
+        String src = stripComments(Files.readString(CTRL, StandardCharsets.UTF_8));
+
+        int guard = src.indexOf("DocService.checkSensitive(");
+        int snap = src.indexOf("snapshotBeforeExternalUpdate(");
+        assertTrue(guard > 0, "门户更新必须过统一凭据检测入口（别在控制器里另抄一份字段清单）");
+        assertTrue(snap > 0, "快照仍在");
+        assertTrue(guard < snap, "顺序必须「先拦 → 再快照 → 再写库」，否则拦下的正文已经进库");
+
+        String svc = Files.readString(SVC, StandardCharsets.UTF_8);
+        assertTrue(svc.contains("public static void checkSensitive(Doc d)"),
+                "给绕开业务层的写路径留统一入口");
+        assertTrue(svc.contains("SensitiveContentGuard.check(guardFields(d))"),
+                "必须复用 guardFields 这一份字段清单（另写一份必有一份是旧的）");
+    }
+
+    /** 先剥注释：修复说明里就会写「原来直接 setVersion(old+1)」，不剥会把注释算成代码。 */
+    private static String stripComments(String src) {
+        StringBuilder code = new StringBuilder();
+        for (String line : src.split("\n")) {
+            String t = line.trim();
+            if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) continue;
+            code.append(line).append('\n');
+        }
+        return code.toString();
+    }
+
+    /**
      * 其余门户写接口不许偷偷递增版本号。
      *
      * <p>状态接口用 existing 实体 updateById（不递增），是安全的；

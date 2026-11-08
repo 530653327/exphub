@@ -14,10 +14,16 @@
 
 正确性怎么保证
 --------------
-不手抄公式，而是复现 DocService.buildSearchTerms + rankAndFilter，再用 --verify
-拿复现出的题序和线上真实返回**逐位对账**。对不上就报 MISMATCH，不拿错数据出结论。
+⚠️ **2026-11-08 起：本脚本只是离线诊断，不是判定依据。**
+服务端已能自己吐分项（`search_experience(explain=true)`），验收判定全部改成读它
+（见 `acceptance_5q.py`）。这里的复刻与线上**不再要求逐位一致** —— 实测一致率只有
+10/33（「积分兑换提现异常」）和 23/33（「代码怎么发布到线上服务器 部署」），
+差在复刻没实现的同分决胜与阈值预过滤。`--verify` 现在只把这些差异标出来，供排查用。
 
-⚠️ 复现时最容易错的一处（已经踩过）：召回的 ORDER BY 用的是 `cleanKeyword` 的
+⚠️ 三个常量（CANDIDATE_LIMIT / RECENCY_WEIGHT / CONTENT_ONLY_FACTOR）在本文件里仍各有一份，
+**仅为复刻/展示用**；要确认线上到底用了什么，看 explain 回执里的「公式」行。
+
+复现时最容易错的一处（已经踩过）：召回的 ORDER BY 用的是 `cleanKeyword` 的
 NATURAL LANGUAGE 模式，**不是** WHERE 里那个展开后的 OR 串（BOOLEAN 模式）。
 写错这一处，200 条候选的边界就会变，对账只有 4/20 一致。
 
@@ -51,8 +57,8 @@ STOPWORDS = {'的', '了', '和', '与', '及', '或', '怎么', '如何', '什�
              '请问', '帮我', '看看', '相关', '关于', '现在', '进行'}
 CJK = re.compile(r'[\u4e00-\u9fa5]')
 ENV_FILE = '/etc/exphub/.env'
-CANDIDATE_LIMIT = 200          # 与 DocService.CANDIDATE_LIMIT 一致
-RECENCY_WEIGHT = 0.0           # 与 DocService.W_RECENCY 一致（2026-11-06 从 0.12 降为 0，#1309 C94）
+CANDIDATE_LIMIT = 200          # 仅复刻用（线上真值以 explain 回执为准）
+RECENCY_WEIGHT = 0.0           # 仅复刻用；线上同分决胜规则见 explain「公式」行
 MCP_URL = 'https://cloudim.club/exphub/mcp/http'
 
 
@@ -162,7 +168,7 @@ def field_weight(doc, variants):
     return best
 
 
-# 概念只在正文命中时的强度折扣（与 DocService.CONTENT_ONLY_FACTOR 同源，改一处必须改另一处）
+# 概念只在正文命中时的强度折扣（仅复刻用；线上注释里已写明「改一处要改另一处」，所以真值只认 explain）
 CONTENT_ONLY_FACTOR = 0.75
 STRUCTURED = ('title', 'aliases', 'summary', 'tags')
 
@@ -355,16 +361,29 @@ def fetch_candidates(query, api_key):
     return rows, variants, orq, ck
 
 
-def live_ids(query, api_key, limit=30):
+_EXPLAIN_ROW = re.compile(
+    r'^\|\s*(\d+)\s*\|\s*#(\d+)\s*\|\s*([^|]*?)\s*\|\s*([0-9.]+)\s*\|'
+    r'\s*([0-9.]+)\s*\|\s*([0-9.]+)\s*\|\s*([0-9.]+)\s*\|\s*([0-9.]+)\s*\|'
+    r'\s*(\d+)/(\d+)\s*\|\s*(\d+)\s*\|(.*)\|$')
+
+
+def live_explain(query, api_key, limit=30):
+    """取服务端自吐的打分明细（唯一判定依据）。
+
+    返回 (rows, text)。rows 里含 total/coverage/field/recency/popularity 与同分信息。
+    服务端没升级（无 explain 表格）时 rows 为空，调用方应回退并明确说明。
+    """
     import urllib.request
     body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
                        'params': {'name': 'search_experience',
-                                  'arguments': {'query': query, 'limit': limit, 'scope': 'all'}}}).encode()
+                                  'arguments': {'query': query, 'limit': limit,
+                                                'scope': 'all', 'explain': True}}}).encode()
     req = urllib.request.Request(MCP_URL, data=body,
                                  headers={'authorization-key': api_key,
                                           'Content-Type': 'application/json',
                                           'Accept': 'application/json, text/event-stream'})
-    raw = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'replace')
+    raw = urllib.request.urlopen(req, timeout=60).read().decode('utf-8', 'replace')
+    text = ''
     for line in raw.splitlines():
         s = line.strip()
         if s.startswith('data:'):
@@ -375,9 +394,26 @@ def live_ids(query, api_key, limit=30):
             except ValueError:
                 continue
             if o.get('id') == 1:
-                txt = ((o.get('result') or {}).get('content') or [{}])[0].get('text', '')
-                return [int(x) for x in re.findall(r'【ID:(\d+)】', txt)]
-    return []
+                text = ((o.get('result') or {}).get('content') or [{}])[0].get('text', '')
+                break
+    rows = []
+    for line in text.split('\n'):
+        m = _EXPLAIN_ROW.match(line.strip())
+        if not m:
+            continue
+        rows.append(dict(rank=int(m.group(1)), id=int(m.group(2)),
+                         ttype=(m.group(3) or '').strip(),
+                         total=float(m.group(4)), coverage=float(m.group(5)),
+                         field=float(m.group(6)), recency=float(m.group(7)),
+                         popularity=float(m.group(8)), matched=int(m.group(9)),
+                         concept_total=int(m.group(10)), candidate_rank=int(m.group(11)),
+                         tie=(m.group(12) or '').strip()))
+    return rows, text
+
+
+def live_ids(query, api_key, limit=30):
+    rows, _text = live_explain(query, api_key, limit)
+    return [r['id'] for r in rows]
 
 
 def main():
@@ -439,12 +475,27 @@ def main():
         save_snapshot(a.snapshot_out, query, rows, api_key)
 
     if a.verify and api_key:
-        live = live_ids(query, api_key)
-        mine = [d['id'] for d in rows[:len(live)]]
-        same = sum(1 for x, y in zip(live, mine) if x == y)
-        print('\n对账：线上 %s' % live[:20])
-        print('      复现 %s' % mine[:20])
-        print('      逐位一致 %d/%d -> %s' % (same, len(live), 'REPRODUCIBLE' if same >= 0.9 * len(live) else 'MISMATCH'))
+        live_rows, live_text = live_explain(query, api_key, a.top or 30)
+        if live_rows:
+            live = [r['id'] for r in live_rows]
+            mine = [d['id'] for d in rows[:len(live)]]
+            same = sum(1 for x, y in zip(live, mine) if x == y)
+            bad = [r for r in live_rows
+                   if abs(0.55 * r['coverage'] + 0.25 * r['field'] + 0.08 * r['popularity']
+                          - r['total']) > 6e-4]
+            print('\n对账（⚠️ 仅诊断，不再要求一致；判定以服务端 explain 为准）')
+            print('  服务端 explain 自洽: %d/%d%s'
+                  % (len(live_rows) - len(bad), len(live_rows),
+                     '' if not bad else '（不自洽：%s）' % [b['id'] for b in bad[:5]]))
+            print('  服务端顺序: %s' % live[:20])
+            print('  复刻顺序  : %s' % mine[:20])
+            print('  复刻 vs 服务端逐位一致 %d/%d -> %s'
+                  % (same, len(live), 'REPRODUCIBLE' if same >= 0.9 * len(live) else 'MISMATCH'))
+            print('  （历史实测：10/33「积分兑换提现异常」、23/33「代码怎么发布到线上服务器 部署」;'
+                  ' 差在同分决胜与阈值预过滤，复刻没实现这两条）')
+        else:
+            print('\n对账：服务端回执里没有 explain 表格（未升级？），跳过；'
+                  '升级后本项只看服务端自吐的分项。')
 
     scores = sorted(d['p']['total'] for d in rows)
     mean = sum(scores) / len(scores)

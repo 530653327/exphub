@@ -226,6 +226,15 @@ public class PublicUserController {
         doc.setApiKey(existing.getApiKey());
         doc.setAuthorId(existing.getAuthorId());
         doc.setAuthorName(existing.getAuthorName());
+        // ⚠️ 2026-11-08 阁主 #134：这条路径直接 updateById，绕开 DocService.update，
+        //    是凭据拦截上线后**唯一还漏的写入口**。必须在任何写库/写快照之前拦下，
+        //    否则含 Key 的正文会被写进主表，再由快照搬进 doc_versions 扩散一次。
+        try {
+            DocService.checkSensitive(doc);
+        } catch (com.exphub.util.SensitiveContentGuard.Rejected e) {
+            // 专用异常：改内容才有救，回执必须让人一眼看出「重试同样内容不会通过」
+            return R.fail(400, e.getMessage());
+        }
         // ⚠️ 2026-10-26 03:1x 查数据时定位到：这里原来直接 setVersion(old+1) + updateById，
         //    **跳过快照** → 版本号被吃掉却没有副本。全库复查（主表+冷存档）只有 4 个文档缺号，
         //    全是门户文档：#101 缺 v13/v15、#578 缺 v8/v11/v16/v29、#126 缺 v3/v5/v7、#30 缺 v2。

@@ -815,7 +815,8 @@ public class ExpHubTools {
             @ToolParam(description = "可选。作用域：all（默认，全局+我名下全部项目一起排） / global（只搜全局） / project（只搜 projectName 指定的项目）。语义变更 2026-11-05", required = false) String scope,
             @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
             @ToolParam(description = "可选。偏移量，默认 0（翻页照抄上页提示的 offset 值）", required = false) Integer offset,
-            @ToolParam(description = "可选。true=精简（只 ID/标题/类型/摘要）；false=完整", required = false) Boolean brief) {
+            @ToolParam(description = "可选。true=精简（只 ID/标题/类型/摘要）；false=完整", required = false) Boolean brief,
+            @ToolParam(description = "可选。true=附带打分解释（各维度得分/阈值预过滤/同分决胜/候选数/公式常量），用于验收对账。默认 false，回执不变", required = false) Boolean explain) {
         
         try {
             // 权限验证
@@ -894,6 +895,7 @@ public class ExpHubTools {
             int poolSize = Math.min(effOffset + effLimit, SEARCH_POOL_MAX);
 
             DocService.SearchMeta searchMeta = new DocService.SearchMeta();
+            searchMeta.explain = Boolean.TRUE.equals(explain);
             var result = docService.search(query, templateType, statusFilter, projectId, 1, poolSize, searchMeta, scopeAll);
             long matchedTotal = result.getTotal();
             java.util.List<Doc> docs = new ArrayList<>(result.getRecords());
@@ -963,6 +965,9 @@ public class ExpHubTools {
                 sb.append("2. 换用同义词/英文缩写（如：部署 ↔ 上线、连不上 ↔ 连接失败/超时）\n");
                 sb.append("3. includeStatus=COMPLETED,DEPRECATED,BROKEN 可查历史或已归档经验\n");
                 sb.append("4. 确认确实没有可用经验后，再 create_experience 沉淀\n");
+                if (searchMeta.explain) {
+                    sb.append(renderExplain(searchMeta, java.util.List.of()));
+                }
                 // 全局 0 条、项目里有 → 这正是「搜不到就以为没记过、于是重复记一遍」的场景，
                 // 提示比什么都重要（L0-1b）。
                 sb.append(renderProjectSegment(detected, projectTotal, projectTop, query));
@@ -1038,6 +1043,9 @@ public class ExpHubTools {
             sb.append(staleVerifyLine(pageDocs, java.time.LocalDate.now()));
 
             sb.append(renderDocs(pageDocs, briefMode, projNames, query));
+            if (searchMeta.explain) {
+                sb.append(renderExplain(searchMeta, pageDocs));
+            }
 
             // 翻页提示：不提示的话调用方以为「只有这些」，这正是原来隐式 25 条上限的根源
             sb.append("\n---\n");
@@ -1446,6 +1454,90 @@ public class ExpHubTools {
 
     private String renderDocs(List<Doc> docs) {
         return renderDocs(docs, false);
+    }
+
+    /**
+     * 打分解释段（explain=true，2026-11-08 阁主 #134）。
+     *
+     * <p>为什么让服务端吐、而不让验收脚本自己算：Python 复刻是**另一套实现**，
+     * 实测与线上逐位一致只有 10/33（「积分兑换提现异常」）和 23/33
+     * （「代码怎么发布到线上服务器 部署」）—— 差的那几位全是同分决胜、阈值预过滤这类
+     * 复刻没实现的规则。服务端自己吐出来，就不存在「两个实现对齐」这件事。
+     *
+     * <p>版式取舍：公式/阈值/常量都在这里出现<b>一次</b>，数值全部来自
+     * {@link DocService.SearchExplain}（打分时顺手记的，不是事后重算）。
+     * 明细只列本页，避免 200 条候选把回执撑爆；但「参与比较 N 条」如实给出。
+     */
+    private String renderExplain(DocService.SearchMeta meta, List<Doc> pageDocs) {
+        DocService.SearchExplain ex = meta == null ? null : meta.explainResult;
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n📊 打分解释（explain=true：以下数值由服务端在本次打分时记录，不是复刻）\n");
+        sb.append("- 公式: ").append(DocService.formulaNote()).append("\n");
+        if (ex == null) {
+            sb.append("- 本次没有拿到打分快照（档位: ")
+              .append(meta == null ? "未知" : meta.tier).append("）\n");
+            return sb.toString();
+        }
+        if (ex.concepts == null || ex.concepts.isEmpty()) {
+            sb.append("- 概念: 无（查询词无实质内容或未走到概念展开）｜档位: ").append(ex.tier).append("\n");
+            return sb.toString();
+        }
+        sb.append("- 概念: ").append(String.join(" / ", ex.concepts))
+          .append("（").append(ex.concepts.size()).append(" 个）｜")
+          .append(DocService.thresholdNote(ex.requiredMatches, ex.concepts.size())).append("\n");
+        sb.append("- 档位: ").append(ex.tier)
+          .append("｜候选参与比较 ").append(ex.candidateCount).append(" 条")
+          .append("｜DB 匹配 ").append(ex.matchedTotal < 0 ? "未记录" : ex.matchedTotal + " 条").append("\n");
+        sb.append("- 阈值预过滤: 未命中任何概念 ").append(ex.droppedNoConcept)
+          .append(" 条、命中但不足门槛 ").append(ex.droppedByThreshold)
+          .append(" 条 → 进入排序 ").append(ex.scoredCount).append(" 条\n");
+        sb.append("- 同分决胜: ")
+          .append(ex.tieGroupCount == 0 ? "本次没有总分完全相同的文档"
+                  : ex.tieGroupCount + " 组同分 → 按 updated_at 更新者在前（明细里标「同分」）")
+          .append("\n");
+        if (ex.tier != DocService.SearchTier.RERANK || ex.docs.isEmpty()) {
+            sb.append("- 明细: 本档位不产生内存打分明细")
+              .append(ex.tier == DocService.SearchTier.RERANK ? "（全被阈值/无概念命中滤掉）" : "").append("\n");
+            return sb.toString();
+        }
+        sb.append("- 明细（只列本页 ").append(pageDocs == null ? 0 : pageDocs.size())
+          .append(" 条；共 ").append(ex.scoredCount).append(" 条进入排序；候选位次 = 在 DB 召回池里的原始位次）:\n\n");
+        sb.append("| 位次 | 文档 | 类型 | 总分 | coverage | field | recency | popularity | 命中 | 候选位次 | 同分 |\n");
+        sb.append("|---|---|---|---|---|---|---|---|---|---|---|\n");
+        int shown = 0;
+        if (pageDocs != null) {
+            for (Doc d : pageDocs) {
+                DocService.DocExplain e = ex.byId(d.getId() == null ? -1L : d.getId());
+                if (e == null) continue;
+                shown++;
+                String tie = "-";
+                if (!e.tiePeers.isEmpty()) {
+                    StringBuilder p = new StringBuilder();
+                    for (Long pid : e.tiePeers) {
+                        if (p.length() > 0) p.append('/');
+                        p.append('#').append(pid);
+                    }
+                    tie = "同 " + p + (e.tieWon ? "（本条胜）" : "（本条负）");
+                }
+                sb.append("| ").append(e.rank)
+                  .append(" | #").append(e.id)
+                  .append(" | ").append(e.templateType == null ? "(未分类)" : e.templateType)
+                  .append(" | ").append(String.format(java.util.Locale.ROOT, "%.4f", e.total))
+                  .append(" | ").append(String.format(java.util.Locale.ROOT, "%.4f", e.coverage))
+                  .append(" | ").append(String.format(java.util.Locale.ROOT, "%.4f", e.field))
+                  .append(" | ").append(String.format(java.util.Locale.ROOT, "%.4f", e.recency))
+                  .append(" | ").append(String.format(java.util.Locale.ROOT, "%.4f", e.popularity))
+                  .append(" | ").append(e.matched).append('/').append(e.conceptTotal)
+                  .append(" | ").append(e.candidateRank)
+                  .append(" | ").append(tie).append(" |\n");
+            }
+        }
+        if (shown == 0) {
+            sb.append("| - | 本页文档不在本次打分明细里 | - | - | - | - | - | - | - | - | - |\n");
+        }
+        sb.append("\n> 对账提示：本表就是服务端判定依据。任何离线复刻的分数与顺序都只能算「诊断」，")
+          .append("与这里不一致时以本表为准（不要反过来调服务端）。\n");
+        return sb.toString();
     }
 
     private String renderDocs(List<Doc> docs, boolean brief) {

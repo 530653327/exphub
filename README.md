@@ -4,7 +4,7 @@
 
 > 🌐 门户网站：[https://cloudim.club](https://cloudim.club) — 注册即获专属 API Key，立即接入 MCP。
 
-当前产品版本 **2.2.1**（2026-11-05 起）。`/health` 与 MCP `serverInfo` 都报这个版本，
+当前产品版本 **2.3.0**（2026-11-08 起；上一版 2.2.1 为 2026-11-05 ~ 11-08）。`/health` 与 MCP `serverInfo` 都报这个版本，
 改版本号只改 `src/main/resources/application.yml` 的 `exphub.version` 一处。
 注意它不等于 `pom.xml` 的 Maven artifact 版本（1.0.0）——后者决定 jar 文件名，
 被 systemd service 和部署脚本写死，不要随便动。
@@ -235,7 +235,7 @@ docker compose restart exphub  # 重启应用
 |---|---|
 | `check_my_todos` | 检查待办事项（每次会话优先调用） |
 | `list_recent_memories` | 按更新时间倒序列出记忆（自己的全局经验 + 自有项目，游标分页） |
-| `search_experience` | 搜索经验（支持 `projectName` 限定项目内搜索；`limit`/`offset` 翻页，`brief` 精简输出） |
+| `search_experience` | 搜索经验（支持 `projectName` 限定项目内搜索；`limit`/`offset` 翻页，`brief` 精简输出；`explain=true` 附带各维度得分/阈值/同分决胜，验收对账用） |
 | `get_experience_detail` | 获取经验详情 |
 | `get_experience_history` | 查看经验的历史版本（平台每次更新自动留存快照） |
 | `get_template` | 获取创建经验的模板 |
@@ -267,7 +267,7 @@ docker compose restart exphub  # 重启应用
 |---|---|---|
 | 想知道「最近有什么新东西」 | `list_recent_memories` | 按 `updated_at` 倒序，游标分页（`pageSize` + `cursor`）；`since` 可只看某时间之后（`today` / `-7d` / 日期），整理记忆用这个，别靠翻页数 |
 | 想枚举某个项目的全部经验 | `list_project_experiences` | 按项目归属筛选，`pageSize`（默认 10 / 上限 50）+ `offset` |
-| 想按关键词找内容 | `search_experience` | ngram 全文 + 相关度排序，`projectName` 可限定项目；`limit`/`offset` 翻页，`brief` 精简 |
+| 想按关键词找内容 | `search_experience` | ngram 全文 + 相关度排序，`projectName` 可限定项目；`limit`/`offset` 翻页，`brief` 精简；`explain=true` 看打分分项 |
 
 一句话：**按时间 → recent，按归属 → project，按内容 → search。**
 
