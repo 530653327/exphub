@@ -169,7 +169,7 @@ if ! $MYSQL -e "CREATE TABLE IF NOT EXISTS schema_migrations (
     PRIMARY KEY (filename)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='已执行的migration，避免每次部署全量重跑'" >/dev/null 2>"$MIG_LOG"; then
     echo "=========================================="
-    echo "❌ 部署中止：[2.5/5] 无法创建/访问 schema_migrations（库 $DB_NAME）"
+    echo "❌ 部署中止：[2.5/5] 无法创建/访问 schema_migrations（库 ${DB_NAME}）"
     echo "   迁移无法记账 → 拒绝继续（记账不了就没法保证不重复执行）"
     echo "   按设计**不重启服务**，线上仍是旧版本在跑"
     echo "--- mysql 输出 ---"
@@ -196,7 +196,7 @@ for f in sql/migrations/migration_2026*.sql; do
         DEPLOY_PHASE="迁移失败 $base"
         echo ""
         echo "=========================================="
-        echo "❌ 部署中止：[2.5/5] 数据库迁移失败（第 $MIG_IDX/$MIG_TOTAL 条：$base）"
+        echo "❌ 部署中止：[2.5/5] 数据库迁移失败（第 $MIG_IDX/$MIG_TOTAL 条：${base}）"
         echo "   本次已实际执行成功 $MIG_APPLIED 条，跳过（已是最新）$MIG_SKIPPED 条"
         echo "   该文件**未**记入 schema_migrations，修好 SQL 后重跑部署会重试它"
         echo "   按设计**不重启服务**，线上仍是旧版本在跑（mvn 已打包但未生效）"
@@ -215,7 +215,7 @@ for f in sql/migrations/migration_2026*.sql; do
             tail -10 "$MIG_LOG"
             exit 1
         fi
-        echo "  ✅ $base（内容有改动，已重跑）"
+        echo "  ✅ ${base}（内容有改动，已重跑）"
     else
         if ! $MYSQL -e "INSERT INTO schema_migrations(filename,checksum) VALUES('$base','$sum')" >"$MIG_LOG" 2>&1; then
             DEPLOY_PHASE="迁移记账失败 $base"
@@ -339,7 +339,7 @@ if [ "$OK" = "1" ]; then
     DEPLOY_STEP="5/5 完成"
 else
     echo "=========================================="
-    echo "❌ 部署失败：健康检查未通过（最后 http=$CODE）"
+    echo "❌ 部署失败：健康检查未通过（最后 http=${CODE}）"
     echo "--- /health 响应 ---"; cat /tmp/exphub_health.json 2>/dev/null
     echo ""
     echo "--- app.log 末尾 30 行 ---"; tail -30 app.log
