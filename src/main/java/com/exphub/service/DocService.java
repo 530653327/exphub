@@ -995,6 +995,23 @@ public class DocService {
         return docMapper.selectPage(p, wrapper);
     }
 
+    /**
+     * 按状态分页（当前主要用于移动端待删队列：status=PENDING_DELETE）。
+     *
+     * <p>排序用 {@code delete_marked_at} 倒序 —— 待删队列的价值在于「谁刚标了东西等我确认」，
+     * 按 updated_at 排会让一条旧的、今天只改过一个错别字的文档排到最前面。
+     * 用 updated_at 做次级排序兜底：历史数据里 delete_marked_at 可能为 NULL，DESC 时排在最后，
+     * 只按它排会让这些条目永远沉底、等于看不见。
+     */
+    public Page<Doc> listByStatus(String status, int page, int size) {
+        Page<Doc> p = new Page<>(page, size);
+        QueryWrapper<Doc> wrapper = new QueryWrapper<>();
+        wrapper.eq("status", status);
+        wrapper.orderByDesc("delete_marked_at");
+        wrapper.orderByDesc("updated_at");
+        return docMapper.selectPage(p, wrapper);
+    }
+
     public Page<Doc> listByAuthor(String authorId, int page, int size) {
         Page<Doc> p = new Page<>(page, size);
         QueryWrapper<Doc> wrapper = new QueryWrapper<>();

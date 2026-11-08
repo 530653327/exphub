@@ -3,13 +3,250 @@
 <head th:replace="~{m/layout :: head('待删队列')}"></head>
 <body>
 <div class="page">
-    <div class="h1">待删队列</div>
-    <div class="empty">
-        这一块下一批上线。<br>
-        <span class="muted">已经标记待删的经验会在这里列出，可以直接确认删除。</span>
+    <div class="row-between" style="margin-bottom:14px">
+        <div class="grow">
+            <div class="h1" style="margin:0">待删队列</div>
+            <div class="muted" id="subtitle">加载中…</div>
+        </div>
+        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
     </div>
+
+    <!-- 删除成功：删除是物理删除，必须明确告诉人「已经没了、恢复不了」，不能只悄悄少一条卡片 -->
+    <div class="card" id="okBanner" style="display:none;border:1px solid var(--ok)">
+        <div style="color:var(--ok);font-weight:500;margin-bottom:2px">已删除</div>
+        <div class="muted">这条经验已从库里彻底删除，不可恢复。</div>
+    </div>
+
+    <!-- 错误必须显眼。2026-11-08 白屏事故的教训：手机上「看不清的错误」等于「没有错误」 -->
+    <div class="card" id="errBox" style="display:none;border:1px solid var(--danger)">
+        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">加载失败</div>
+        <div class="muted" id="errMsg" style="word-break:break-all"></div>
+        <button class="btn ghost" style="margin-top:10px" id="retryBtn">重试</button>
+    </div>
+
+    <div id="list"></div>
+
+    <div class="empty" id="emptyBox" style="display:none">
+        队列是空的。<br>
+        <span class="muted">AI 标记待删的经验会出现在这里，等你确认后才会真正删除。</span>
+    </div>
+
+    <div id="moreHint" class="muted" style="text-align:center;padding:14px 0;display:none"></div>
+    <div id="sentinel" style="height:1px"></div>
 </div>
+
 <nav th:replace="~{m/layout :: tabbar('pending')}"></nav>
 <th:block th:replace="~{m/layout :: pwa}"></th:block>
+
+<script th:inline="javascript">
+    // contextPath 用 @{/}（不要用 servlet 请求对象，Thymeleaf 3.1 下为 null 会炸模板）
+    var CTX = /*[[@{/}]]*/ '/';
+    CTX = CTX.replace(/\/$/, '');
+
+    var CSRF = (document.querySelector('meta[name="_csrf"]') || {}).content || '';
+
+    var page = 1, totalPages = 1, total = 0, loading = false;
+    var expanded = {};   // id -> true，正文已加载
+
+    function esc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/[&<>"']/g, function (c) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+            });
+    }
+
+    function fmtTime(s) {
+        if (!s) return '—';
+        // 后端给 2026-11-08T01:23:45 这种串，手机上只要 MM-dd HH:mm
+        var t = String(s).replace('T', ' ');
+        return t.length >= 16 ? t.substring(5, 16) : t;
+    }
+
+    function showError(msg) {
+        document.getElementById('errMsg').textContent = msg;
+        document.getElementById('errBox').style.display = 'block';
+        document.getElementById('subtitle').textContent = '加载失败';
+    }
+
+    function cardHtml(d) {
+        var reason = d.deleteReason
+            ? '<div style="margin:8px 0 0;background:var(--card-2);border-radius:10px;padding:10px 12px">'
+              + '<div class="muted" style="margin-bottom:2px">标记原因</div>'
+              + '<div style="font-size:14px">' + esc(d.deleteReason) + '</div></div>'
+            : '<div class="muted" style="margin-top:6px">（标记时未写原因）</div>';
+
+        return '<div class="card" data-id="' + d.id + '">'
+            + '<div style="font-weight:600;line-height:1.4">' + esc(d.title || '（无标题）') + '</div>'
+            + '<div class="muted" style="margin-top:4px">#'
+            + d.id + ' · ' + esc(d.category || '未分类')
+            + ' · ' + esc(d.authorName || '—')
+            + ' · ' + (d.contentLength || 0) + ' 字</div>'
+            + (d.summary ? '<div class="clamp2" style="margin-top:8px;font-size:14px">' + esc(d.summary) + '</div>' : '')
+            + reason
+            + '<div class="muted" style="margin-top:8px;font-size:12px">'
+            + esc(d.markedBy || '—') + ' 于 ' + fmtTime(d.markedAt) + ' 标记</div>'
+            + '<div id="body-' + d.id + '" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">'
+            + '<div style="white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.65"></div></div>'
+            + '<div class="row" style="margin-top:12px;gap:8px">'
+            + '<button class="btn ghost" style="flex:1;padding:9px 12px;font-size:14px;min-height:40px" '
+            + 'data-act="view" data-id="' + d.id + '">看正文</button>'
+            + '<button class="btn danger" style="flex:1;padding:9px 12px;font-size:14px;min-height:40px" '
+            + 'data-act="del" data-id="' + d.id + '">删除</button>'
+            + '</div></div>';
+    }
+
+    function load(reset) {
+        if (loading) return;
+        loading = true;
+        document.getElementById('errBox').style.display = 'none';
+        if (reset) {
+            page = 1;
+            totalPages = 1;
+            document.getElementById('list').innerHTML = '';
+            document.getElementById('emptyBox').style.display = 'none';
+        }
+        document.getElementById('subtitle').textContent = '加载中…';
+
+        fetch(CTX + '/api/docs/pending?page=' + page + '&size=20', { credentials: 'same-origin' })
+            .then(function (r) {
+                if (r.status === 401 || r.status === 403) throw new Error('登录已过期，请重新登录（HTTP ' + r.status + '）');
+                if (!r.ok) throw new Error('服务端返回 HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (res) {
+                if (res.code !== 0) throw new Error(res.message || '接口返回失败');
+                var data = res.data || {};
+                total = data.total || 0;
+                totalPages = data.pages || 1;
+                var rows = data.list || [];
+
+                if (rows.length) {
+                    document.getElementById('list')
+                        .insertAdjacentHTML('beforeend', rows.map(cardHtml).join(''));
+                }
+
+                document.getElementById('subtitle').textContent = total
+                    ? total + ' 条等待确认' + (totalPages > 1 ? '（第 ' + page + '/' + totalPages + ' 页）' : '')
+                    : '队列是空的';
+                document.getElementById('emptyBox').style.display = total ? 'none' : 'block';
+
+                var hint = document.getElementById('moreHint');
+                if (page < totalPages) {
+                    hint.style.display = 'block';
+                    hint.textContent = '继续下滑加载更多…';
+                } else {
+                    hint.style.display = 'none';
+                }
+            })
+            .catch(function (e) {
+                showError(e.message || String(e));
+            })
+            .then(function () {
+                loading = false;
+            });
+    }
+
+    function loadMore() {
+        if (loading || page >= totalPages) return;
+        page += 1;
+        load(false);
+    }
+
+    function toggleBody(id, btn) {
+        var box = document.getElementById('body-' + id);
+        if (expanded[id]) {
+            var open = box.style.display !== 'none';
+            box.style.display = open ? 'none' : 'block';
+            btn.textContent = open ? '看正文' : '收起';
+            return;
+        }
+        btn.textContent = '加载中…';
+        btn.disabled = true;
+
+        fetch(CTX + '/api/docs/' + id, { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (res.code !== 0) throw new Error(res.message || '读不到正文');
+                var content = (res.data && res.data.content) || '（正文为空）';
+                box.querySelector('div').textContent = content;
+                box.style.display = 'block';
+                expanded[id] = true;
+                btn.textContent = '收起';
+            })
+            .catch(function (e) {
+                btn.textContent = '看正文';
+                showError('读正文失败：' + (e.message || e));
+            })
+            .then(function () {
+                btn.disabled = false;
+            });
+    }
+
+    /**
+     * 二次确认：第一次点变红并改文案，3 秒内再点才真删。
+     * 不做「撤销」—— docService.delete 是物理删除，没有回滚数据，
+     * 给一个假的撤销按钮比不给更危险（会让人以为删错了还能救）。
+     */
+    function armOrDelete(id, btn) {
+        if (btn.dataset.armed === '1') {
+            doDelete(id);
+            return;
+        }
+        btn.dataset.armed = '1';
+        btn.classList.add('armed');
+        btn.textContent = '确认删除？';
+        setTimeout(function () {
+            if (btn.dataset.armed === '1') {
+                btn.dataset.armed = '0';
+                btn.classList.remove('armed');
+                btn.textContent = '删除';
+            }
+        }, 3000);
+    }
+
+    function doDelete(id) {
+        // 用原生表单提交而不是 fetch：删除接口返回 302，服务端按会话标记跳回 /m/pending，
+        // 浏览器整页跳转最稳，也不用担心 fetch 跟随重定向后拿到的是 PC 页面的 HTML。
+        var f = document.createElement('form');
+        f.method = 'POST';
+        f.action = CTX + '/docs/' + id + '/delete';
+
+        var t = document.createElement('input');
+        t.type = 'hidden';
+        t.name = '_csrf';
+        t.value = CSRF;
+        f.appendChild(t);
+
+        document.body.appendChild(f);
+        f.submit();
+    }
+
+    document.getElementById('list').addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+        var id = btn.getAttribute('data-id');
+        if (btn.getAttribute('data-act') === 'view') toggleBody(id, btn);
+        else armOrDelete(id, btn);
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', function () { load(true); });
+    document.getElementById('retryBtn').addEventListener('click', function () { load(true); });
+
+    // 滚到底自动加载下一页
+    if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) {
+            if (entries[0].isIntersecting) loadMore();
+        }, { rootMargin: '200px' }).observe(document.getElementById('sentinel'));
+    }
+
+    // 删除成功回来会带 ?deleted=1
+    if (/(^|[?&])deleted=1(&|$)/.test(location.search)) {
+        document.getElementById('okBanner').style.display = 'block';
+        // 把参数从地址栏抹掉，刷新不会重复弹
+        history.replaceState(null, '', location.pathname);
+    }
+
+    load(true);
+</script>
 </body>
 </html>

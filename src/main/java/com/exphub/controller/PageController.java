@@ -478,6 +478,13 @@ public class PageController extends BaseController {
         if (user == null) return "redirect:/login";
 
         docService.delete(id);
+
+        // 移动壳（2026-11-08）：手机上的删除请求要回移动列表，不能被甩到 PC 的 /docs。
+        // 判据用会话标记而不是 UA —— UA 判移动端在平板/微信里会判错，而且 PC 用户横屏也可能带 Mobile UA。
+        if (Boolean.TRUE.equals(session.getAttribute(com.exphub.controller.MobileController.UI_SESSION_KEY))) {
+            return "redirect:/m/pending?deleted=1";
+        }
+
         // 回到原视图第 1 页：删掉一条后当前页可能越界，且待删队列本来就没几页
         return redirectToDocs(status, flag, keyword, templateType, true);
     }

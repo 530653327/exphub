@@ -118,6 +118,22 @@ class MobileTemplateRenderTest {
     }
 
     @Test
+    @DisplayName("pending 页渲染后要带列表接口、CSRF 与二次确认脚本")
+    void pendingHasWorkingScript() {
+        String html = engine().process("m/pending", context());
+
+        // 列表接口：没有它这一页就是个空壳
+        assertTrue(html.contains("/api/docs/pending"), "待删队列没有调用 /api/docs/pending");
+        // 详情接口：手机上删之前必须能看正文
+        assertTrue(html.contains("/api/docs/' + id"), "看正文没走 /api/docs/{id}");
+        // 删除仍然走 Session 登录的 PageController 端点，不是新开的 REST 删除口子
+        assertTrue(html.contains("/docs/' + id + '/delete"), "删除没走 /docs/{id}/delete");
+        // CSRF：删除是写操作，没有 token 会被 Spring Security 403 拦掉
+        assertTrue(html.contains("name=\"_csrf\""), "页面缺 _csrf meta，删除会被 403 拦掉");
+        assertTrue(html.contains("getElementById('sentinel')"), "分页哨兵不存在，长列表加载不了更多");
+    }
+
+    @Test
     @DisplayName("模板里禁止再出现 #httpServletRequest / #request / #session（本项目 Thymeleaf 3.1 下为 null）")
     void noServletObjectsInTemplates() throws IOException {
         Path dir = Path.of("src/main/resources/templates/m");

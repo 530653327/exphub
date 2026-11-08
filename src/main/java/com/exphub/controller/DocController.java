@@ -102,6 +102,42 @@ public class DocController {
         return R.ok(data);
     }
 
+    // 待删队列（移动端 /m/pending 用）
+    // 为什么单开一个端点而不复用 /search：search 是「按相关度找经验」，语义是检索；
+    // 待删队列是「按时间列出等我确认的东西」，语义是清单。混在一起以后一定会有人给 search 加排序参数，
+    // 然后两边的默认顺序互相打架。
+    // ⚠️ 这里只读，不提供删除 —— 删除走 PageController 的 POST /docs/{id}/delete（Session 登录才可用），
+    // 刻意不给 API Key 开物理删除的口子。
+    @GetMapping("/pending")
+    public R<Map<String, Object>> pendingDelete(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<Doc> result = docService.listByStatus(DocService.PENDING_DELETE, page, size);
+
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("total", result.getTotal());
+        data.put("page", result.getCurrent());
+        data.put("pageSize", result.getSize());
+        data.put("pages", result.getPages());
+        data.put("list", result.getRecords().stream().map(doc -> {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("id", doc.getId());
+            m.put("title", doc.getTitle());
+            m.put("category", doc.getCategory());
+            m.put("authorName", doc.getAuthorName());
+            m.put("summary", doc.getSummary());
+            m.put("templateType", doc.getTemplateType());
+            m.put("deleteReason", doc.getDeleteReason());
+            m.put("markedBy", doc.getDeleteMarkedBy());
+            m.put("markedAt", doc.getDeleteMarkedAt());
+            m.put("updatedAt", doc.getUpdatedAt());
+            // 正文长度：手机上一屏放不下正文，先让人知道这是 800 字还是 2 万字，再决定点不点开
+            m.put("contentLength", doc.getContent() == null ? 0 : doc.getContent().length());
+            return m;
+        }).collect(Collectors.toList()));
+        return R.ok(data);
+    }
+
     // 获取详情
     @GetMapping("/{id}")
     public R<Doc> getById(@PathVariable Long id) {
