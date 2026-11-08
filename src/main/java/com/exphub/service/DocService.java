@@ -12,6 +12,7 @@ import com.exphub.mapper.DocVersionMapper;
 import com.exphub.mapper.ProjectMapper;
 import com.exphub.entity.User;
 import com.exphub.interceptor.ApiKeyInterceptor;
+import com.exphub.util.SensitiveContentGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,8 +53,26 @@ public class DocService {
     @Autowired
     private CallLogService callLogService;
 
+    /**
+     * 写入前统一过凭据检测。放在业务层而不是工具层：门户后台的写入也走这里，
+     * 散在五个 MCP 工具里会漏掉浏览器那条路（2026-11-08 #1313 第 4 条）。
+     * 只收集非 null 的字段，update 时「字段没传」不会被误当成空正文。
+     */
+    private static Map<String, String> guardFields(Doc d) {
+        Map<String, String> fields = new java.util.LinkedHashMap<>();
+        if (d == null) return fields;
+        if (d.getContent() != null) fields.put("正文", d.getContent());
+        if (d.getTitle() != null) fields.put("标题", d.getTitle());
+        if (d.getSummary() != null) fields.put("摘要", d.getSummary());
+        if (d.getTags() != null) fields.put("标签", d.getTags());
+        if (d.getAliases() != null) fields.put("别名", d.getAliases());
+        if (d.getCategory() != null) fields.put("分类", d.getCategory());
+        return fields;
+    }
+
     @Transactional
     public Doc create(Doc doc) {
+        SensitiveContentGuard.check(guardFields(doc));
         clampColumns(doc);
         AiAssistant assistant = ApiKeyInterceptor.getCurrentAssistant();
         log.info("DocService.create: assistant from ThreadLocal={}, title={}, tags={}, aliases={}", 
@@ -1100,6 +1119,7 @@ public class DocService {
     @Transactional
     public Doc update(Long id, Doc newDoc, java.util.Set<String> clearFields, String authorOverride,
                       WriteOrigin origin) {
+        SensitiveContentGuard.check(guardFields(newDoc));
         clampColumns(newDoc);
         Doc old = docMapper.selectById(id);
         if (old == null) {
@@ -1297,8 +1317,12 @@ public class DocService {
         if (addition == null || addition.trim().isEmpty()) {
             return old;   // 空追加不写库：不递增版本、不产生快照
         }
-        saveVersionSnapshot(old, true, authorName);
+        // 先算合并后的全文再拦：既覆盖「追加片段里带凭据」，也覆盖凭据被拆在两段边界上的情况。
+        // 必须在 saveVersionSnapshot 之前 —— 快照一旦写了，被拦下的正文就已经进 doc_versions 了。
+        SensitiveContentGuard.check("追加内容", addition);
         String merged = mergeAppend(old.getContent(), addition);
+        SensitiveContentGuard.check("正文", merged);
+        saveVersionSnapshot(old, true, authorName);
 
         Doc patch = new Doc();
         patch.setId(id);
@@ -1341,9 +1365,11 @@ public class DocService {
         if (old == null) {
             return null;
         }
-        saveVersionSnapshot(old, true, authorName);
+        SensitiveContentGuard.check("替换内容", replacement);
         String base = old.getContent() == null ? "" : old.getContent();
         String merged = base.replace(find, replacement == null ? "" : replacement);
+        SensitiveContentGuard.check("正文", merged);
+        saveVersionSnapshot(old, true, authorName);
 
         Doc patch = new Doc();
         patch.setId(id);

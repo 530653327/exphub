@@ -6,6 +6,7 @@ import com.exphub.entity.MailCursor;
 import com.exphub.entity.MailMessage;
 import com.exphub.mapper.MailCursorMapper;
 import com.exphub.mapper.MailMessageMapper;
+import com.exphub.util.SensitiveContentGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -208,6 +209,13 @@ public class MailboxService {
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("主题是空的");
         }
+
+        // 信箱正文也要过同一道闸：历史上真发生过 Key 明文扩散到消息表（#1313 第 4 条）。
+        // 与 docs 共用判据，但字段名分开，回执里能一眼看出是哪一处。
+        Map<String, String> mailFields = new LinkedHashMap<>();
+        mailFields.put("信箱主题", subject);
+        mailFields.put("信箱正文", body == null ? "" : body);
+        SensitiveContentGuard.check(mailFields);
 
         // 2026-11-08（阁主 #76，越哥批准）：**发信时归一别名，历史数据不动**。
         // 事故链：`zhuolong`（多一个 o）在库里存在过 → 被 dbRoles 兜底进 accept 集合 →
