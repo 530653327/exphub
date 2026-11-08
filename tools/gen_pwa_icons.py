@@ -35,6 +35,22 @@ def load_font(size: int):
     return ImageFont.load_default()
 
 
+def fit_font(draw, text: str, size: int, start_ratio: float, max_width_ratio: float):
+    """从 start_ratio 起逐档缩小字号，直到文字宽度落进 max_width_ratio 的安全宽度。
+
+    单字（如「阁」）用固定字号就够，但 "EXP" 是三个字母，同样字号会横向撑出安全区、
+    装到桌面上被圆形裁切切掉两边。这里按实际 textbbox 量出宽度再退档，不靠拍脑袋写死字号。
+    """
+    fs = int(size * start_ratio)
+    for _ in range(12):
+        font = load_font(fs)
+        box = draw.textbbox((0, 0), text, font=font)
+        if (box[2] - box[0]) <= size * max_width_ratio:
+            return font
+        fs = int(fs * 0.92)
+    return load_font(int(size * 0.2))
+
+
 def rounded_bg(size: int, radius_ratio: float, safe_ratio: float):
     """画底：全出血圆角方块 + 中间内容留安全区。"""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -49,16 +65,19 @@ def rounded_bg(size: int, radius_ratio: float, safe_ratio: float):
                fill=ACCENT + (70,))
     img.alpha_composite(band)
 
-    # 中心字：占安全区的比例
-    # 用「验」（经验阁的第二个字）而不是「阁」—— 越哥 2026-11-08 定：
-    # 桌面图标上「阁」字在圆形裁切下辨识度低，且和同屏其他 App 图标区分不开。
-    text = "验"
-    font_size = int(size * safe_ratio)
-    font = load_font(font_size)
-    tmp = ImageDraw.Draw(img)
-    box = tmp.textbbox((0, 0), text, font=font)
+    # 中心字：EXP（越哥 2026-11-08 定：桌面图标不放汉字，用 EXP）
+    # 用英文全大写而不是「经验阁」缩写 —— 手机主屏图标只有 48~64px，
+    # 三个字母比三个汉字在这个尺寸下辨识度高得多。
+    text = "EXP"
+    measure = ImageDraw.Draw(img)
+    # 普通图标留 70%（贴到 78% 时两端离边缘只剩几个像素，圆角裁切看着很挤），
+    # maskable 留 62%（规范只保证中心 80% 不被裁，再往里收一点更安全）
+    font = fit_font(measure, text, size, safe_ratio, 0.70 if safe_ratio < 0.48 else 0.62)
+    box = measure.textbbox((0, 0), text, font=font)
     tw, th = box[2] - box[0], box[3] - box[1]
-    d.text(((size - tw) / 2 - box[0], (size - th) / 2 - box[1]), text, font=font, fill=FG)
+    # 字母没有下伸部，纯按 bbox 居中视觉上会偏上，往下补 2% 更稳
+    d.text(((size - tw) / 2 - box[0], (size - th) / 2 - box[1] + size * 0.02),
+           text, font=font, fill=FG)
     return img
 
 
