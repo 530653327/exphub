@@ -123,8 +123,7 @@ public class MailboxService {
      * 收件人被拒时的<b>结构化错误</b>（2026-11-09 阁主 P9 第 2 条 + T261109054938-679 + T261109054529-699）。
      *
      * <p>四块：被拒收件人（原样回显）/ 不超过 {@value MailRoleCatalog#MAX_CANDIDATES} 个候选
-     * / 当前生效名单（条数超过 {@value MailRoleCatalog#MAX_ROLE_LIST_IN_ERROR} 时只报计数 + 查询入口）
-     * / 一句提示。<b>不拼历史脏代号</b> —— 停用与待复核在任何出口都不出现。
+     * / 当前生效名单（全量）/ 一句提示。<b>不拼历史脏代号</b> —— 停用与待复核在任何出口都不出现。
      *
      * <p><b>出口一律汉字</b>：候选、提示、名单都写「烛龙 / 貔貅」。被拒值原样回显（用户传了什么就显示什么），
      * 但它不是正名，不会写进库里。
@@ -177,9 +176,9 @@ public class MailboxService {
     /**
      * 拒绝回执里的「当前生效名单」。
      *
-     * <p>≤ {@value MailRoleCatalog#MAX_ROLE_LIST_IN_ERROR} 条就直接列；超过只报计数 + 指路
-     * {@code mail_start(roles=true)}。理由：名单会长到 100+，把整份名单塞进每次错误响应，
-     * 日志和报文都会被撑爆（阁主 T261109054529-699 第二条）。
+     * <p><b>全量列出，不截断</b>（阁主 T261109114542-413，越哥 2026-11-09 定）：
+     * 拒绝回执本身就要能一次看全，不做条数上限、不做分页、不加省略号。
+     * 停用/待复核仍由 {@link MailRoleCatalog#labelsOf} 过滤掉。
      */
     private void appendRoleList(StringBuilder sb, MailRoleCatalog.Snapshot snapshot) {
         List<String> labels = MailRoleCatalog.labelsOf(snapshot);
@@ -187,14 +186,9 @@ public class MailboxService {
             sb.append("- roleList：—（当前没有 ACTIVE 角色，名单为空）\n");
             return;
         }
-        if (labels.size() <= MailRoleCatalog.MAX_ROLE_LIST_IN_ERROR) {
-            sb.append("- roleList（当前生效 ").append(labels.size()).append(" 个，仅展示）：")
-              .append(labels.stream().map(r -> "`" + r + "`").collect(Collectors.joining("、")))
-              .append("\n");
-        } else {
-            sb.append("- roleList：当前生效 ").append(labels.size())
-              .append(" 个，未随本响应给出（避免撑屏/被客户端截断）；要全量名单请调 `mail_start(roles=true)`\n");
-        }
+        sb.append("- roleList（当前生效 ").append(labels.size()).append(" 个，仅展示）：")
+          .append(labels.stream().map(r -> "`" + r + "`").collect(Collectors.joining("、")))
+          .append("\n");
     }
 
     /** 「名单只用于展示」这句话只能有一处出处：成功拒绝和故障两支都调它。 */

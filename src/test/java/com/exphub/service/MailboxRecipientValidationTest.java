@@ -15,8 +15,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p><b>要防的三种错</b>：
  * <ol>
- *   <li><b>把历史脏代号/停用角色拼进回执</b> —— 名单只许出现 {@code status='ACTIVE'}；
- *       而且条数超过阈值就只报计数 + 指向 {@code mail_start(roles=true)}，别把 100+ 代号塞进每次错误响应；</li>
+ *   <li><b>把历史脏代号/停用角色拼进回执</b> —— 名单只许出现 {@code status='ACTIVE'}，
+ *       且必须是全量（2026-11-09 阁主 T261109114542-413：越哥要求一次能看全，不截断）；</li>
  *   <li>把「服务端读不到名单」说成「收件人不存在」—— 那是 #1459 的老毛病：
  *       错误的解释比没有解释更糟，它把排查方向从一开始就带偏；</li>
  *   <li>出口写拼音（zhulong / pixiu）—— 越哥 #679 定：正名是汉字，<b>应答、候选、名单、提示一律汉字</b>。</li>
@@ -88,17 +88,18 @@ class MailboxRecipientValidationTest {
     }
 
     @Test
-    @DisplayName("roleList 超过 20 个就不列正文：只报计数 + 指向 mail_start(roles=true)")
-    void roleListIsBoundedWhenRosterIsLarge() {
+    @DisplayName("roleList 全量返回，不按条数截断（25 个也逐个列出）")
+    void roleListIsAlwaysFullWhenRosterIsLarge() {
         java.util.Set<String> many = new java.util.LinkedHashSet<>();
         for (int i = 0; i < 25; i++) many.add("角色" + i);
         MailRoleCatalog big = MailRoleFixtures.catalog(many, Map.of(), Map.of());
 
         String msg = svc.recipientRejectionMessage("zzzzz", big.check("zzzzz"));
 
-        assertTrue(msg.contains("- roleList：当前生效 25 个，未随本响应给出"), msg);
-        assertTrue(msg.contains("mail_start(roles=true)"), "要指出按需查的入口：" + msg);
-        assertFalse(msg.contains("`角色0`"), "超过阈值不许把名单塞进错误响应：" + msg);
+        assertTrue(msg.contains("- roleList（当前生效 25 个，仅展示）："), msg);
+        assertTrue(msg.contains("`角色0`") && msg.contains("`角色24`"),
+                "名单必须全量，不能只报计数：" + msg);
+        assertFalse(msg.contains("未随本响应给出"), "不再有截断分支：" + msg);
     }
 
     @Test

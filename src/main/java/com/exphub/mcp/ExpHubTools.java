@@ -6047,8 +6047,8 @@ public class ExpHubTools {
                     + "**不含正文摘要**，不推游标、不改任何状态（调多次结果一样）。外部系统做未读角标用它，"
                     + "默认 false 行为不变", required = false) Boolean unreadOnly,
             @ToolParam(description = "可选。true=**按需查全量角色名单**：只列当前 status=ACTIVE 的角色（汉字正名），"
-                    + "停用与待复核不出现；不读信封、不推游标。返信里的名单超过阈值时用它查全量，"
-                    + "**名单只用于展示，不得据此自动改写收件人并重发**", required = false) Boolean roles) {
+                    + "停用与待复核不出现；不读信封、不推游标。拒绝响应本身已带全量名单，"
+                    + "这个入口用于主动查询；**名单只用于展示，不得据此自动改写收件人并重发**", required = false) Boolean roles) {
         try {
             if (Boolean.TRUE.equals(roles)) {
                 // 阁主 T261109054529-699：全量名单单独一个查询入口按需给，不塞进每次错误响应。
@@ -6174,7 +6174,7 @@ public class ExpHubTools {
                       + "**收件人正名是汉字（如「烛龙」）；拼音（zhulong）和错拼（zhuolong）仍兼容，会归一到汉字并在回执里说明**。"
                       + "**回信（带 inReplyTo）的收件人强制取父消息发件人**，不接受自选。"
                       + "收件人被拒时返回结构化的 rejectedRole / candidates / roleList / hint；"
-                      + "**候选和名单只用于展示，调用方不得据此自动改写收件人并重发**（全量名单用 mail_start(roles=true) 按需查，不塞进错误响应）。"
+                      + "**候选和名单只用于展示，调用方不得据此自动改写收件人并重发**（roleList 已是全量 ACTIVE 名单；也可用 mail_start(roles=true) 主动查）。"
                       + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。")
     public String mailSend(
             @ToolParam(description = "收件人：正名优先写汉字（如「烛龙」「重明鸟」）；拼音（zhulong）也收，"

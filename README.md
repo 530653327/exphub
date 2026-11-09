@@ -8,8 +8,8 @@
 2.4.0 = 信箱角色清单迁库：收件人校验改读 `mail_roles`（`status='ACTIVE'` 才可投递），
 **正名改汉字（烛龙 / 重明鸟…），拼音降为别名**（兼容期入参汉字和拼音都收，出口一律汉字）；
 `application.yml` 的 `known-roles` / `role-aliases` 已删除；回信收件人强制取父消息发件人。
-收件人被拒时返回结构化 `rejectedRole / candidates / roleList / hint`，名单只含 ACTIVE 且只用于展示；
-全量名单用 `mail_start(roles=true)` 按需查，**调用方不得依据本响应自动改写收件人并重发**——
+收件人被拒时返回结构化 `rejectedRole / candidates / roleList / hint`，名单只含 ACTIVE、全量给出且只用于展示；
+`mail_start(roles=true)` 仍可主动查同一份名单，**调用方不得依据本响应自动改写收件人并重发**——
 名单是给人看的，不是给程序猜的。
 `/health` 与 MCP `serverInfo` 都报这个版本，改版本号只改 `src/main/resources/application.yml` 的 `exphub.version` 一处。
 注意它不等于 `pom.xml` 的 Maven artifact 版本（1.0.0）——后者决定 jar 文件名，

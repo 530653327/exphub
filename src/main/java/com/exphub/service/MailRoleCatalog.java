@@ -42,10 +42,12 @@ import java.util.function.LongSupplier;
  * 忆阁不取、不存、不校验、不做拼错纠正；拒绝回执是结构化错误（被拒收件人 + ≤5 个候选 + 一句提示）。
  *
  * <p><b>2026-11-09 阁主 T261109054529-699：名单只用于展示，不许被当成自动重发的依据。</b>
- * 拒绝回执里带<b>当前生效名单</b>（只有 {@code ACTIVE}），但条数超过
- * {@value #MAX_ROLE_LIST_IN_ERROR} 时不给正文、只给计数 + 查询入口 ——
- * 一百多个代号塞进每次错误响应会把日志和报文撑爆。停用（{@code DISABLED}）与
+ * 拒绝回执里带<b>当前生效名单</b>（只有 {@code ACTIVE}）。停用（{@code DISABLED}）与
  * 待复核（{@code PENDING_REVIEW}）在任何出口都不出现。
+ *
+ * <p><b>2026-11-09 阁主 T261109114542-413：名单全量返回，不再按条数截断。</b>
+ * 越哥要求拒绝响应里的生效角色一次能看全，所以原先的「超过 20 条只报计数」
+ * 分支（连同阈值常量）已删除；分页、省略号这类折中也不做。
  *
  * <p><b>2026-11-09 阁主 T261109054938-679：正名改汉字，拼音降为别名。</b>
  * {@code mail_roles.role} 现在存「烛龙 / 白泽 / 重明鸟」这类汉字，拼音（含 zhuolong 这类错拼）
@@ -61,15 +63,6 @@ public class MailRoleCatalog {
 
     /** 拒绝时最多给几个候选。给全清单会撑成一屏、客户端还会截断（阁主 P9 第 2 条）。 */
     public static final int MAX_CANDIDATES = 5;
-
-    /**
-     * 拒绝回执里最多直接列出多少个生效角色。
-     *
-     * <p>超过这个数就只报计数 + 指向 {@code mail_start(roles=true)}：名单会随角色增长到 100+，
-     * 每次发错收件人都把整份名单塞进错误响应，日志和报文都会被撑爆
-     * （阁主 T261109054529-699 第二条）。
-     */
-    public static final int MAX_ROLE_LIST_IN_ERROR = 20;
 
     @Autowired
     private MailRoleMapper roleMapper;
