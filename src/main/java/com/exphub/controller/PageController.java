@@ -486,12 +486,15 @@ public class PageController extends BaseController {
     // ⚠️ 2026-11-07：删除后必须回到「原来的视图」而不是 /docs 首页。
     // 用户在待删 Tab 里删一条，旧代码 redirect:/docs 直接跳回全部，得重新点待删——
     // 6 条就得重复 6 次。现在把当前 Tab/筛选条件带回来（参数由前端表单 query 传入）。
+    // ⚠️ 2026-11-09：problem（问题文档分类）原来没带，从「问题文档 → 超期未验证」删一条
+    // 会跳回「全部」——同一个毛病在加了 problem 视图后又犯了一次。现在一起带回来。
     @PostMapping("/docs/{id}/delete")
     public String deleteDoc(HttpSession session, @PathVariable Long id,
                             @RequestParam(required = false) String status,
                             @RequestParam(required = false) String flag,
                             @RequestParam(required = false) String keyword,
-                            @RequestParam(required = false) String templateType) {
+                            @RequestParam(required = false) String templateType,
+                            @RequestParam(required = false) String problem) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
@@ -504,7 +507,7 @@ public class PageController extends BaseController {
         }
 
         // 回到原视图第 1 页：删掉一条后当前页可能越界，且待删队列本来就没几页
-        return redirectToDocs(status, flag, keyword, templateType, true);
+        return redirectToDocs(status, flag, keyword, templateType, problem, true);
     }
 
     // M10：撤销待删标记（把 AI 标记的东西放回来）
@@ -513,7 +516,8 @@ public class PageController extends BaseController {
                              @RequestParam(required = false) String status,
                              @RequestParam(required = false) String flag,
                              @RequestParam(required = false) String keyword,
-                             @RequestParam(required = false) String templateType) {
+                             @RequestParam(required = false) String templateType,
+                             @RequestParam(required = false) String problem) {
         User user = (User) session.getAttribute("user");
         if (user == null) return "redirect:/login";
 
@@ -521,7 +525,7 @@ public class PageController extends BaseController {
         // 恢复后仍留在待删队列（方便连续处理剩下的），但保留用户的其它筛选条件
         return redirectToDocs(
                 (status == null || status.isEmpty()) ? DocService.PENDING_DELETE : status,
-                flag, keyword, templateType, true);
+                flag, keyword, templateType, problem, true);
     }
 
     /**
@@ -533,14 +537,16 @@ public class PageController extends BaseController {
      * @param resetPage true = 回到第 1 页（删/恢复后当前页可能已越界）
      */
     private String redirectToDocs(String status, String flag, String keyword,
-                                  String templateType, boolean resetPage) {
-        return buildDocsRedirect(status, flag, keyword, templateType);
+                                  String templateType, String problem, boolean resetPage) {
+        return buildDocsRedirect(status, flag, keyword, templateType, problem);
     }
     /**
      * 纯函数版重定向拼装（包级可见，供单测直接断言输出，不必起 Spring）。
-     * 只认这 4 个已知键，逐个编码后拼装；<b>不接收完整 URL</b>，避免开放重定向。
+     * 只认这 5 个已知键，逐个编码后拼装；<b>不接收完整 URL</b>，避免开放重定向。
+     * problem 只认 DocService 白名单里的 5 类，非法值丢弃（与 GET /docs 的口径一致）。
      */
-    static String buildDocsRedirect(String status, String flag, String keyword, String templateType) {
+    static String buildDocsRedirect(String status, String flag, String keyword, String templateType,
+                                    String problem) {
         List<String> qs = new java.util.ArrayList<>();
         if (status != null && !status.trim().isEmpty()) {
             qs.add("status=" + org.springframework.web.util.UriUtils.encodeQueryParam(status, java.nio.charset.StandardCharsets.UTF_8));
@@ -554,7 +560,16 @@ public class PageController extends BaseController {
         if (templateType != null && !templateType.trim().isEmpty()) {
             qs.add("templateType=" + org.springframework.web.util.UriUtils.encodeQueryParam(templateType, java.nio.charset.StandardCharsets.UTF_8));
         }
+        String p = problem == null ? "" : problem.trim().toLowerCase();
+        if (DocService.isProblemType(p)) {
+            qs.add("problem=" + org.springframework.web.util.UriUtils.encodeQueryParam(p, java.nio.charset.StandardCharsets.UTF_8));
+        }
         return qs.isEmpty() ? "redirect:/docs" : "redirect:/docs?" + String.join("&", qs);
+    }
+
+    /** 老签名（无 problem），保留给既有测试与调用方。 */
+    static String buildDocsRedirect(String status, String flag, String keyword, String templateType) {
+        return buildDocsRedirect(status, flag, keyword, templateType, null);
     }
 
     /**

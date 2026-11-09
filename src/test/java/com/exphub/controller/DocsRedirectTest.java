@@ -64,4 +64,33 @@ class DocsRedirectTest {
         // 中文必须被编码，不能原样出现
         assertFalse(r.contains("部署"), "关键词未编码，URL 会非法：" + r);
     }
+
+    // ===== 2026-11-09：「问题文档」视图又犯了一次同样的毛病 =====
+    // 从 /docs?problem=stale 删一条后，旧代码只带回 status/flag/keyword/templateType，
+    // problem 不在其中 —— 于是又跳回「全部」。同一个缺陷在加了 problem 视图后复发，
+    // 因为「带当前 Tab 回来」当时是靠逐个列参数实现的，新增分类忘了加。
+
+    @Test
+    void keepsProblemTab() {
+        String r = PageController.buildDocsRedirect(null, null, null, null, "stale");
+        assertEquals("redirect:/docs?problem=stale", r);
+    }
+
+    @Test
+    void problemCombinesWithOtherFilters() {
+        String r = PageController.buildDocsRedirect("PENDING_DELETE", null, null, null, "pending_delete");
+        assertEquals("redirect:/docs?status=PENDING_DELETE&problem=pending_delete", r);
+    }
+
+    @Test
+    void unknownProblemValueIsDropped() {
+        // 只认 5 类白名单，与 GET /docs 的口径一致；非法值丢弃，不让任意串进重定向 URL
+        assertEquals("redirect:/docs",
+                PageController.buildDocsRedirect(null, null, null, null, "'; DROP TABLE docs; --"));
+        assertEquals("redirect:/docs", PageController.buildDocsRedirect(null, null, null, null, ""));
+        assertEquals("redirect:/docs", PageController.buildDocsRedirect(null, null, null, null, "stale2"));
+        // 大小写/首尾空白按 GET /docs 的同一口径归一后接受
+        assertEquals("redirect:/docs?problem=stale",
+                PageController.buildDocsRedirect(null, null, null, null, "  STALE  "));
+    }
 }

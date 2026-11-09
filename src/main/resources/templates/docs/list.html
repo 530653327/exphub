@@ -369,15 +369,19 @@
         var currentFlag = /*[[${flag}]]*/ '';
         var currentKeyword = /*[[${keyword}]]*/ '';
         var currentTemplateType = /*[[${templateType}]]*/ '';
+        var currentProblem = /*[[${problem}]]*/ '';
 
         // 删除/恢复后要回到当前视图，所以把当前 Tab 与筛选条件拼到 POST 的 query 上。
         // 服务端只认这几个键，不接收完整 URL（避免开放重定向）。
+        // ⚠️ problem 必须带上（2026-11-09）：问题文档视图的判据不是 status/flag，
+        // 不带 problem 就跳回「全部」，删一条得重新点一次「问题文档」。
         function docsContextQuery() {
             var qs = [];
             if (currentStatus) qs.push('status=' + encodeURIComponent(currentStatus));
             if (currentFlag) qs.push('flag=' + encodeURIComponent(currentFlag));
             if (currentKeyword) qs.push('keyword=' + encodeURIComponent(currentKeyword));
             if (currentTemplateType) qs.push('templateType=' + encodeURIComponent(currentTemplateType));
+            if (currentProblem) qs.push('problem=' + encodeURIComponent(currentProblem));
             return qs.length ? ('?' + qs.join('&')) : '';
         }
 
@@ -416,33 +420,39 @@
             window.location.href = url;
         }
 
-        document.getElementById('searchInput').addEventListener('keyup', function(e) {
-            if (e.key === 'Enter') {
-                doSearch();
-            }
-        });
+        // 搜索框只在「普通/待删/待复核」视图里渲染；问题文档视图会把整个筛选工具栏藏起来
+        //（见上方 th:if="${view != 'candidates' and (problem == null or problem == '')}"），
+        // 所以这里必须先判空。2026-11-09 事故：这一行原来是无条件 addEventListener，
+        // 在 /docs?problem=... 下 getElementById 返回 null，直接抛 TypeError，
+        // 把下面三条「删除 / 恢复 / 分享」的事件绑定一起中断 —— 表现就是「点删除没反应，连确认框都不弹」。
+        var searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.addEventListener('keyup', function(e) {
+                if (e.key === 'Enter') {
+                    doSearch();
+                }
+            });
+        }
 
-        // 事件委托：分享按钮
-        document.getElementById('docList').addEventListener('click', function(e) {
-            var btn = e.target.closest('.share-btn');
-            if (btn) {
-                shareDoc(btn.getAttribute('data-doc-id'), btn.getAttribute('data-doc-title'));
+        // 事件委托统一挂在 document 上，不挂 #docList —— candidates 视图没有 #docList，
+        // 问题文档视图虽然有过但它不是稳定的锚点。挂 document 则元素在不在都能收到点击。
+        document.addEventListener('click', function(e) {
+            // 分享按钮
+            var shareBtn = e.target.closest('.share-btn');
+            if (shareBtn) {
+                shareDoc(shareBtn.getAttribute('data-doc-id'), shareBtn.getAttribute('data-doc-title'));
+                return;
             }
-        });
-
-        // 事件委托：删除按钮
-        document.getElementById('docList').addEventListener('click', function(e) {
-            var btn = e.target.closest('.delete-btn');
-            if (btn) {
-                deleteDoc(btn.getAttribute('data-doc-id'));
+            // 删除按钮
+            var deleteBtn = e.target.closest('.delete-btn');
+            if (deleteBtn) {
+                deleteDoc(deleteBtn.getAttribute('data-doc-id'));
+                return;
             }
-        });
-
-        // 事件委托：撤销待删标记（M10）
-        document.getElementById('docList').addEventListener('click', function(e) {
-            var btn = e.target.closest('.restore-btn');
-            if (btn) {
-                restoreDoc(btn.getAttribute('data-doc-id'));
+            // 撤销待删标记（M10）
+            var restoreBtn = e.target.closest('.restore-btn');
+            if (restoreBtn) {
+                restoreDoc(restoreBtn.getAttribute('data-doc-id'));
             }
         });
 
