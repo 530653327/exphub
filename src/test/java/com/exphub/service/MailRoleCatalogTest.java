@@ -52,16 +52,16 @@ class MailRoleCatalogTest {
         c.setTtlMs(30_000L);
         c.setForceReloadThrottleMs(0L); // 关掉节流，专测「被迫重读」
 
-        assertEquals(MailRoleCatalog.Check.Kind.UNKNOWN, c.check("夫诸").kind(),
-                "库里还没有夫诸，应当判未知");
+        assertEquals(MailRoleCatalog.Check.Kind.UNKNOWN, c.check("穷奇").kind(),
+                "库里还没有穷奇，应当判未知");
 
-        // 后台/迁移刚加完夫诸（TTL 还没到）
-        when(mapper.selectActive()).thenReturn(List.of(role("烛龙"), role("阁主"), role("夫诸")));
+        // 后台/迁移刚加完穷奇（TTL 还没到）
+        when(mapper.selectActive()).thenReturn(List.of(role("烛龙"), role("阁主"), role("穷奇")));
 
-        MailRoleCatalog.Check after = c.check("夫诸");
+        MailRoleCatalog.Check after = c.check("穷奇");
         assertEquals(MailRoleCatalog.Check.Kind.OK, after.kind(),
                 "被拒前必须重读一次，否则「刚加的角色」第一次发信必被拒，看起来像对方写错");
-        assertEquals("夫诸", after.canonical());
+        assertEquals("穷奇", after.canonical());
     }
 
     @Test

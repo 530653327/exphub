@@ -147,9 +147,9 @@ class OnUpdateColumnGuardTest {
         // 2026-10-29 实数：8 条；2026-11-09 migration_20261109b +3 条 = 11 条：
         //   ① 停用旧版 A 段的拼音正名行；② 历史消息 from/to/claimed_by 刷成汉字；
         //   ③ 把 OBSERVED 压回 PENDING_REVIEW。
-        // 2026-11-09 migration_20261109c +1 条 = 12 条：
-        //   ④ 停用「夫诸」这一行（阁主线程 T261109062718-346，只改 role='夫诸'，显式写回 updated_at）。
-        assertEquals(12, seen,
+        // 2026-11-09 收尾（阁主 T261109120139-277）：migration_20261109c 由 UPDATE 改成 DELETE，
+        //   UPDATE 条数回到 11 —— 数字变小是**这次改动的预期结果**，不是解析退化。
+        assertEquals(11, seen,
                 "扫到的 UPDATE 条数变了（实际 " + seen + "）。新增脚本请同步这个数字；"
                         + "数字变**少**通常意味着分号/注释解析退化，守卫会在没人察觉的情况下失效");
     }

@@ -1,55 +1,46 @@
 SET NAMES utf8mb4;
 
 -- ============================================================
--- 2026-11-09 停用「夫诸」信箱角色（阁主线程 T261109062718-346 / #305）
+-- 2026-11-09 收尾：把「夫诸」角色从角色清单里彻底移除（阁主线程 T261109120139-277 / #332）
 --
--- 背景：越哥 2026-11-09 06:00 在面板保存 roles.json 时已把 fuzhu 从哨兵角色表删掉
---   （穷奇 #281 核查记录见 #1615）。哨兵不再轮询夫诸的信箱，而 mail_roles 里它仍是
---   ACTIVE —— 信能寄进去、永远没人读，这正是 P9 要治的静默丢信，只是这次是配置造成的，
---   不是拼错造成的。
+-- 演变（不要只看文件名，文件名保留是为了 schema_migrations 里那条已执行记录不变成孤儿）：
+--   1. 06:0x 本文件首版是 UPDATE status='DISABLED'（阁主 #305）——「停用但保留行」。
+--   2. 11:5x 线上按阁主 #324 / 线程 T261109115251-098 直接 DELETE 了这两行（含别名）。
+--   3. 12:0x 越哥定「从此不许再出现，一个字节不留」：种子（sql/init.sql 与
+--      migration_20261109b_mail_roles.sql）已同步删掉这个角色与它的别名，
+--      本文件改成**幂等 DELETE**，给存量库兜底收敛。
 --
--- 口径（阁主 #305 三条）：
---   1. **只动「夫诸」这一行。** mail_roles 是「可投递地址清单」，哨兵 roles.json 是
---      「有人在轮询的角色清单」，两个口径不是一回事；把非 ACTIVE 的行整表扫一遍，
---      会误停别人还在用的地址。
---   2. 停用不是删数据：历史线程与正文都还在，mail_thread 按 threadId 照常能读回来。
---   3. 表是运行时读的（MailRoleCatalog，TTL 30 秒），改完最多半分钟生效；
---      不需要发版，也不要为了验证重启 JVM。
+-- 为什么保留文件而不是删掉：
+--   线上 schema_migrations 已有本文件名的一条记录。删文件不会删掉那条记录，
+--   只会留下一条指向不存在文件的孤儿账（要清它就得改生产库，超出本单授权）。
+--   保留文件 + 改成 DELETE，下次部署按 md5 变化重跑一次，匹配 0 行即可。
 --
--- 幂等：WHERE 带 status <> 'DISABLED'，第二次执行匹配 0 行。
+-- 行为说明（别误读成「删了历史」）：
+--   - 只删 mail_roles / mail_role_aliases 里的**配置行**；
+--   - mail_messages / mail_cursors 里的历史消息与游标**一律不动**（那是事实）；
+--   - mail_thread 按 threadId 仍能读回旧线程全文。
 --
--- 回滚（就这一句，需要时取消注释后执行；本文件本身不含可执行的反向语句）：
---   UPDATE mail_roles SET status = 'ACTIVE', updated_by = 'rollback:gezhu#305', updated_at = updated_at
---   WHERE role = '夫诸';
---
--- ⚠️ updated_at 显式写回自身：mail_roles.updated_at 带 ON UPDATE CURRENT_TIMESTAMP，
---    不写回会把「上一次变更时间」静默刷成执行时刻（OnUpdateColumnGuardTest 的红线）。
+-- 幂等：DELETE 天然可重跑；新库（种子已无此角色）执行后影响 0 行。
 -- ============================================================
 
-UPDATE mail_roles
-SET status     = 'DISABLED',
-    updated_by = 'migration_20261109c',
-    updated_at = updated_at
-WHERE role = '夫诸'
-  AND status <> 'DISABLED';
+DELETE FROM mail_role_aliases
+WHERE alias = 'fuzhu'
+   OR role = '夫诸';
 
--- 自证 1：目标行。期望恰好 1 行、status=DISABLED。
---   返回空集 = 这行不存在（或连错了库），人工核对，不要当成「已经是停用状态」。
-SELECT role, display_name, status, source, project_id, updated_by, updated_at
-FROM mail_roles
+DELETE FROM mail_roles
 WHERE role = '夫诸';
 
--- 自证 2：全表状态计数。期望 ACTIVE=11、DISABLED=1，其余 0 —— 用来证明「只动了这一行」。
+-- 自证 1：目标角色与别名都必须为 0 行（两行都应返回空集）。
+SELECT role, display_name, status FROM mail_roles WHERE role = '夫诸';
+SELECT alias, role FROM mail_role_aliases WHERE alias = 'fuzhu' OR role = '夫诸';
+
+-- 自证 2：全表计数。期望 mail_roles=11、mail_role_aliases=18（11 条拼音 + 7 条历史错拼）。
+SELECT 'mail_roles' AS tbl, COUNT(*) AS cnt FROM mail_roles
+UNION ALL
+SELECT 'mail_role_aliases', COUNT(*) FROM mail_role_aliases;
+
+-- 自证 3：状态分布。期望只有 ACTIVE=11，其余 0。
 SELECT status, COUNT(*) AS cnt
 FROM mail_roles
 GROUP BY status
 ORDER BY status;
-
--- 自证 3：别名 fuzhu 仍指向夫诸（**保留是刻意的**）。
---   拼音入参仍要归一到这里，才好被投递校验（只认 status='ACTIVE'）明确拒掉；
---   删掉别名只会让它变成「不认识的代号」，把「已停用」和「写错了」混成一句话。
---   因此这里返回 1 行（target_status=DISABLED）是预期结果，不是缺陷。
-SELECT a.alias, a.role, r.status AS target_status
-FROM mail_role_aliases a
-LEFT JOIN mail_roles r ON r.role = a.role
-WHERE a.role = '夫诸';

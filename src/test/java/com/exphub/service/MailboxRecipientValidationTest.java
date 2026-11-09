@@ -107,13 +107,13 @@ class MailboxRecipientValidationTest {
     void roleListNeverLeaksInactiveRoles() {
         MailRoleCatalog mixed = MailRoleFixtures.catalogWithLeakedInactive(
                 Set.of("烛龙", "阁主", "白泽"),
-                Map.of("夫诸", "DISABLED", "legacy_guy", "PENDING_REVIEW"));
+                Map.of("停用示例", "DISABLED", "legacy_guy", "PENDING_REVIEW"));
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "roleCatalog", mixed);
 
         String msg = svc.recipientRejectionMessage("zzzz", mixed.check("zzzz"));
 
         assertTrue(msg.contains("- roleList（当前生效 3 个，仅展示）："), msg);
-        assertFalse(msg.contains("夫诸"), "停用的角色不许出现在名单：" + msg);
+        assertFalse(msg.contains("停用示例"), "停用的角色不许出现在名单：" + msg);
         assertFalse(msg.contains("legacy_guy"), "待复核的历史脏代号不许出现在名单：" + msg);
     }
 

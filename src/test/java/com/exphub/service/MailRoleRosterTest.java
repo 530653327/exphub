@@ -31,13 +31,13 @@ class MailRoleRosterTest {
     void rosterIsSortedAndActiveOnly() {
         MailRoleCatalog catalog = MailRoleFixtures.catalogWithLeakedInactive(
                 Set.of("烛龙", "阁主", "白泽"),
-                Map.of("夫诸", "DISABLED", "legacy_guy", "PENDING_REVIEW"));
+                Map.of("停用示例", "DISABLED", "legacy_guy", "PENDING_REVIEW"));
 
         List<String> roster = catalog.roster();
 
         assertEquals(List.of("烛龙", "白泽", "阁主"), roster,
                 "必须是 ACTIVE 全量且稳定排序：" + roster);
-        assertFalse(roster.contains("夫诸"), "停用角色不许出现");
+        assertFalse(roster.contains("停用示例"), "停用角色不许出现");
         assertFalse(roster.contains("legacy_guy"), "待复核脏代号不许出现");
     }
 

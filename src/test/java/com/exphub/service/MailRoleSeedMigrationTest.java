@@ -35,8 +35,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>所以这里守六件事：
  * <ol>
- *   <li>种子正名 = 留档清单（12 个汉字）<b>逐项一致</b>；别名指向的正名必须 ACTIVE；</li>
- *   <li>12 条拼音别名齐全（兼容期客户端仍写拼音，漏一条就当场把发信打死）；</li>
+ *   <li>种子正名 = 留档清单（11 个汉字）<b>逐项一致</b>；别名指向的正名必须 ACTIVE；</li>
+ *   <li>11 条拼音别名齐全（兼容期客户端仍写拼音，漏一条就当场把发信打死）；</li>
  *   <li>历史代号导成 <b>OBSERVED + PENDING_REVIEW</b>（待复核，不是合法来源）；</li>
  *   <li>历史消息/游标必须有「按别名刷成汉字」的语句，且 to_role 列是 utf8mb4、长度够；</li>
  *   <li>{@code application.yml} 里<b>不许</b>再出现 {@code known-roles} / {@code role-aliases}；</li>
@@ -53,15 +53,14 @@ class MailRoleSeedMigrationTest {
      * 2026-11-09 #679 起正名是**汉字**，拼音只允许出现在别名表。
      */
     private static final Set<String> ARCHIVED_ROLE_CODES = new LinkedHashSet<>(Arrays.asList(
-            "烛龙", "白泽", "阁主", "夫诸", "貔貅", "睚眦",
+            "烛龙", "白泽", "阁主", "貔貅", "睚眦",
             "麒麟", "凤凰", "重明鸟", "九尾狐", "帝江", "穷奇"));
 
-    /** 12 条拼音别名：客户端工具说明里仍写着它们，缺一条就是「服务端只认汉字、调用方还说拼音」。 */
+    /** 11 条拼音别名：客户端工具说明里仍写着它们，缺一条就是「服务端只认汉字、调用方还说拼音」。 */
     private static final Map<String, String> PINYIN_ALIASES = Map.ofEntries(
             Map.entry("zhulong", "烛龙"),
             Map.entry("baize", "白泽"),
             Map.entry("gezhu", "阁主"),
-            Map.entry("fuzhu", "夫诸"),
             Map.entry("pixiu", "貔貅"),
             Map.entry("yazi", "睚眦"),
             Map.entry("qilin", "麒麟"),
@@ -82,7 +81,7 @@ class MailRoleSeedMigrationTest {
     // ------------------------------------------------------------ 主守卫
 
     @Test
-    @DisplayName("种子正名必须等于留档清单 12 个汉字（漏一个，上线当天就有人收不到信）")
+    @DisplayName("种子正名必须等于留档清单 11 个汉字（漏一个，上线当天就有人收不到信）")
     void seededRolesMatchArchivedList() throws Exception {
         assertEquals(ARCHIVED_ROLE_CODES, seededRoles(),
                 "迁移种子的正名与留档清单不一致。若确实要增删，请同步本测试并在回执里说明");
@@ -103,7 +102,7 @@ class MailRoleSeedMigrationTest {
     }
 
     @Test
-    @DisplayName("12 条拼音别名必须齐全（兼容期客户端仍写拼音，漏一条当场把发信打死）")
+    @DisplayName("11 条拼音别名必须齐全（兼容期客户端仍写拼音，漏一条当场把发信打死）")
     void pinyinAliasesCoverEveryCanonicalRole() throws Exception {
         Map<String, String> aliases = seededAliases();
         for (Map.Entry<String, String> e : PINYIN_ALIASES.entrySet()) {

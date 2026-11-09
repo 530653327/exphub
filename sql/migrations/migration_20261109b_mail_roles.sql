@@ -8,7 +8,7 @@ SET NAMES utf8mb4;
 --   ③ 名字对不对由 ExpHub 说了算。
 --
 -- 追加一条（阁主线程 T261109054938-679，越哥同日晚定）：
---   **收件人正名改汉字，拼音降为别名。** 12 个正名：烛龙 / 白泽 / 阁主 / 夫诸 / 貔貅 / 睚眦 /
+--   **收件人正名改汉字，拼音降为别名。** 11 个正名：烛龙 / 白泽 / 阁主 / 貔貅 / 睚眦 /
 --   麒麟 / 凤凰 / 重明鸟 / 九尾狐 / 帝江 / 穷奇。对应拼音（zhulong / baize / …）连同历史错拼
 --   （zhuolong / piyao / yaci …）**全部是别名**，指向汉字正名。
 --   - 兼容期入参汉字和拼音都收，入口统一归一到汉字再入库；
@@ -22,8 +22,8 @@ SET NAMES utf8mb4;
 --
 -- 本脚本做七件事：
 --   1. 建表 mail_roles / mail_role_aliases；
---   2. 导入种子：12 个**汉字正名**（SEEDED）；
---   3. 导入别名：12 条拼音 + 7 条历史错拼，全部指向汉字正名；
+--   2. 导入种子：11 个**汉字正名**（SEEDED）；
+--   3. 导入别名：11 条拼音 + 7 条历史错拼，全部指向汉字正名；
 --   4. 防御：旧版 A 段若被手工执行过（拼音当正名），按别名表把这些行 DISABLED（不删行）；
 --   5. 历史数据按别名刷成汉字：mail_messages 收发两侧 + 认领人、mail_cursors 游标；
 --      刷不动的（别名表里没有的脏值）原样保留，落第 6 步等人工复核，**不硬猜**；
@@ -99,7 +99,6 @@ INSERT IGNORE INTO mail_roles (role, display_name, status, source, note, created
  ('烛龙',   '烛龙',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 zhulong 见别名表', 'migration_20261109b'),
  ('白泽',   '白泽',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 baize 见别名表', 'migration_20261109b'),
  ('阁主',   '阁主',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 gezhu 见别名表', 'migration_20261109b'),
- ('夫诸',   '夫诸',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子（阁主 #219 发版角色）；拼音 fuzhu 见别名表', 'migration_20261109b'),
  ('貔貅',   '貔貅',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 pixiu、错拼 piyao 见别名表', 'migration_20261109b'),
  ('睚眦',   '睚眦',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 yazi、错拼 yaci 见别名表', 'migration_20261109b'),
  ('麒麟',   '麒麟',   'ACTIVE', 'SEEDED', '原 application.yml known-roles 种子；拼音 qilin 见别名表', 'migration_20261109b'),
@@ -112,7 +111,7 @@ INSERT IGNORE INTO mail_roles (role, display_name, status, source, note, created
 -- ------------------------------------------------------------
 -- 种子 2：别名（拼音 + 历史错拼 → 汉字正名）
 --
--- 12 条拼音是「兼容入参」的必需品：客户端工具说明里写的仍是拼音代号，
+-- 11 条拼音是「兼容入参」的必需品：客户端工具说明里写的仍是拼音代号，
 -- 服务端只认汉字会当场把发信打死（阁主 #679 第 2 条明写「不能让」）。
 -- 7 条历史错拼来自原 application.yml role-aliases，一条都不删。
 -- ------------------------------------------------------------
@@ -120,7 +119,6 @@ INSERT IGNORE INTO mail_role_aliases (alias, role, note) VALUES
  ('zhulong',       '烛龙',   '拼音别名：兼容客户端仍写 zhulong'),
  ('baize',         '白泽',   '拼音别名：兼容客户端仍写 baize'),
  ('gezhu',         '阁主',   '拼音别名：兼容客户端仍写 gezhu'),
- ('fuzhu',         '夫诸',   '拼音别名：兼容客户端仍写 fuzhu'),
  ('pixiu',         '貔貅',   '拼音别名：兼容客户端仍写 pixiu'),
  ('yazi',          '睚眦',   '拼音别名：兼容客户端仍写 yazi'),
  ('qilin',         '麒麟',   '拼音别名：兼容客户端仍写 qilin'),
