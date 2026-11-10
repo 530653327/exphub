@@ -339,8 +339,11 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-09 名单只用于展示（阁主 T261109054529-699）：仍 50 个工具，mail_start 加 roles，
         //            参数 206 → 207。理由：全量名单要「按需查」而不是塞进每次拒绝响应；
         //            加参数不加工具，避免为了查名单多付一个工具的常驻 schema 成本。
+        // 2026-11-10 全部来信/分页（阁主 T261109110170112-510 #625）：仍 50 个工具，mail_start 加
+        //            includeRead + lastId + beforeId，参数 207 → 210。理由：面板要「全部来信、最新在上」，
+        //            而时间戳 MM-dd HH:mm 当不了排序键；分页是真缺口（底层只扫最近 200 条消息）。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(207, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(210, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

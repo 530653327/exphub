@@ -17,6 +17,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -434,6 +435,14 @@ public class MailboxService {
         public String msgType;
         public LocalDateTime latestAt;
         public String latestSnippet;
+        /**
+         * 该线程最新一条消息的 id（收件 + 自己发的取最大）。
+         *
+         * <p>2026-11-10 阁主 #625：人读时间戳 {@code MM-dd HH:mm} 不能当排序键
+         * （同分钟并列、跨年字典序反），线程最新消息 id 才是稳定次级键。
+         * 前端拿它排序、并原样回传给 {@code beforeId} 翻更早的页。
+         */
+        public long latestId;
         public int freshCount;   // 游标之后的新消息数
         public boolean claimed;
         public String claimedBy;
@@ -502,6 +511,7 @@ public class MailboxService {
             env.msgType = latest.getMsgType();
             env.latestAt = newestAny.getCreatedAt();
             env.latestSnippet = snippet(newestAny.getBody());
+            env.latestId = idOfThread(threadId, byThread, latestMine);
             env.freshCount = fresh;
             env.claimed = latest.getClaimedBy() != null;
             env.claimedBy = latest.getClaimedBy();
@@ -521,6 +531,157 @@ public class MailboxService {
         MailMessage mine = latestMine.get(threadId);
         if (mine != null && mine.getId() > id) id = mine.getId();
         return id;
+    }
+
+    /**
+     * 收件箱「一页」的结果（2026-11-10 阁主 #625）。
+     *
+     * <p><b>为什么不能只加 includeRead</b>：{@link #inbox} 只扫最近 {@value #SCAN_BATCH} 条原始消息，
+     * 光加参数的话翻到第 3 页就空 —— 而空列表会被前端渲染成「没有更早的信」。
+     * 这就是「扫到窗口边界」被说成「信箱到底了」的静默失败（AGENTS 9c / #1953）。
+     *
+     * <p>所以本结果把「边界」显式带出来：{@link #windowFull} 表示扫描窗口已满，
+     * {@link #endOfInbox} 只有在<b>确实扫完</b>时才为 true。两者不许互相冒充。
+     */
+    public static class InboxPage {
+        public final List<Envelope> items = new ArrayList<>();
+        /** 本次调用扫了多少条原始消息（收件 + 自己发的各自计入）。 */
+        public int scannedMessages;
+        /** 扫描窗口上限（当前固定 SCAN_BATCH；窗口满 ≠ 信箱到底）。 */
+        public int scanWindow = SCAN_BATCH;
+        /** 扫描窗口被占满：窗口之外可能还有更早的线程没扫到。 */
+        public boolean windowFull;
+        /** 本次窗口内符合条件（含筛选）的线程总数，可能大于 items.size()。 */
+        public int matched;
+        /** 继续翻更早一页要回传的 beforeId（线程最新消息 id）；没有可翻的为 null。 */
+        public Long nextBeforeId;
+        /** 是否有更早的内容（窗口内还有被 limit 截掉的，或窗口本身没扫完）。 */
+        public boolean hasMore;
+        /** 能否证明「已经到最早」——只有 true 才能说「没有更早的信」。 */
+        public boolean endOfInbox;
+    }
+
+    /**
+     * 收件箱分页（2026-11-10 阁主 #625）。
+     *
+     * @param includeRead 含已读线程（默认 false = 只给「游标之后还有新消息」的线程，与老 inbox 一致）
+     * @param sinceId     增量游标：只取「线程最新消息 id &gt; sinceId」的线程（面板增量刷新）
+     * @param beforeId    翻页游标：只取「线程最新消息 id &lt; beforeId」的线程（加载更早）
+     */
+    public InboxPage inboxPage(String role, String q, int limit, boolean includeRead,
+                               Long sinceId, Long beforeId) {
+        InboxPage page = new InboxPage();
+        if (role == null || role.isBlank()) return page;
+        Set<String> meVariants = roleVariants(role);
+        if (meVariants.isEmpty()) return page;
+
+        QueryWrapper<MailMessage> recv = new QueryWrapper<MailMessage>()
+                .in("to_role", meVariants)
+                .orderByDesc("id")
+                .last("LIMIT " + SCAN_BATCH);
+        if (sinceId != null) recv.gt("id", sinceId);
+        if (beforeId != null) recv.lt("id", beforeId);
+        List<MailMessage> all = msgMapper.selectList(recv);
+
+        QueryWrapper<MailMessage> sent = new QueryWrapper<MailMessage>()
+                .in("from_role", meVariants)
+                .orderByDesc("id")
+                .last("LIMIT " + SCAN_BATCH);
+        if (sinceId != null) sent.gt("id", sinceId);
+        if (beforeId != null) sent.lt("id", beforeId);
+        List<MailMessage> mine = msgMapper.selectList(sent);
+
+        page.scannedMessages = all.size() + mine.size();
+        page.windowFull = all.size() >= SCAN_BATCH || mine.size() >= SCAN_BATCH;
+        if (all.isEmpty()) {
+            page.endOfInbox = !page.windowFull;
+            return page;
+        }
+
+        Map<String, List<MailMessage>> byThread = new LinkedHashMap<>();
+        for (MailMessage m : all) {
+            byThread.computeIfAbsent(m.getThreadId(), k -> new ArrayList<>()).add(m);
+        }
+        Map<String, MailMessage> latestMine = new LinkedHashMap<>();
+        for (MailMessage m : mine) {
+            latestMine.putIfAbsent(m.getThreadId(), m);
+        }
+
+        // beforeId 翻页：上一页已展示过的线程，其「更新的那部分」不在本次窗口里。
+        // 不排掉的话，该线程会带着更旧的最新消息再出现一次（重复行，且把过期数据当真数据）。
+        if (beforeId != null && !byThread.isEmpty()) {
+            List<MailMessage> newer = msgMapper.selectList(new QueryWrapper<MailMessage>()
+                    .select("thread_id")
+                    .in("thread_id", byThread.keySet())
+                    .ge("id", beforeId)
+                    .groupBy("thread_id"));
+            Set<String> seen = new LinkedHashSet<>();
+            for (MailMessage m : newer) seen.add(m.getThreadId());
+            byThread.keySet().removeAll(seen);
+        }
+
+        String kw = q == null ? null : q.trim().toLowerCase();
+        List<Envelope> out = new ArrayList<>();
+        for (Map.Entry<String, List<MailMessage>> e : byThread.entrySet()) {
+            String threadId = e.getKey();
+            List<MailMessage> msgs = e.getValue();
+            MailMessage latest = msgs.get(0); // 已按 id desc
+            MailMessage newestAny = latest;
+            MailMessage mineInThread = latestMine.get(threadId);
+            if (mineInThread != null && mineInThread.getId() > newestAny.getId()) {
+                newestAny = mineInThread;
+            }
+            long latestId = Math.max(latest.getId(),
+                    mineInThread == null ? 0L : mineInThread.getId());
+            if (sinceId != null && latestId <= sinceId) continue;
+            if (beforeId != null && latestId >= beforeId) continue;
+
+            long cursor = cursorOf(role.trim(), threadId);
+            int fresh = (int) msgs.stream().filter(m -> m.getId() > cursor).count();
+            if (fresh == 0 && !includeRead) continue;
+
+            if (kw != null && !kw.isEmpty()) {
+                boolean hit = contains(latest.getSubject(), kw)
+                        || contains(latest.getFromRole(), kw)
+                        || contains(latest.getMsgType(), kw);
+                if (!hit) continue;
+            }
+
+            Envelope env = new Envelope();
+            env.threadId = threadId;
+            env.subject = latest.getSubject();
+            env.fromRole = latest.getFromRole();
+            env.toRole = latest.getToRole();
+            env.msgType = latest.getMsgType();
+            env.latestAt = newestAny.getCreatedAt();
+            env.latestSnippet = snippet(newestAny.getBody());
+            env.latestId = latestId;
+            env.freshCount = fresh;
+            env.claimed = latest.getClaimedBy() != null;
+            env.claimedBy = latest.getClaimedBy();
+            out.add(env);
+        }
+
+        out.sort(Comparator.comparingLong((Envelope x) -> x.latestId).reversed());
+        page.matched = out.size();
+        if (out.size() > limit) out = new ArrayList<>(out.subList(0, limit));
+        page.items.addAll(out);
+        if (!out.isEmpty()) {
+            page.nextBeforeId = out.get(out.size() - 1).latestId;
+        } else if (page.windowFull) {
+            page.nextBeforeId = oldestScannedId(all, mine);
+        }
+        page.hasMore = page.matched > limit || (page.windowFull && page.nextBeforeId != null);
+        page.endOfInbox = !page.hasMore;
+        return page;
+    }
+
+    /** 本次扫描窗口里最旧的一条消息 id；窗口为空返回 null。 */
+    private Long oldestScannedId(List<MailMessage> a, List<MailMessage> b) {
+        long min = Long.MAX_VALUE;
+        for (MailMessage m : a) if (m.getId() != null && m.getId() < min) min = m.getId();
+        for (MailMessage m : b) if (m.getId() != null && m.getId() < min) min = m.getId();
+        return min == Long.MAX_VALUE ? null : min;
     }
 
     /**

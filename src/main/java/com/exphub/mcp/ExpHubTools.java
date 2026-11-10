@@ -6036,7 +6036,10 @@ public class ExpHubTools {
                       + "要展开某根用 mail_thread；q 只搜主题/发件人/类型，不搜正文。"
                       + "sent=true 切到**发件视角**（看你发出去的、含发给谁），默认 false=收件视角。"
                       + "roles=true 只列**当前可投递角色名单**（汉字正名，停用/待复核不出现），不读信封、不推游标；"
-                      + "名单只用于展示，**调用方不得依据名单自动改写收件人并重发**。")
+                      + "名单只用于展示，**调用方不得依据名单自动改写收件人并重发**。"
+                      + "includeRead=true 含已读线程（面板做「全部来信」用它）；每条线程带 `最新 #id`，这是稳定排序键。"
+                      + "lastId 只要更新于该消息的线程（增量刷新）；beforeId 只要更早的线程（翻页），"
+                      + "取上一页最后一条的 `最新 #id` 原样回传即可，**翻到底会明确说「已到最早」，窗口没扫完则说「不代表没有更早的信」**。")
     public String mailStart(
             @ToolParam(description = "可选。搜信封的关键词（只匹配主题/发件人/类型，不搜正文）", required = false) String q,
             @ToolParam(description = "可选。最多列几根线程，默认 20，上限 50", required = false) Integer limit,
@@ -6048,7 +6051,14 @@ public class ExpHubTools {
                     + "默认 false 行为不变", required = false) Boolean unreadOnly,
             @ToolParam(description = "可选。true=**按需查全量角色名单**：只列当前 status=ACTIVE 的角色（汉字正名），"
                     + "停用与待复核不出现；不读信封、不推游标。拒绝响应本身已带全量名单，"
-                    + "这个入口用于主动查询；**名单只用于展示，不得据此自动改写收件人并重发**", required = false) Boolean roles) {
+                    + "这个入口用于主动查询；**名单只用于展示，不得据此自动改写收件人并重发**", required = false) Boolean roles,
+            @ToolParam(description = "可选。true=连**已读线程**一起列（游标之后没有新消息的也列）。"
+                    + "面板要「全部来信、最新在上」时传它；默认 false = 只列有待看线程，与旧行为逐字节一致。"
+                    + "不推游标，调它不会吃掉未读角标", required = false) Boolean includeRead,
+            @ToolParam(description = "可选。增量游标：只列「线程最新消息 id **大于**它」的线程，填上次看到的 `最新 #id`。"
+                    + "传 0 或负数直接拒，不静默归零；与 beforeId 方向相反，两个一起传会明拒", required = false) Long lastId,
+            @ToolParam(description = "可选。翻页游标：只列「线程最新消息 id **小于**它」的线程，"
+                    + "填上一页最后一条的 `最新 #id`。小于 1 的值直接拒并回显收到的实际值", required = false) Long beforeId) {
         try {
             if (Boolean.TRUE.equals(roles)) {
                 // 阁主 T261109054529-699：全量名单单独一个查询入口按需给，不塞进每次错误响应。
@@ -6070,6 +6080,30 @@ public class ExpHubTools {
 
             int lim = (limit == null || limit <= 0) ? 20 : Math.min(limit, 50);
             boolean searchMode = q != null && !q.isBlank();
+
+            // 2026-11-10 阁主 #625：新参数的非法组合一律明拒，不许静默挑一个（AGENTS 9c）。
+            boolean wantsPage = includeRead != null || lastId != null || beforeId != null;
+            if (lastId != null && lastId < 1) {
+                return "❌ lastId 必须 ≥ 1（ExpHub 实际收到的是 " + lastId
+                        + "）。它是「线程最新消息 id」游标，不是数组下标。";
+            }
+            if (beforeId != null && beforeId < 1) {
+                return "❌ beforeId 必须 ≥ 1（ExpHub 实际收到的是 " + beforeId
+                        + "）。它是上一页最后一条的「最新 #id」，不是页码。";
+            }
+            if (lastId != null && beforeId != null) {
+                return "❌ lastId 与 beforeId 方向相反（一个只看更新、一个只看更早），不能同时传。"
+                        + "增量刷新用 lastId；加载更早用 beforeId。";
+            }
+            if (Boolean.TRUE.equals(sent) && wantsPage) {
+                return "❌ includeRead / lastId / beforeId 只作用于收件视角，与 sent=true 冲突。"
+                        + "发件视角没有「已读/未读」之分，也不支持这两类游标。";
+            }
+            if (Boolean.TRUE.equals(unreadOnly) && wantsPage) {
+                return "❌ unreadOnly=true 与 includeRead / lastId / beforeId 语义冲突："
+                        + "前者是只看未读的角标摘要，后者要读全部/分页。分开调。";
+            }
+
             int unread = mailboxService.unreadCount(me);
 
             sb.append("你是【").append(me).append("】");
@@ -6134,6 +6168,81 @@ public class ExpHubTools {
                 return sb.toString();
             }
 
+            // 2026-11-10 阁主 #625：含已读 / 稳定排序键 / 真分页。
+            // 不传这三个参数时，下面的默认分支逐字不变（老调用方零感知）。
+            if (wantsPage) {
+                boolean withRead = searchMode || Boolean.TRUE.equals(includeRead);
+                com.exphub.service.MailboxService.InboxPage page =
+                        mailboxService.inboxPage(me, q, lim, withRead, lastId, beforeId);
+                sb.append("；").append(withRead ? "含已读" : "只看有待看的")
+                  .append(searchMode ? "（按关键词过滤）" : "")
+                  .append("｜你传的 limit=").append(lim).append("\n");
+
+                if (page.items.isEmpty()) {
+                    if (lastId != null) {
+                        sb.append("📭 没有比 #").append(lastId).append(" 更新的线程（本次扫了 ")
+                          .append(page.scannedMessages).append(" 条消息）。\n");
+                    } else if (page.windowFull) {
+                        sb.append("📭 本窗口内没有符合条件的线程（本次扫了 ").append(page.scannedMessages)
+                          .append(" 条消息，窗口上限 ").append(page.scanWindow).append(" 已满）—— ")
+                          .append("**这不代表没有更早的信**。\n");
+                        if (page.nextBeforeId != null) {
+                            sb.append("➡️ 继续翻：mail_start(includeRead=").append(withRead)
+                              .append(", beforeId=").append(page.nextBeforeId).append(", limit=").append(lim).append(")\n");
+                        }
+                    } else {
+                        sb.append("📭 本窗口内没有符合条件的线程（已扫 ").append(page.scannedMessages)
+                          .append(" 条消息").append(beforeId != null ? "，已到最早" : "").append("）。\n");
+                    }
+                    appendMailPageJson(sb, page, lim, withRead);
+                    return sb.toString();
+                }
+
+                sb.append("\n📬 ").append(page.items.size()).append(" 根线程")
+                  .append(withRead ? "（含已读）" : "有待看").append("\n");
+                for (com.exphub.service.MailboxService.Envelope e : page.items) {
+                    sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
+                      .append(" · ").append(e.fromRole)
+                      .append(" · ").append(e.freshCount).append(" 封新")
+                      .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt))
+                      .append(" · 最新 #").append(e.latestId);
+                    if (e.claimed) sb.append(" · 已认领(").append(e.claimedBy).append(")");
+                    sb.append("\n  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
+                }
+                sb.append("\n🔎 本页 ").append(page.items.size()).append(" 根 / 你传的 limit=").append(lim)
+                  .append("｜最新 #").append(page.items.get(0).latestId)
+                  .append("、最旧 #").append(page.items.get(page.items.size() - 1).latestId).append("\n");
+                if (page.matched > page.items.size()) {
+                    sb.append("另有 ").append(page.matched - page.items.size())
+                      .append(" 根在本窗口内没展示（limit 截断，不是没有）。\n");
+                }
+                if (lastId != null) {
+                    if (page.windowFull) {
+                        sb.append("⚠️ 扫描窗口已满：本次扫了 ").append(page.scannedMessages)
+                          .append(" 条消息（上限 ").append(page.scanWindow)
+                          .append("）—— 增量拉新够用；要看更早的历史请改用 includeRead + beforeId 分页。\n");
+                    } else {
+                        sb.append("✅ 已扫完更新于 #").append(lastId).append(" 的线程，没有更新的了。\n");
+                    }
+                } else {
+                    if (page.windowFull) {
+                        sb.append("⚠️ 扫描窗口已满：本次扫了 ").append(page.scannedMessages)
+                          .append(" 条消息（上限 ").append(page.scanWindow)
+                          .append("），更早的线程还没进窗口 —— **不代表没有更早的信**，按下面的 beforeId 继续翻即可越过窗口。\n");
+                    }
+                    if (page.endOfInbox) {
+                        sb.append("✅ 已到最早：本次扫了 ").append(page.scannedMessages)
+                          .append(" 条消息，没有更早的线程了。\n");
+                    } else if (page.nextBeforeId != null) {
+                        sb.append("➡️ 加载更早：mail_start(includeRead=").append(withRead)
+                          .append(", beforeId=").append(page.nextBeforeId).append(", limit=").append(lim).append(")\n");
+                    }
+                }
+                sb.append("> 未读只是计数；读列表不推游标（含本次——不会吃掉角标）。展开某根用 mail_thread。\n");
+                appendMailPageJson(sb, page, lim, withRead);
+                return sb.toString();
+            }
+
             List<com.exphub.service.MailboxService.Envelope> list =
                     mailboxService.inbox(me, q, lim, searchMode);
             if (list.isEmpty()) {
@@ -6165,6 +6274,42 @@ public class ExpHubTools {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"")
                 .replace("\n", " ").replace("\r", " ").replace("\t", " ");
+    }
+
+    /**
+     * 分页信封的末行 JSON（2026-11-10 阁主 #625 硬要求二）。
+     *
+     * <p>忆阁的解析器只认「最后一行能 parse 的对象」。新分支若只给人读文本，
+     * 切过去会解析失败、面板直接变空态 —— 又一个静默失败。所以人读文本之后
+     * <b>永远</b>跟一行 JSON，且它是最后一行的唯一内容。
+     */
+    private static void appendMailPageJson(StringBuilder sb,
+                                           com.exphub.service.MailboxService.InboxPage page,
+                                           int lim, boolean includeRead) {
+        StringBuilder json = new StringBuilder("{\"limit\":").append(lim)
+                .append(",\"includeRead\":").append(includeRead)
+                .append(",\"scannedMessages\":").append(page.scannedMessages)
+                .append(",\"scanWindow\":").append(page.scanWindow)
+                .append(",\"windowFull\":").append(page.windowFull)
+                .append(",\"matched\":").append(page.matched)
+                .append(",\"hasMore\":").append(page.hasMore)
+                .append(",\"endOfInbox\":").append(page.endOfInbox)
+                .append(",\"nextBeforeId\":").append(page.nextBeforeId == null ? "null" : page.nextBeforeId)
+                .append(",\"items\":[");
+        for (int i = 0; i < page.items.size(); i++) {
+            com.exphub.service.MailboxService.Envelope e = page.items.get(i);
+            if (i > 0) json.append(",");
+            json.append("{\"threadId\":\"").append(jsonEscape(e.threadId))
+                .append("\",\"subject\":\"").append(jsonEscape(e.subject))
+                .append("\",\"from\":\"").append(jsonEscape(e.fromRole))
+                .append("\",\"type\":\"").append(jsonEscape(e.msgType))
+                .append("\",\"unread\":").append(e.freshCount)
+                .append(",\"lastId\":").append(e.latestId)
+                .append(",\"lastAt\":\"").append(jsonEscape(com.exphub.service.MailboxService.time(e.latestAt)))
+                .append("\"}");
+        }
+        json.append("]}");
+        sb.append(json).append("\n");
     }
 
     @Tool(name = "mail_send",

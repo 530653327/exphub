@@ -46,7 +46,7 @@ class MailboxSmokeTest {
     @Test
     @DisplayName("smoke: 没声明角色，mail_start 不给任何私信，也不查库")
     void mailStartWithoutRoleMustRefuse() {
-        String r = tools.mailStart(null, null, null, null, null, null);
+        String r = tools.mailStart(null, null, null, null, null, null, null, null, null);
         assertTrue(r.contains("未声明角色"), "没角色时必须明说，不能静默返回空列表：\n" + r);
         verifyNoInteractions(mailboxService);
     }
@@ -58,7 +58,7 @@ class MailboxSmokeTest {
         when(mailboxService.unreadCount("zhulong")).thenReturn(2);
         when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false))).thenReturn(List.of());
 
-        String r = tools.mailStart(null, null, null, null, null, null);
+        String r = tools.mailStart(null, null, null, null, null, null, null, null, null);
         assertTrue(r.startsWith("你是【zhulong】，配置来源 cfg-zhulong-01；未读 2 封"),
                 "回执第一行必须能一眼看出「我是谁、哪份配置」，实际：\n" + r);
     }
@@ -71,7 +71,7 @@ class MailboxSmokeTest {
         when(mailboxService.unreadCount("烛龙")).thenReturn(0);
         when(mailboxService.inbox(eq("烛龙"), isNull(), anyInt(), eq(false))).thenReturn(List.of());
 
-        String r = tools.mailStart(null, null, null, null, null, null);
+        String r = tools.mailStart(null, null, null, null, null, null, null, null, null);
 
         assertTrue(r.startsWith("你是【烛龙】，配置来源 cfg-zhulong-01"),
                 "兼容期配置仍写拼音，但出口必须是汉字：\n" + r);
@@ -102,7 +102,7 @@ class MailboxSmokeTest {
         when(mailboxService.outbox(eq("zhulong"), isNull(), anyInt()))
                 .thenReturn(List.of(envelope("T261108000000-001", "gezhu")));
 
-        String r = tools.mailStart(null, null, null, true, null, null);
+        String r = tools.mailStart(null, null, null, true, null, null, null, null, null);
 
         assertTrue(r.contains("发件视角"), "必须明确标出这是发件视角，否则会被当成收件箱读：\n" + r);
         assertTrue(r.contains("发给【gezhu】"), "发件视角的核心就是「我到底发给了谁」：\n" + r);
@@ -120,7 +120,7 @@ class MailboxSmokeTest {
         when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false)))
                 .thenReturn(List.of(envelope("T261108000000-001", "gezhu")));
 
-        String r = tools.mailStart(null, null, null, null, true, null);
+        String r = tools.mailStart(null, null, null, null, true, null, null, null, null);
 
         assertTrue(r.contains("\"threads\":1"), "要给出可解析的计数：" + r);
         assertTrue(r.contains("\"type\":\"note\""), "type 必须带（dispatch/receipt/accept 优先级不同）：" + r);
@@ -262,6 +262,112 @@ class MailboxSmokeTest {
                 "默认值不该渲染成「第 0 跳」：" + r);
     }
 
+    // ── 全部来信 / 分页（2026-11-10 阁主 #625）────────────────────────────
+
+    @Test
+    @DisplayName("默认调用（不传新参数）行为逐字不变：没有 JSON 尾行、没有分页脚注")
+    void defaultCallStaysByteIdentical() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+        when(mailboxService.unreadCount("zhulong")).thenReturn(0);
+        when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false)))
+                .thenReturn(List.of(envelope("T261108000000-001", "gezhu")));
+
+        String r = tools.mailStart(null, null, null, null, null, null, null, null, null);
+
+        org.junit.jupiter.api.Assertions.assertFalse(r.contains("最新 #"),
+                "默认分支不该多出分页字段，否则所有老调用方的回执都被改了一遍：" + r);
+        org.junit.jupiter.api.Assertions.assertFalse(r.contains("\"endOfInbox\""),
+                "默认分支不该多出 JSON 尾行：" + r);
+        org.mockito.Mockito.verify(mailboxService, org.mockito.Mockito.never())
+                .inboxPage(org.mockito.Mockito.anyString(), org.mockito.Mockito.any(),
+                        org.mockito.Mockito.anyInt(), org.mockito.Mockito.anyBoolean(),
+                        org.mockito.Mockito.any(), org.mockito.Mockito.any());
+    }
+
+    @Test
+    @DisplayName("includeRead=true：含已读、给稳定排序键、JSON 是最后一行")
+    void includeReadUsesPageModeAndEndsWithJson() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+        when(mailboxService.unreadCount("zhulong")).thenReturn(1);
+        com.exphub.service.MailboxService.InboxPage page = page(
+                List.of(envelope("T-A", "gezhu")), false, false, true, 42L);
+        when(mailboxService.inboxPage(eq("zhulong"), isNull(), anyInt(), eq(true), isNull(), isNull()))
+                .thenReturn(page);
+
+        String r = tools.mailStart(null, null, null, null, null, null, true, null, null);
+
+        assertTrue(r.contains("含已读"), "必须标出这是含已读的列表：" + r);
+        assertTrue(r.contains("最新 #42"), "每条要给稳定排序键：" + r);
+        assertTrue(r.contains("已到最早"), "扫完了要明确说到底，不能让人以为还有：" + r);
+        String last = r.trim().substring(r.trim().lastIndexOf('\n') + 1);
+        assertTrue(last.startsWith("{") && last.endsWith("}"),
+                "忆阁只认最后一行 JSON，新分支必须给：" + last);
+        assertTrue(last.contains("\"lastId\":42"), "JSON 里也要带稳定排序键：" + last);
+        // 读列表不许推游标：新分支只能走 inboxPage，老 inbox 的 includeRead=true 也不该被用来绕路
+        org.mockito.Mockito.verify(mailboxService, org.mockito.Mockito.never())
+                .inbox(org.mockito.Mockito.anyString(), org.mockito.Mockito.any(),
+                        org.mockito.Mockito.anyInt(), org.mockito.Mockito.anyBoolean());
+    }
+
+    @Test
+    @DisplayName("窗口满：必须说「不代表没有更早的信」，不许说「没有更早的线程了」")
+    void fullWindowMustNotLookLikeEndOfInbox() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+        when(mailboxService.unreadCount("zhulong")).thenReturn(3);
+        com.exphub.service.MailboxService.InboxPage page = page(
+                List.of(envelope("T-A", "gezhu")), true, true, false, 17L);
+        page.scannedMessages = 200;
+        when(mailboxService.inboxPage(eq("zhulong"), isNull(), anyInt(), eq(true), isNull(), isNull()))
+                .thenReturn(page);
+
+        String r = tools.mailStart(null, null, null, null, null, null, true, null, null);
+
+        assertTrue(r.contains("不代表没有更早的信"), "窗口满必须显式说明，否则会被当成信箱到底：" + r);
+        org.junit.jupiter.api.Assertions.assertFalse(r.contains("没有更早的线程了"),
+                "窗口满时绝不能说「没有更早的线程了」：" + r);
+        assertTrue(r.contains("beforeId=17"), "要给出继续翻的具体参数：" + r);
+    }
+
+    @Test
+    @DisplayName("非法/冲突参数一律明拒，不静默挑一个，也不查库")
+    void contradictoryPageParamsAreRejected() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+
+        String both = tools.mailStart(null, null, null, null, null, null, null, 10L, 20L);
+        assertTrue(both.startsWith("❌") && both.contains("方向相反"), both);
+
+        String zero = tools.mailStart(null, null, null, null, null, null, null, null, 0L);
+        assertTrue(zero.startsWith("❌") && zero.contains("实际收到的是 0"), zero);
+
+        String sent = tools.mailStart(null, null, null, true, null, null, true, null, null);
+        assertTrue(sent.startsWith("❌") && sent.contains("收件视角"), sent);
+
+        String unreadOnly = tools.mailStart(null, null, null, null, true, null, true, null, null);
+        assertTrue(unreadOnly.startsWith("❌") && unreadOnly.contains("语义冲突"), unreadOnly);
+
+        org.mockito.Mockito.verify(mailboxService, org.mockito.Mockito.never())
+                .inboxPage(org.mockito.Mockito.anyString(), org.mockito.Mockito.any(),
+                        org.mockito.Mockito.anyInt(), org.mockito.Mockito.anyBoolean(),
+                        org.mockito.Mockito.any(), org.mockito.Mockito.any());
+        org.mockito.Mockito.verify(mailboxService, org.mockito.Mockito.never())
+                .inbox(org.mockito.Mockito.anyString(), org.mockito.Mockito.any(),
+                        org.mockito.Mockito.anyInt(), org.mockito.Mockito.anyBoolean());
+    }
+
+    private static com.exphub.service.MailboxService.InboxPage page(
+            List<com.exphub.service.MailboxService.Envelope> items,
+            boolean windowFull, boolean hasMore, boolean endOfInbox, Long nextBeforeId) {
+        com.exphub.service.MailboxService.InboxPage p = new com.exphub.service.MailboxService.InboxPage();
+        p.items.addAll(items);
+        p.windowFull = windowFull;
+        p.hasMore = hasMore;
+        p.endOfInbox = endOfInbox;
+        p.nextBeforeId = nextBeforeId;
+        p.matched = items.size();
+        p.scannedMessages = items.size();
+        return p;
+    }
+
     private static com.exphub.entity.MailMessage message(long id, String threadId) {
         com.exphub.entity.MailMessage m = new com.exphub.entity.MailMessage();
         m.setId(id);
@@ -283,6 +389,7 @@ class MailboxSmokeTest {
         e.msgType = "note";
         e.latestAt = java.time.LocalDateTime.now();
         e.latestSnippet = "片段";
+        e.latestId = 42L;
         return e;
     }
 }

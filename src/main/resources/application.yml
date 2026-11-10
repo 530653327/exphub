@@ -45,7 +45,7 @@ spring:
       server:
         name: exphub
         # 与 health / 无状态端点同源，别再各写一份数字
-        version: ${exphub.version:2.4.0}
+        version: ${exphub.version:2.5.0}
         stdio: false
 
 # MCP SSE 心跳间隔（秒）。
@@ -55,15 +55,18 @@ spring:
 # 用户体感为「偶尔连不上」）。服务端每 30s 发一个 SSE 注释行保活。
 # ⚠️ 调整时须小于上述各层的最小空闲超时，否则心跳无效。
 exphub:
-  # 产品版本号（2026-11-09 起为 2.4.0；2.3.0 是 2026-11-08 ~ 11-09）。health、SSE 的 serverInfo、无状态端点的
+  # 产品版本号（2026-11-10 起为 2.5.0；2.4.0 是 2026-11-09 ~ 11-10）。health、SSE 的 serverInfo、无状态端点的
   # serverInfo 全部读这一处，改版本只改这里。
   # 2.4.0 = 信箱角色清单迁库（A+B 合并 + 正名改汉字）：校验改读 mail_roles（status='ACTIVE'），
   #         **正名是汉字（烛龙/重明鸟…），拼音降为别名**（兼容期入参两种都收，出口一律汉字）；
   #         删 application.yml 的 known-roles / role-aliases，回信收件人强制取父消息发件人。
+  # 2.5.0 = 信箱「全部来信 + 时间倒序 + 真分页」（阁主 #625）：mail_start 加 includeRead / lastId /
+  #         beforeId 三个可选参数；每条线程带稳定排序键 latestId；窗口边界显式返回，不许把
+  #         「扫到 200 条窗口」显示成「没有更早的信」；不传三参数时默认分支逐字不变、不推游标。
   # ⚠️ 这不是 pom.xml 的 Maven artifact 版本（仍是 1.0.0）：改 pom 会改 jar 文件名，
   #    而 systemd service 与 deploy.sh 里写死了 target/exphub-1.0.0.jar，一改就得
   #    同步服务器配置，否则线上服务起不来。产品版本单独放，改它零部署风险。
-  version: 2.4.0
+  version: 2.5.0
   mcp:
     sse-heartbeat-seconds: 30
     # MCP 单次请求体上限（字节）。默认 5MB；Nginx 对应 client_max_body_size 10m。

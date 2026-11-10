@@ -56,7 +56,7 @@ class MailRoleDirectoryToolTest {
     @Test
     @DisplayName("roles=true 只回名单：不读信封、不碰游标、不需要身份头")
     void rolesOnlyReturnsDirectoryWithoutTouchingMail() {
-        String r = tools.mailStart(null, null, null, null, null, true);
+        String r = tools.mailStart(null, null, null, null, null, true, null, null, null);
 
         assertTrue(r.contains("当前可投递角色：3 个（只含 status=ACTIVE）"), r);
         assertTrue(r.contains("- 烛龙"), r);
