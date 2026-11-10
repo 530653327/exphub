@@ -6137,6 +6137,8 @@ public class ExpHubTools {
             if (Boolean.TRUE.equals(unreadOnly)) {
                 List<com.exphub.service.MailboxService.Envelope> un =
                         mailboxService.inbox(me, null, lim, false);
+                // 2026-11-10 阁主 #634：续写必须在首行那句话里，不许另起一行让标点顶到行首。
+                continueIdentityLine(sb);
                 sb.append("；只读模式\n");
                 if (un.isEmpty()) {
                     sb.append("📭 没有未读。\n");
@@ -6174,6 +6176,10 @@ public class ExpHubTools {
                 boolean withRead = searchMode || Boolean.TRUE.equals(includeRead);
                 com.exphub.service.MailboxService.InboxPage page =
                         mailboxService.inboxPage(me, q, lim, withRead, lastId, beforeId);
+                // 2026-11-10 阁主 #634：这段是首行那句的续写（「…；未读 4 封；含已读｜你传的 limit=2」）。
+                // 原来另起一行，分号落在行首，被读成两句互不相干的断言。先去掉首行末尾换行再续写。
+                // limit 仍在同一位置、仍是调用方传的原值（lim），默认分支一个字没动。
+                continueIdentityLine(sb);
                 sb.append("；").append(withRead ? "含已读" : "只看有待看的")
                   .append(searchMode ? "（按关键词过滤）" : "")
                   .append("｜你传的 limit=").append(lim).append("\n");
@@ -6266,6 +6272,22 @@ public class ExpHubTools {
         } catch (Exception e) {
             log.error("ExpHubTools.mailStart: FAILED", e);
             return "读信箱失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /**
+     * 把「你是【X】，配置来源 Y；未读 N 封」这句续写下去（2026-11-10 阁主 #634）。
+     *
+     * <p>问题原样：首行以换行收尾，后面的分支用「；」开头续写，分号落到行首，
+     * 「未读 4 封」和「；含已读｜limit=2」被读成两句互不相干的断言 —— 正是
+     * 这单刚修掉的「半句话」那类毛病的翻版。
+     *
+     * <p>做法：只在本分支里去掉首行末尾那一个换行，让续写仍是同一句。
+     * <b>默认分支完全不经过这里</b>，不传新参数时回执逐字不变。
+     */
+    private static void continueIdentityLine(StringBuilder sb) {
+        if (sb.length() > 0 && sb.charAt(sb.length() - 1) == '\n') {
+            sb.setLength(sb.length() - 1);
         }
     }
 

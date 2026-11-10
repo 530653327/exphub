@@ -310,6 +310,51 @@ class MailboxSmokeTest {
     }
 
     @Test
+    @DisplayName("#634：续写的分号不许顶到行首（含已读分支仍是同一句话）")
+    void continuationPunctuationMustNotStartLine() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+        when(mailboxService.unreadCount("zhulong")).thenReturn(1);
+        com.exphub.service.MailboxService.InboxPage page = page(
+                List.of(envelope("T-A", "gezhu")), false, false, true, 42L);
+        when(mailboxService.inboxPage(eq("zhulong"), isNull(), anyInt(), eq(true), isNull(), isNull()))
+                .thenReturn(page);
+
+        String r = tools.mailStart(null, 2, null, null, null, null, true, null, null);
+
+        assertTrue(r.startsWith(
+                        "你是【zhulong】，配置来源 cfg-zhulong-01；未读 1 封；含已读｜你传的 limit=2\n"),
+                "#634：续写必须留在首行同一句里，分号不许落到行首：\n" + r);
+        assertNoLineStartsWithBarePunctuation(r);
+
+        // limit 的回显位置与值一起钉住：仍是调用方传的 2，不是被改写过的默认值
+        assertTrue(r.contains("你传的 limit=2"), "limit 回显必须是调用方传的原值：" + r);
+
+        // 末行 JSON 仍单行可解析，字段一个不少（#625 的契约不能被排版修坏）
+        String last = r.trim().substring(r.trim().lastIndexOf('\n') + 1);
+        assertTrue(last.startsWith("{") && last.endsWith("}"), "末行必须是可解析的 JSON：" + last);
+        for (String field : List.of("matched", "nextBeforeId", "scannedMessages",
+                "scanWindow", "windowFull", "endOfInbox")) {
+            assertTrue(last.contains("\"" + field + "\""), "JSON 少字段 " + field + "：" + last);
+        }
+    }
+
+    @Test
+    @DisplayName("#634：只读摘要分支是同一个排版毛病的另一出口，一并修掉")
+    void unreadOnlyContinuationMustNotStartLineWithSemicolon() {
+        MailIdentity.set("zhulong", "cfg-zhulong-01");
+        when(mailboxService.unreadCount("zhulong")).thenReturn(1);
+        when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false)))
+                .thenReturn(List.of(envelope("T-A", "zhulong")));
+
+        String r = tools.mailStart(null, null, null, null, true, null, null, null, null);
+
+        assertTrue(r.startsWith(
+                        "你是【zhulong】，配置来源 cfg-zhulong-01；未读 1 封；只读模式\n"),
+                "只读模式那句也该并回首行，不许行首分号：\n" + r);
+        assertNoLineStartsWithBarePunctuation(r);
+    }
+
+    @Test
     @DisplayName("窗口满：必须说「不代表没有更早的信」，不许说「没有更早的线程了」")
     void fullWindowMustNotLookLikeEndOfInbox() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
@@ -366,6 +411,14 @@ class MailboxSmokeTest {
         p.matched = items.size();
         p.scannedMessages = items.size();
         return p;
+    }
+
+    /** #634：回执里不许出现「以标点开头的行」——那会被读成两句互不相干的断言。 */
+    private static void assertNoLineStartsWithBarePunctuation(String receipt) {
+        for (String line : receipt.split("\n", -1)) {
+            assertTrue(!line.startsWith("；") && !line.startsWith("，"),
+                    "回执里有以标点开头的行，说明续写被换行切断了：\n" + receipt);
+        }
     }
 
     private static com.exphub.entity.MailMessage message(long id, String threadId) {
