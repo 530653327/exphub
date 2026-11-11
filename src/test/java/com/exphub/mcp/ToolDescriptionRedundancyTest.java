@@ -342,8 +342,11 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-10 全部来信/分页（阁主 T261109110170112-510 #625）：仍 50 个工具，mail_start 加
         //            includeRead + lastId + beforeId，参数 207 → 210。理由：面板要「全部来信、最新在上」，
         //            而时间戳 MM-dd HH:mm 当不了排序键；分页是真缺口（底层只扫最近 200 条消息）。
+        // 2026-11-11 入队门槛（阁主 T261111085841-439）：仍 50 个工具，scan_similar_docs 加
+        //            minSharedLines，参数 210 → 211。理由：正文 0 行重合的对是垃圾候选主入口
+        //            （#2101：L0 模拟 118 条入队里 112 条是 0 行），默认 1 行、传 0 可回退。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(210, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(211, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

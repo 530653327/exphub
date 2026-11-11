@@ -2960,12 +2960,25 @@ public class ExpHubTools {
      */
     static String causesText(int notShown, int bySample, int byPerDoc, int byOmitted,
                              int byLimit, int bySameTopic, int byJudged, int maxPerDoc, int sampleCap) {
-        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic + byJudged;
+        return causesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic, byJudged,
+                0, maxPerDoc, sampleCap);
+    }
+
+    /**
+     * @param byGated 被「正文行重合不足 minSharedLines」这道入队门槛拦下的对数。
+     *                <b>必须进求和</b>：这批对仍然算在「超阈值」里（阈值是超没超过，门槛是够不够入队），
+     *                不计入归因就会出现「未展示 180 对 = 各项之和 0」的假缺口（2026-11-11 派单 A）。
+     */
+    static String causesText(int notShown, int bySample, int byPerDoc, int byOmitted,
+                             int byLimit, int bySameTopic, int byJudged, int byGated,
+                             int maxPerDoc, int sampleCap) {
+        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic + byJudged + byGated;
         if (sum == 0) return "各项计数都为 0 —— 回执自相矛盾，请报缺陷";
         java.util.List<String> causes = new java.util.ArrayList<>();
+        if (byGated > 0) causes.add("正文行重合不足门槛 **未入队** " + byGated + " 条（minSharedLines 生效，传 0 关闭）");
         if (bySample > 0) causes.add("③层进度/日志类只抽样 " + sampleCap + " 条，省 " + bySample + " 条");
         if (bySameTopic > 0) causes.add("③层**同话题跳过** " + bySameTopic + " 条（同一话题只留分数最高的那条）");
-        if (byJudged > 0) causes.add("③层**已判过的对不占名额** " + byJudged + " 条（判过就不该再花名额）");
+        if (byJudged > 0) causes.add("**已判过的对不占名额** " + byJudged + " 条（判过就不该再花名额）");
         if (byPerDoc > 0) causes.add("「单篇最多 " + maxPerDoc + " 条候选」挤掉 " + byPerDoc + " 条");
         if (byOmitted > 0) causes.add("同族交叉对已略去 " + byOmitted + " 条");
         if (byLimit > 0) causes.add("被 limit 截断 " + byLimit + " 条");
@@ -3237,12 +3250,19 @@ public class ExpHubTools {
     /** 满员那种口径（`未展示 145 对 = 139 + 6`），同样要求加总吻合 */
     static String shortCausesText(int notShown, int bySample, int byPerDoc, int byOmitted,
                                   int byLimit, int bySameTopic, int byJudged) {
-        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic + byJudged;
+        return shortCausesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic, byJudged, 0);
+    }
+
+    /** @param byGated 被「正文行重合不足门槛」拦下的对数，必须进求和（同 {@link #causesText}） */
+    static String shortCausesText(int notShown, int bySample, int byPerDoc, int byOmitted,
+                                  int byLimit, int bySameTopic, int byJudged, int byGated) {
+        int sum = bySample + byPerDoc + byOmitted + byLimit + bySameTopic + byJudged + byGated;
         if (sum == 0) return "各项计数都为 0 —— 回执自相矛盾，请报缺陷";
         java.util.List<String> parts = new java.util.ArrayList<>();
+        if (byGated > 0) parts.add("行重合不足门槛未入队 " + byGated);
         if (bySample > 0) parts.add("③层抽样省 " + bySample);
         if (bySameTopic > 0) parts.add("③层同话题跳过 " + bySameTopic);
-        if (byJudged > 0) parts.add("③层已判过不占名额 " + byJudged);
+        if (byJudged > 0) parts.add("已判过不占名额 " + byJudged);
         if (byPerDoc > 0) parts.add("per-doc 挤掉 " + byPerDoc);
         if (byOmitted > 0) parts.add("同族交叉对略去 " + byOmitted);
         if (byLimit > 0) parts.add("limit 截断 " + byLimit);
@@ -4392,8 +4412,9 @@ public class ExpHubTools {
         return sb.toString();
     }
 
-    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。⚠️ ③层（进度/日志类）**默认不入队**：它们是同一件事的分阶段记录，按设计不该判重，只打分、只展示；要它们入队传 enqueueProgress=true。"
-            + "（语义变更 2026-10-29：③层从「照旧入队」改为「默认不入队」；回执按「超阈值 = 已判过 + 被截断 + 本次拦下」拆开列）")
+    @Tool(name = "scan_similar_docs", description = "全库两两打分，把可能重复/互相取代的经验对入队（**只入队、不判定、不改正文**，判定用 resolve_candidate）。只比同作用域：全局↔全局、项目内↔项目内，跨项目不比。按性质分层、**层内才按分数排**；分层统计基于全部超阈值对，**不受 limit 影响**。⚠️ ③层（进度/日志类）**默认不入队**：它们是同一件事的分阶段记录，按设计不该判重，只打分、只展示；要它们入队传 enqueueProgress=true。⚠️ **正文行重合门槛默认 1 行**：按行比较时 0 行完全重合的对不进候选（行数太少回退 2-gram 的不受此限）；传 minSharedLines=0 关闭。⚠️ **已判过（DISTINCT/SUPERSEDED/SKIPPED）的对不再进清单、不占名额**，回执只报「另有 N 对已判过、略过」。"
+            + "（语义变更 2026-10-29：③层从「照旧入队」改为「默认不入队」；回执按「超阈值 = 已判过 + 被截断 + 本次拦下」拆开列）"
+            + "（语义变更 2026-11-11：新增 minSharedLines 入队门槛；已判过的对不再占名额）")
     public String scanSimilarDocs(
             @ToolParam(description = "可选。扫描范围：不传 = 全局库 + 我名下所有项目；0 = 仅全局库；传项目ID = 只看该项目", required = false) Long projectId,
             @ToolParam(description = "可选。默认 0.50（0.45 更宽松 / 0.55 更严）。区间 [0.30,0.95]，**超区间直接拒绝并回显收到的值**", required = false) Double threshold,
@@ -4403,6 +4424,10 @@ public class ExpHubTools {
             @ToolParam(description = "可选。传 true 才让③层（进度/日志类）一起入队。"
                     + "③层是同一件事的分阶段记录，按设计不该判重 —— 入队只会每轮多出几条必须用 distinct 清掉的候选，"
                     + "而 distinct 是永久封口的不可逆动作。不传时③层只打分、只展示、不落队列", required = false) Boolean enqueueProgress,
+            @ToolParam(description = "可选。**正文行重合门槛**：按行比较时至少几条行完全重合才进候选，默认 1；"
+                    + "**传 0 = 关闭这道门（回退旧行为，0 行重合也照旧入队）**。"
+                    + "⚠️ 行数太少回退 2-gram 的对不受此门约束（它们的行重合恒为 0，但正文有重合）。"
+                    + "负数直接拒绝并回显收到的值", required = false) Integer minSharedLines,
             @ToolParam(description = "可选。true = 只算不入队，用来先看清单。默认 false", required = false) Boolean dryRun,
             @ToolParam(description = "可选。**谁改的**——与 authorName 等价", required = false) String updatedName) {
         try {
@@ -4414,7 +4439,7 @@ public class ExpHubTools {
             boolean enqProgress = Boolean.TRUE.equals(enqueueProgress);
             String operator = resolveAuthor(updatedName, assistant);
             SimilarityService.ScanResult r = similarityService.scan(projectId, threshold, limit, maxPerDoc,
-                    progressSample, dry, operator, enqProgress);
+                    progressSample, dry, operator, enqProgress, minSharedLines);
             if (!r.ok()) {
                 return "❌ " + r.summary();
             }
@@ -4445,6 +4470,24 @@ public class ExpHubTools {
             //    dryRun 不入队，就没有「待判」这回事（同一份回执里还写着「未入队（dryRun）」）。
             //    两种情境分开写：入队了才有「待判」，没入队只能说「扫出几条值得看」。
             sb.append(triageLine(dry, need, alreadyJudged, progressOnly)).append("\n");
+            // ⚠️ 2026-11-11 阁主派单 B：判过的对不再进清单。它们的「消失」必须有一句交代，
+            //    否则「超阈值 368、清单 20 条」会被读成「大部分被 limit 截断」，而真实原因常常是存量已判。
+            int judgedTotal = 0;
+            for (SimilarityService.TierDetail d : r.tierDetail().values()) judgedTotal += d.droppedJudged();
+            if (judgedTotal > 0) {
+                sb.append("**已判过**: 本轮另有 ").append(judgedTotal)
+                  .append(" 对已判过（DISTINCT / SUPERSEDED / SKIPPED），**不进清单、不占名额**")
+                  .append("（分层明细见下方「限流归因」）\n");
+            }
+            int minSharedEcho = (minSharedLines == null)
+                    ? SimilarityService.DEFAULT_MIN_SHARED_LINES : minSharedLines;
+            sb.append("**入队门槛**: ")
+              .append(minSharedEcho <= 0
+                      ? "**已关闭**（minSharedLines=0 = 旧行为，正文 0 行重合也照旧入队）"
+                      : "正文按行比较时至少 " + minSharedEcho + " 行完全重合才进候选（minSharedLines="
+                        + minSharedEcho + "；传 0 关闭）")
+              .append("｜本次拦下 ").append(r.gatedBySharedLines())
+              .append(" 对（行数太少回退 2-gram 的对不受此门约束）\n");
             sb.append("**阈值**: ").append(SimilarityScorer.Score.fmt(r.threshold()))
               .append("｜**比较对数**: ").append(r.pairsCompared())
               .append("｜**超阈值**: ").append(r.aboveThreshold());
@@ -4458,7 +4501,13 @@ public class ExpHubTools {
                   .append(" 对｜已判过(不重复入队) ").append(r.alreadyResolved()).append(" 对\n");
             }
             if (r.rows().isEmpty()) {
-                sb.append("\n📭 没有超过阈值的候选对。阈值可以调到 0.45 再看一次，或用 add_review_candidate 手工入队。\n");
+                if (r.gatedBySharedLines() > 0) {
+                    // 门槛刚上线时这是常见形态：超阈值不少，但全是正文 0 行重合的
+                    sb.append("\n📭 超阈值 ").append(r.aboveThreshold()).append(" 对，但全部被入队门槛拦下（正文行重合不足 ")
+                      .append(minSharedEcho).append(" 行，没有真的内容重合）。要看它们传 minSharedLines=0 重跑一次。\n");
+                } else {
+                    sb.append("\n📭 没有超过阈值的候选对。阈值可以调到 0.45 再看一次，或用 add_review_candidate 手工入队。\n");
+                }
             } else {
                 // 分层统计必须用**全量**（r.tierStats，限流前的全部超阈值对），不能用 r.rows()。
                 // 阁主实测发现：按 rows 数个数时，limit=12 下进度层 36 对整层消失，
@@ -4529,6 +4578,8 @@ public class ExpHubTools {
                 //    —— 没差额还让人去找差额，等于凭空造一个不存在的东西。
                 //    规则：**只在真有差额时渲染解释**；有差额时也不许含糊其辞。
                 int bySample = 0, byPerDoc = 0, byOmitted = 0, byLimit = 0, bySameTopic = 0, byJudged = 0;
+                // 门槛拦下的那批仍然算「超阈值」，必须进归因求和，否则未展示数永远对不上
+                int byGated = r.gatedBySharedLines();
                 for (SimilarityService.TierDetail d : r.tierDetail().values()) {
                     bySample += d.droppedBySample();
                     byPerDoc += d.droppedPerDoc();
@@ -4561,7 +4612,7 @@ public class ExpHubTools {
                     } else {
                         sb.append("；**另有 ").append(notShown).append(" 对未展示**，逐项归因：")
                           .append(causesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic,
-                                  byJudged, r.maxPerDoc(), SimilarityService.DEFAULT_PROGRESS_SAMPLE));
+                                  byJudged, byGated, r.maxPerDoc(), SimilarityService.DEFAULT_PROGRESS_SAMPLE));
                     }
                     sb.append("）");
                 }
@@ -4583,7 +4634,8 @@ public class ExpHubTools {
                 //    规则：**满员时也要把未展示总数与各项之和摆出来，且必须能对上**。
                 if (gap == 0 && notShown > 0) {
                     sb.append("；**未展示 ").append(notShown).append(" 对 = ")
-                      .append(shortCausesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic, byJudged))
+                      .append(shortCausesText(notShown, bySample, byPerDoc, byOmitted, byLimit, bySameTopic,
+                              byJudged, byGated))
                       .append("**（分层数字不受 limit 影响，调大 limit 只是让更多条进清单）");
                 }
                 sb.append("\n\n");
@@ -4678,7 +4730,7 @@ public class ExpHubTools {
                             //    现在这类对不占名额，这里必须报出来 —— 否则「全库 16 对、展示 5 条」的差额对不上。
                             if (d.droppedJudged() > 0) {
                                 sb.append("｜另有 ").append(d.droppedJudged())
-                                  .append(" 条**已判过、不占名额**（判过就不该再花名额，让给未判过的话题）");
+                                  .append(" 条**已判过、不占名额**（判过的结论已落库，再排一遍不产生新信息）");
                             }
                             if (d.droppedByLimit() > 0) {
                                 sb.append("｜另有 ").append(d.droppedByLimit()).append(" 对被 limit 截断");

@@ -59,6 +59,21 @@ public class SimilarityService {
     public static final double CREATE_THRESHOLD = 0.55;
     /** 单次写入最多提示几条 */
     public static final int CREATE_TOP_N = 3;
+
+    /**
+     * 入队门槛：正文按行比较时，至少要几条行完全重合才算候选（0 = 关闭门槛，回退旧行为）。
+     *
+     * <p><b>为什么默认是 1 而不是 2</b>（2026-11-11 #2101 实测）：368 对超阈值候选里，
+     * 行重合 0 行 353 对、1 行 7 对、2 行 1 对、3-5 行 1 对、6 行以上 6 对。
+     * 门槛设 1 与设 2 只差 5 条，且全部落在③层（本来就不入队）—— 取 1 就够，
+     * 再抬高只会把「同一件事的两次记录」漏掉（如 #464/#479 重合行很少但是真候选）。
+     *
+     * <p><b>为什么必须用 {@code lineMode()} 排除回退 2-gram 的对</b>：
+     * 0 行的 353 对里有 81 对是「行数太少、按行比不可靠」回退 2-gram 算出来的，
+     * 它们的 {@code sharedLines} 恒为 0，但正文其实有重合。
+     * 直接判 {@code sharedLines == 0} 会把它们一起误伤。
+     */
+    public static final int DEFAULT_MIN_SHARED_LINES = 1;
     /** 索引缓存时长（秒）—— 回执必须把它印出来，否则读的人分不清「数据没变」和「缓存过期」 */
     public static final int INDEX_TTL_SECONDS = 180;
     private static final long INDEX_TTL_MS = INDEX_TTL_SECONDS * 1000L;
@@ -73,6 +88,16 @@ public class SimilarityService {
     private final ReviewCandidateService candidateService;
 
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
+
+    /**
+     * L0（写入查重）的门槛默认值，可由 {@code exphub.similarity.min-shared-lines} 覆盖（0 = 关闭）。
+     *
+     * <p>为什么 L0 走配置而不是工具参数：写入查重没有调用方参数可传（创建经验时自动跑），
+     * 但「回退旧行为」必须留一条不改代码的路 —— 改配置重启即可。
+     * 单测里没有 Spring 上下文，字段保持默认值 {@link #DEFAULT_MIN_SHARED_LINES}。
+     */
+    @org.springframework.beans.factory.annotation.Value("${exphub.similarity.min-shared-lines:1}")
+    private int defaultMinSharedLines = DEFAULT_MIN_SHARED_LINES;
 
     private record Cached(ScopeIndex index, long builtAt) {}
 
@@ -128,14 +153,20 @@ public class SimilarityService {
                       double score, String reason, String queueState,
                       SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice,
                       Long motherId, Long kidId, int kidLines,
-                      String aOnlySample, String bOnlySample) {
+                      String aOnlySample, String bOnlySample,
+                      /**
+                       * 正文是不是走的「去模板整行」口径（false = 行太少回退了 2-gram）。
+                       * <b>入队门槛要靠它区分「真的 0 行重合」与「行数太少算不出行重合」</b>
+                       * —— 后者 sharedLines 恒为 0，但它有正文重合，不能拦。
+                       */
+                      boolean lineMode) {
 
         /** 只描述「像什么」、不涉及合并方向时的构造（母档/子页留空） */
         public Row(Long docA, String titleA, Long docB, String titleB,
                    double score, String reason, String queueState,
                    SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice) {
             this(docA, titleA, docB, titleB, score, reason, queueState, kind, sharedLines, coverage, advice,
-                    null, null, 0, "", "");
+                    null, null, 0, "", "", true);
         }
 
         /** 带合并方向、但不带独有行样例（历史调用点） */
@@ -144,7 +175,17 @@ public class SimilarityService {
                    SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice,
                    Long motherId, Long kidId, int kidLines) {
             this(docA, titleA, docB, titleB, score, reason, queueState, kind, sharedLines, coverage, advice,
-                    motherId, kidId, kidLines, "", "");
+                    motherId, kidId, kidLines, "", "", true);
+        }
+
+        /** 带合并方向 + 独有行样例、但按行口径（历史调用点；扫描主路径走规范构造器带真实 lineMode） */
+        public Row(Long docA, String titleA, Long docB, String titleB,
+                   double score, String reason, String queueState,
+                   SimilarityScorer.Kind kind, int sharedLines, double coverage, String advice,
+                   Long motherId, Long kidId, int kidLines,
+                   String aOnlySample, String bOnlySample) {
+            this(docA, titleA, docB, titleB, score, reason, queueState, kind, sharedLines, coverage, advice,
+                    motherId, kidId, kidLines, aOnlySample, bOnlySample, true);
         }
 
         /** 分层排序键：先按「像的是什么」，同层再比分数 —— 单靠分数排会把演进链排到真重复前面 */
@@ -195,7 +236,13 @@ public class SimilarityService {
                              /** 索引生成时刻（最旧作用域，HH:mm:ss）—— 没这个时间戳，读的人分不清「数据没变」与「缓存过期」 */
                              String indexBuiltAt,
                              /** 索引已存在多少秒（TTL 180s） */
-                             long indexAgeSeconds) {
+                             long indexAgeSeconds,
+                             /**
+                              * 本次被「正文行重合不足 {@code minSharedLines}」这道门槛拦下的对数。
+                              * <b>它们仍然算在 {@code aboveThreshold} 里</b>（阈值是超没超过，
+                              * 门槛是够不够入队，两个口径不能混），所以回执的「未展示」归因必须带上这一项。
+                              */
+                             int gatedBySharedLines) {
 
         public ScanResult(boolean ok, String summary, double threshold, boolean dryRun, int docsCompared,
                           int skippedShort, int skippedSuperseded, long pairsCompared, int aboveThreshold,
@@ -206,7 +253,7 @@ public class SimilarityService {
                           List<String> notes) {
             this(ok, summary, threshold, dryRun, docsCompared, skippedShort, skippedSuperseded,
                     pairsCompared, aboveThreshold, droppedByCap, maxPerDoc, limit, filledPerDoc,
-                    enqueued, alreadyPending, alreadyResolved, rows, tierStats, tierDetail, notes, "", 0L);
+                    enqueued, alreadyPending, alreadyResolved, rows, tierStats, tierDetail, notes, "", 0L, 0);
         }
     }
 
@@ -218,6 +265,14 @@ public class SimilarityService {
      * <p>不抛异常：查重失败只降级成「本次查重不可用」，创建本身必须成功。
      */
     public L0Result checkOnCreate(Doc doc) {
+        return checkOnCreate(doc, defaultMinSharedLines);
+    }
+
+    /**
+     * @param minSharedLines 正文行重合门槛（0 = 关闭，回退旧行为）。
+     *                       <b>与 L2 的入队门同一套判据</b>：行数太少回退 2-gram 的对不拦。
+     */
+    public L0Result checkOnCreate(Doc doc, int minSharedLines) {
         if (doc == null || doc.getId() == null) {
             return new L0Result(false, "没有文档信息，跳过查重", 0, List.of(), 0);
         }
@@ -230,10 +285,18 @@ public class SimilarityService {
                     doc.getTemplateType(), doc.getContent()));
 
             List<Suggestion> hits = new ArrayList<>();
+            int gated = 0;
             for (SimilarityScorer.Sketch other : index.sketches()) {
                 if (other.id().equals(doc.getId())) continue;
                 SimilarityScorer.Score s = SimilarityScorer.score(self, other);
                 if (s.total() < CREATE_THRESHOLD) continue;
+                // 2026-11-11 阁主派单 A：正文 0 行重合的不再提示、不入队。
+                // L0 才是垃圾候选的主入口（#2101 实测：61 篇当新建 → 118 条入队、112 条是 0 行），
+                // 原因之一是它入队前根本没走 shouldEnqueue（没有③层豁免）。
+                if (!passesSharedLineGate(s, minSharedLines)) {
+                    gated++;
+                    continue;
+                }
                 hits.add(new Suggestion(other.id(), other.title(), s.total(), s.reason(),
                         s.kind(), s.sharedLines(), s.lineCoverage(), s.diagnosis()));
             }
@@ -273,6 +336,11 @@ public class SimilarityService {
                     ? "作用域「" + index.label() + "」内没有相似度 ≥ "
                       + SimilarityScorer.Score.fmt(CREATE_THRESHOLD) + " 的经验（已比 " + index.sketches().size() + " 篇）"
                     : "作用域「" + index.label() + "」内发现 " + out.size() + " 条相似经验，新入队 " + enqueued + " 对";
+            if (gated > 0) {
+                note += "；另有 " + gated + " 对 ≥ " + SimilarityScorer.Score.fmt(CREATE_THRESHOLD)
+                        + " 但正文行重合不足 " + minSharedLines + " 行，按门槛未提示（minSharedLines="
+                        + minSharedLines + "，传 0 / 改配置即关闭这道门）";
+            }
             return new L0Result(true, note, Math.max(0, index.sketches().size() - 1), out, enqueued);
         } catch (Exception e) {
             log.error("SimilarityService.checkOnCreate: FAILED docId={}", doc.getId(), e);
@@ -319,6 +387,19 @@ public class SimilarityService {
      */
     public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
                            Integer progressSample, boolean dryRun, String operator, boolean enqueueProgress) {
+        return scan(projectId, threshold, limit, maxPerDoc, progressSample, dryRun, operator,
+                enqueueProgress, null);
+    }
+
+    /**
+     * @param minSharedLines 正文行重合门槛（2026-11-11 阁主派单 A）：按行比较时完全一致的行数
+     *                       不足这个数的对<b>不展示、不入队</b>。<b>不传默认 1；传 0 回退旧行为。</b>
+     *                       行数太少回退 2-gram 的对不受此门约束（它们的 sharedLines 恒为 0，
+     *                       但正文其实有重合 —— #2101 实测 353 条 0 行里 81 条属此类）。
+     */
+    public ScanResult scan(Long projectId, Double threshold, Integer limit, Integer maxPerDoc,
+                           Integer progressSample, boolean dryRun, String operator, boolean enqueueProgress,
+                           Integer minSharedLines) {
         // ⚠️ 2026-10-25 阁主验收教训：原来这里是 `if (th < 0.30) th = 0.30` 静默兜底。
         // 上游把 0.5 截成整数 0 之后，静默兜底把它变成 0.30 —— 用户看到「阈值: 0.30」，
         // 只会得出「阈值参数根本没生效」的结论，**永远查不到是链路丢了小数**。
@@ -326,6 +407,13 @@ public class SimilarityService {
         double th = (threshold == null) ? DEFAULT_THRESHOLD : threshold;
         if (!isThresholdValid(th)) {
             return new ScanResult(false, thresholdRejectMessage(threshold, th), DEFAULT_THRESHOLD, dryRun,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
+        }
+        // 同一套规矩：负数是调用方传错了，明拒并回显收到的值，不许悄悄改成默认值。
+        int minShared = (minSharedLines == null) ? DEFAULT_MIN_SHARED_LINES : minSharedLines;
+        if (minShared < 0) {
+            return new ScanResult(false, minSharedLinesRejectMessage(minSharedLines, minShared),
+                    DEFAULT_THRESHOLD, dryRun,
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), java.util.Map.of(), java.util.Map.of(), List.of());
         }
         int maxRows = (limit == null || limit < 1) ? 20 : Math.min(limit, 50);
@@ -357,6 +445,9 @@ public class SimilarityService {
 
         int docs = 0, skippedShort = 0, skippedSuperseded = 0;
         long pairs = 0;
+        // 入队门槛拦下的对数，以及「行太少回退 2-gram、不受门槛约束」的对数 —— 两个数都要进回执，
+        // 否则读者会把「门槛生效」误读成「阈值变了」或「数据变少了」
+        int gated = 0, fallbackPairs = 0;
         // 各作用域篇数 —— 回执要能自证「篇数 → 对数」的换算，否则读到 553 篇/51852 对只能靠猜
         List<String> scopeSizes = new ArrayList<>();
         LocalDateTime oldestBuild = null;
@@ -377,6 +468,13 @@ public class SimilarityService {
                     pairs++;
                     SimilarityScorer.Score s = SimilarityScorer.score(list.get(i), list.get(j));
                     if (s.total() < th) continue;
+                    if (!s.lineMode()) fallbackPairs++;
+                    // 2026-11-11 阁主派单 A：正文 0 行重合（按行口径）的对不进候选。
+                    // 判据必须带 lineMode —— 回退 2-gram 的对 sharedLines 恒为 0，拦了就是误伤。
+                    if (!passesSharedLineGate(s, minShared)) {
+                        gated++;
+                        continue;
+                    }
                     SimilarityScorer.Sketch a = list.get(i);
                     SimilarityScorer.Sketch b = list.get(j);
                     // 同一作用域内 docA<docB 只是入队口径，这里按分数排序前的展示顺序不重要
@@ -395,7 +493,7 @@ public class SimilarityService {
                             sides == null ? null : sides[0],
                             sides == null ? null : sides[1],
                             sides == null ? 0 : (int) sides[2],
-                            samples[0], samples[1]));
+                            samples[0], samples[1], s.lineMode()));
                 }
             }
         }
@@ -460,13 +558,17 @@ public class SimilarityService {
         int dropped = 0;
         for (TierDetail d : sel.detail().values()) dropped += d.droppedPerDoc() + d.droppedByLimit();
 
-        int enqueued = 0, pending = 0, resolved = 0, progressNotEnqueued = 0;
+        int enqueued = 0, pending = 0, resolved = 0, progressNotEnqueued = 0, gatedNotEnqueued = 0;
         List<Row> rowsOut = new ArrayList<>();
         for (Row r : selected) {
             String state;
             if (dryRun) {
                 state = describePrev(existing.get(ReviewCandidateService.pairKey(r.docA(), r.docB())));
-            } else if (!shouldEnqueue(r, enqueueProgress)) {
+            } else if (!passesSharedLineGate(r.lineMode(), r.sharedLines(), minShared)) {
+                // 第二道保险：扫描主路径上这批对在进候选池前就被拦了，正常不会走到这里
+                gatedNotEnqueued++;
+                state = "正文行重合不足 " + minShared + " 行：未入队（minSharedLines=" + minShared + "，传 0 关闭）";
+            } else if (!shouldEnqueue(r, enqueueProgress, minShared)) {
                 // ③层默认不落队列：照常展示（人在清单里能看到），但不往待判队列里塞
                 progressNotEnqueued++;
                 state = "③层进度类：未入队（enqueueProgress=" + enqueueProgress + "，只统计）";
@@ -495,7 +597,7 @@ public class SimilarityService {
             rowsOut.add(new Row(r.docA(), r.titleA(), r.docB(), r.titleB(), r.score(), r.reason(), state,
                     r.kind(), r.sharedLines(), r.coverage(), r.advice(),
                     r.motherId(), r.kidId(), r.kidLines(),
-                    r.aOnlySample(), r.bOnlySample()));
+                    r.aOnlySample(), r.bOnlySample(), r.lineMode()));
         }
 
         notes.add("只比较同一作用域内的文档（全局库 ↔ 全局库、项目内 ↔ 项目内）：跨项目实测全是假阳性"
@@ -507,6 +609,15 @@ public class SimilarityService {
         if (skippedShort > 0) {
             notes.add("跳过正文短于 " + SimilarityScorer.MIN_CONTENT_LEN + " 字的文档 " + skippedShort + " 篇（信息量不足，判不准）");
         }
+        // 入队门槛必须自证：生效值、拦下多少、以及「回退 2-gram 的对没被误伤」——
+        // 没有最后一句，读的人分不清「门槛生效」与「这几条内容本来就没重合」（#2101 实测 81 条属后者）
+        notes.add("**入队门槛** minSharedLines=" + minShared
+                + (minShared <= 0 ? "（已关闭，正文 0 行重合也照旧入队 = 旧行为）"
+                                  : "（正文按行比较时至少 " + minShared + " 行完全重合才进候选）")
+                + "；本次拦下 " + gated + " 对"
+                + (fallbackPairs > 0
+                   ? "；另有 " + fallbackPairs + " 对因行数太少走回退 2-gram 口径，**不受这道门约束**（它们的行重合恒为 0，但正文有重合）"
+                   : ""));
         String scopeLabel = (projectId == null) ? "全部作用域（" + scopes.size() + " 个）"
                 : (projectId == 0 ? "仅全局库" : scopes.get(0).label());
         // ⚠️ 2026-10-26 08:4x 阁主两次实测：这里原来无条件拼「（limit=N；差额见分层明细）」，
@@ -532,8 +643,11 @@ public class SimilarityService {
                     ? "（limit=" + maxRows + "；差额 " + (maxRows - selected.size()) + " 格没被用满" + why + "）"
                     : "（limit=" + maxRows + "，已用满；其余超阈值的对见分层）";
         }
+        // 「超阈值」永远是**原始**口径（含被入队门槛拦下的那批），否则读的人会以为数据变少了
+        int aboveRaw = above.size() + gated;
         String summary = scopeLabel + "：" + docs + " 篇、比较 " + pairs + " 对、≥"
-                + SimilarityScorer.Score.fmt(th) + " 共 " + above.size() + " 对"
+                + SimilarityScorer.Score.fmt(th) + " 共 " + aboveRaw + " 对"
+                + (gated > 0 ? "（其中 " + gated + " 对正文行重合不足 " + minShared + " 行，按入队门槛不进候选）" : "")
                 + (selected.size() < above.size() ? "，本次展示 " + selected.size() + " 对" + capNote : "");
         // ⚠️ 2026-10-26 11:5x 阁主：「553 篇却只比较 51852 对，而 553×552/2 = 152628」——
         //    差的 10 万对不是预筛丢的，而是**跨作用域按设计不比**（全局↔全局、项目内↔项目内）。
@@ -553,10 +667,15 @@ public class SimilarityService {
             log.info("SimilarityService.scan: ③层未入队 {} 对（enqueueProgress=false），operator={}",
                     progressNotEnqueued, operator);
         }
+        if (gatedNotEnqueued > 0) {
+            // 走到这里说明「进候选池前就该拦下」的那道门没生效 —— 第二轮保险虽然挡住了入队，
+            // 但候选已经占了名额，必须留下痕迹让它可查（不是正常路径）
+            log.warn("SimilarityService.scan: 有 {} 对越过候选池门槛才被拦下，请检查 select 之前的过滤顺序", gatedNotEnqueued);
+        }
         return new ScanResult(true, summary, th, dryRun, docs, skippedShort, skippedSuperseded, pairs,
-                above.size(), dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
+                aboveRaw, dropped, perDoc, maxRows, sel.filledPerDoc(), enqueued, pending, resolved,
                 rowsOut, tierStats, sel.detail(), notes,
-                oldestBuild == null ? "" : oldestBuild.format(HHMMSS), indexAgeSec);
+                oldestBuild == null ? "" : oldestBuild.format(HHMMSS), indexAgeSec, gated);
     }
 
     /**
@@ -614,6 +733,39 @@ public class SimilarityService {
     }
 
     /**
+     * 入队门槛（L0 与 L2 共用同一道门，2026-11-11 阁主派单 A）。
+     *
+     * <p>判据是「按行比较时，两条正文完全一致的行数」是否达到 {@code minSharedLines}。
+     * <b>行数太少回退 2-gram 的对不适用</b>：那种情况下 {@code sharedLines} 恒为 0，
+     * 但正文其实有重合（#2101 实测 353 条 0 行里有 81 条属此类），拦了就是误伤。
+     *
+     * <p>纯函数、零副作用，便于单测「门槛默认为 1」「传 0 回退旧行为」「回退 2-gram 不被误伤」。
+     */
+    static boolean passesSharedLineGate(boolean lineMode, int sharedLines, int minSharedLines) {
+        if (minSharedLines <= 0) return true;      // 关闭门槛 = 旧行为，一条都不拦
+        if (!lineMode) return true;                // 回退 2-gram：没有行重合数据，不能拦
+        return sharedLines >= minSharedLines;
+    }
+
+    /** 同上一版，直接吃打分结果 */
+    static boolean passesSharedLineGate(SimilarityScorer.Score s, int minSharedLines) {
+        return s == null || passesSharedLineGate(s.lineMode(), s.sharedLines(), minSharedLines);
+    }
+
+    /**
+     * {@code minSharedLines} 非法时的拒绝说明。
+     *
+     * <p>只拒负数，不设人为上限：门槛调高只会让候选更少，调用方在回执里看得见实际生效值
+     * （#9c「不许静默修正非法参数」—— 把 -1 悄悄改成 1 才是真的坑）。
+     */
+    static String minSharedLinesRejectMessage(Integer raw, int parsed) {
+        return "行重合门槛 minSharedLines = " + parsed + " 非法，**已拒绝执行，没有比较任何文档、没有入队任何东西**。\n"
+                + "  ExpHub 实际收到的是 " + parsed + (raw == null ? "" : "（原始入参 " + raw + "）")
+                + "\n  允许范围：0 或正整数。0 = 关闭这道门（回退旧行为，正文 0 行重合也照旧入队）；不传默认 "
+                + DEFAULT_MIN_SHARED_LINES + "。";
+    }
+
+    /**
      * 进度/日志层默认只展示几条样本（2026-10-26 02:51 越哥定）。
      *
      * <p>现场：清单 50 条里③层（进度/日志、「一般不用判」）占 30 条 = 60%，
@@ -654,8 +806,20 @@ public class SimilarityService {
      * 抽成纯函数，是为了能单测「①②层行为零变化」这条验收标准 —— 它不该靠人工回放去证明。
      */
     static boolean shouldEnqueue(Row r, boolean enqueueProgress) {
+        return shouldEnqueue(r, enqueueProgress, DEFAULT_MIN_SHARED_LINES);
+    }
+
+    /**
+     * @param minSharedLines 正文行重合门槛（0 = 关闭）。<b>与 L0 的 {@code checkOnCreate} 同一道门</b>
+     *                       （2026-11-11 阁主派单 A：两条路各加一次，避免只改一条）。
+     *                       扫描主路径上这批对在进候选池之前就已被拦下，这里是第二道保险 ——
+     *                       万一将来有人绕过上面那道门，也不会把 0 行重合的对塞进队列。
+     */
+    static boolean shouldEnqueue(Row r, boolean enqueueProgress, int minSharedLines) {
+        if (r == null) return true;
+        if (!passesSharedLineGate(r.lineMode(), r.sharedLines(), minSharedLines)) return false;
         if (enqueueProgress) return true;
-        return r == null || r.kind() != SimilarityScorer.Kind.PROGRESS;
+        return r.kind() != SimilarityScorer.Kind.PROGRESS;
     }
 
     static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc, int progressSample) {
@@ -664,9 +828,11 @@ public class SimilarityService {
 
     /**
      * @param judgedPairs 已经判过的对（键 = {@link ReviewCandidateService#pairKey}）。
-     *                    <b>③层的抽样名额不许被它们占掉</b>（2026-10-26 13:0x 阁主：
-     *                    `#470↔#477` 是候选 #13、已判 DISTINCT，还占着 5 个名额中的 1 个）。
-     *                    ①层照常展示 —— 那里他需要看见「这对判过、不必再判」。
+     *                    <b>①②③层一视同仁：判过的对不进清单、不占名额</b>，只在 {@code droppedJudged}
+     *                    里记账，回执写「本轮另有 N 对已判过，略过」。
+     *                    <p>2026-11-11 阁主派单 B 改的口径：此前只有③层这样处理，①②层照常展示，
+     *                    实测「展示 50 对里 48 对已判过，只剩 2 对需要人动脑」—— 名额被存量占满，
+     *                    整理永远推进不下去。判过的结论已经落库，重新排一遍不产生任何新信息。
      */
     static Selection select(java.util.List<Row> sortedAbove, int maxRows, int perDoc, int progressSample,
                             java.util.Set<String> judgedPairs) {
@@ -723,6 +889,15 @@ public class SimilarityService {
 
         for (Row r : sortedAbove) {
             SimilarityScorer.Kind k = r.kind() == null ? SimilarityScorer.Kind.UNKNOWN : r.kind();
+            // ⚠️ 2026-11-11 阁主派单 B：**判过的对不再进候选展示，也不再占名额**。
+            //    之前只对③层生效，于是①②层里已判 DISTINCT 的对照样排前排、照样吃掉 limit 名额
+            //    （阁主实测：展示 50 对里 48 对已判过，只剩 2 对需要他动脑 = 「产出为负」的真因）。
+            //    判过的对仍计入 above()（分层统计要反映全库事实），差额记在 droppedJudged 里，
+            //    回执会写：「本轮另有 N 对已判过，略过」—— 消失的对必须能对得上账。
+            if (judgedPairs.contains(ReviewCandidateService.pairKey(r.docA(), r.docB()))) {
+                c.get(k)[7]++;
+                continue;
+            }
             if (k == SimilarityScorer.Kind.PROGRESS) {
                 progressRows.add(r);   // 攒着，等可判层都坐下了再说
                 continue;
@@ -780,10 +955,8 @@ public class SimilarityService {
         java.util.Set<String> seenTopics = new java.util.LinkedHashSet<>();
         for (Row r : progressRows) {
             int[] cnt = c.get(SimilarityScorer.Kind.PROGRESS);
-            // ⚠️ 2026-10-26 13:0x 阁主第 3 条：**已判过的对不该占抽样名额**。
-            //    `#470↔#477` 已经是候选 #13（DISTINCT），还占着 5 个名额里的 1 个 ——
-            //    等于把名额花在「不用判的东西」上，未判过的话题反而抽不进来。
-            //    这道闸要放在抽样上限**之前**，否则名额已经被它吃掉了。
+            // 「已判过的不占名额」现在在主循环开头统一处理（①②③同一套），
+            // 仍然保留这一道判断作双保险 —— 一旦以后有人把上面的顺序改回去，这里也不会把名额吃掉。
             if (judgedPairs.contains(ReviewCandidateService.pairKey(r.docA(), r.docB()))) {
                 cnt[7]++;
                 continue;

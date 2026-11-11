@@ -2,6 +2,7 @@ package com.exphub.mcp;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -56,5 +57,35 @@ class GapCausesTest {
         String t = ExpHubTools.shortCausesText(145, 139, 0, 0, 0, 0, 0);
         assertTrue(t.contains("未归因 6"), "漏项时同样要自报缺口：" + t);
         assertFalse(t.contains("自相矛盾") && !t.contains("6"), t);
+    }
+
+    /**
+     * 2026-11-11 派单 A：新加的「行重合不足门槛、未入队」这一项**必须进求和**。
+     *
+     * <p>它特别容易漏：门槛拦下的对仍然算在「超阈值」里（阈值是超没超过，门槛是够不够入队），
+     * 但不进 tierStats（根本没进候选池），于是「未展示」里凭空多出一截——
+     * 忘了拼这一个加数，回执就会自报「另有 N 条未归因」的假缺陷（与 10-26 那次同型）。
+     */
+    @Test
+    void gatedPairsMustEnterCauseSum() {
+        // 超阈值 7 对未展示 = 已判过 5 + 门槛拦下 2
+        String s = ExpHubTools.causesText(7, 0, 0, 0, 0, 0, 5, 2, 2, 5);
+        assertTrue(s.contains("未入队** 2 条"), "门槛拦下的那批必须出现在归因里：" + s);
+        assertTrue(s.contains("已判过") && s.contains("5 条"), s);
+        assertFalse(s.contains("未归因"), "5 + 2 = 7，加总吻合就不该报警：" + s);
+
+        String t = ExpHubTools.shortCausesText(7, 0, 0, 0, 0, 0, 5, 2);
+        assertTrue(t.contains("行重合不足门槛未入队 2"), t);
+        assertTrue(t.contains("已判过不占名额 5"), t);
+        assertFalse(t.contains("未归因"), t);
+    }
+
+    /** 老签名（不带门槛）保持原样：加参数不许改掉老调用方的口径 */
+    @Test
+    void oldSignatureWithoutGateStillBalances() {
+        String s = ExpHubTools.causesText(5, 5, 0, 0, 0, 0, 0, 2, 5);
+        assertFalse(s.contains("未归因"), s);
+        assertEquals("③层抽样省 139 + 同族交叉对略去 6",
+                ExpHubTools.shortCausesText(145, 139, 0, 6, 0, 0, 0));
     }
 }
