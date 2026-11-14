@@ -84,6 +84,8 @@
                     <div>
                         <div class="number" th:text="${overview.registrySize}">0</div>
                         <div class="label">已注册工具</div>
+                        <div class="small" th:if="${overview.pollExcludedTools != null and overview.pollExcludedTools > 0}"
+                             th:text="'其中 ' + ${overview.pollExcludedTools} + ' 个轮询工具不计统计'">其中 1 个轮询工具不计统计</div>
                     </div>
                 </div>
             </div>
@@ -164,6 +166,10 @@
             但要结合功能是否被其他工具覆盖再决定，别只看次数。
             <b>低频</b> 指窗口内 ≤ <span th:text="${lowFreqThreshold}">3</span> 次，属于「留着但关注」。
             窗口只影响榜单和趋势；顶部「累计工具调用」是全量。
+            <br>
+            <b>统计排除：</b>
+            <span th:text="${excluded != null ? excluded.text : ''}">已排除哨兵轮询；真实读信仍计入。</span>
+            <b>mail_start 不出现在使用榜与零调用清单里</b>——它被按行排除轮询，真实读信仍写日志、仍可查。
         </div>
 
         <!-- 工具使用榜 -->

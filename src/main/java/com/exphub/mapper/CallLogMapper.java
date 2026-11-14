@@ -2,6 +2,7 @@ package com.exphub.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.exphub.entity.CallLog;
+import com.exphub.service.ToolPollPolicy;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -21,6 +22,7 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
             "SUM(CASE WHEN action = 'DELETE' THEN 1 ELSE 0 END) as deleteCalls " +
             "FROM call_logs " +
             "WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL (#{days} - 1) DAY) " +
+            "AND " + ToolPollPolicy.EXCLUDE_POLL_SQL + " " +
             "GROUP BY DATE(created_at) " +
             "ORDER BY date ASC")
     List<Map<String, Object>> getCallTrend(@Param("days") int days);
@@ -39,7 +41,7 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
             "SUM(CASE WHEN action != 'TOOL' AND success = 1 THEN 1 ELSE 0 END) AS bizSuccess, " +
             "SUM(CASE WHEN action != 'TOOL' AND success = 0 THEN 1 ELSE 0 END) AS bizFail, " +
             "SUM(CASE WHEN action = 'TOOL' AND success = 1 THEN 1 ELSE 0 END) AS toolSuccess " +
-            "FROM call_logs")
+            "FROM call_logs WHERE " + ToolPollPolicy.EXCLUDE_POLL_SQL)
     Map<String, Object> getOverviewStats();
 
     /**
@@ -61,7 +63,7 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
             "SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successCalls, " +
             "ROUND(AVG(cost_ms)) AS avgCostMs, " +
             "COUNT(DISTINCT tool_name) AS activeTools " +
-            "FROM call_logs WHERE action = 'TOOL'")
+            "FROM call_logs WHERE action = 'TOOL' AND " + ToolPollPolicy.EXCLUDE_POLL_SQL)
     Map<String, Object> getToolOverview();
 
     /** 工具使用榜（按调用次数倒序） */
@@ -73,6 +75,7 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
             "COUNT(DISTINCT caller_name) AS callerCount " +
             "FROM call_logs " +
             "WHERE action = 'TOOL' AND tool_name IS NOT NULL " +
+            "AND " + ToolPollPolicy.EXCLUDE_POLL_SQL + " " +
             "AND created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY) " +
             "GROUP BY tool_name ORDER BY calls DESC")
     List<Map<String, Object>> getToolRanking(@Param("days") int days);
@@ -81,6 +84,7 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
     @Select("SELECT DATE(created_at) AS date, COUNT(*) AS calls, " +
             "COUNT(DISTINCT tool_name) AS tools " +
             "FROM call_logs WHERE action = 'TOOL' " +
+            "AND " + ToolPollPolicy.EXCLUDE_POLL_SQL + " " +
             "AND created_at >= DATE_SUB(CURDATE(), INTERVAL #{days} DAY) " +
             "GROUP BY DATE(created_at) ORDER BY date ASC")
     List<Map<String, Object>> getToolDailyTrend(@Param("days") int days);
@@ -89,7 +93,22 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
     @Select("SELECT caller_name AS callerName, COUNT(*) AS calls, " +
             "SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successCalls " +
             "FROM call_logs WHERE action = 'TOOL' " +
+            "AND " + ToolPollPolicy.EXCLUDE_POLL_SQL + " " +
             "AND created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY) " +
             "GROUP BY caller_name ORDER BY calls DESC")
     List<Map<String, Object>> getToolByAssistant(@Param("days") int days);
+
+    /**
+     * mail_start 的分段调用数，用于向页面/工具说明「排除了多少、真实读信还剩多少」。
+     *
+     * <p>polls = 明确轮询（is_poll=1）；realCalls = 明确真实读信（is_poll=0）；
+     * unclassified = 部署前历史行（is_poll IS NULL，统计里也排除，见 {@link ToolPollPolicy}）。
+     */
+    @Select("SELECT " +
+            "SUM(CASE WHEN is_poll = 1 THEN 1 ELSE 0 END) AS polls, " +
+            "SUM(CASE WHEN is_poll = 0 THEN 1 ELSE 0 END) AS realCalls, " +
+            "SUM(CASE WHEN is_poll IS NULL THEN 1 ELSE 0 END) AS unclassified " +
+            "FROM call_logs WHERE action = 'TOOL' AND tool_name = '" + ToolPollPolicy.MAIL_START + "' " +
+            "AND created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY)")
+    Map<String, Object> getMailStartPollStats(@Param("days") int days);
 }

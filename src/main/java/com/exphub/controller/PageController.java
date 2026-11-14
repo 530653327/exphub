@@ -349,6 +349,7 @@ public class PageController extends BaseController {
         model.addAttribute("unknownCalled", data.get("unknownCalled"));
         model.addAttribute("trend", data.get("trend"));
         model.addAttribute("byAssistant", data.get("byAssistant"));
+        model.addAttribute("excluded", data.get("excluded"));
         model.addAttribute("days", window);
         model.addAttribute("lowFreqThreshold", data.get("lowFreqThreshold"));
         return "tool-stats";

@@ -1,6 +1,7 @@
 package com.exphub.mcp;
 
 import com.exphub.service.CallLogService;
+import com.exphub.service.ToolPollPolicy;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -40,9 +41,12 @@ public class ToolCallAspect {
     public Object aroundToolCall(ProceedingJoinPoint pjp) throws Throwable {
         long start = System.currentTimeMillis();
         String toolName = null;
+        Integer isPoll = null;
         boolean success = true;
         try {
             toolName = resolveToolName(pjp);
+            // 必须在 proceed 之前取参数：这里只读，发出去的仍是调用方原值
+            isPoll = safeResolvePollFlag(toolName, pjp);
             return pjp.proceed();
         } catch (Throwable e) {
             success = false;
@@ -50,13 +54,55 @@ public class ToolCallAspect {
         } finally {
             try {
                 if (toolName != null) {
-                    callLogService.logToolCall(toolName, success, System.currentTimeMillis() - start);
+                    callLogService.logToolCall(toolName, success, System.currentTimeMillis() - start, isPoll);
                 }
             } catch (Exception ignored) {
                 // 埋点失败不影响工具返回；只留 debug，避免刷 error 日志
                 log.debug("ToolCallAspect: 埋点写入失败 tool={} err={}", toolName, ignored.getMessage());
             }
         }
+    }
+
+    /**
+     * 解析 is_poll。**任何异常都不能上抛**——埋点是副作用，解析失败只落 NULL。
+     *
+     * @return 1=哨兵轮询（mail_start 且 unreadOnly=true）；0=真实调用（其余一切）；
+     *         null=mail_start 但参数名解析失败（与历史行同语义：统计排除）
+     */
+    private Integer safeResolvePollFlag(String toolName, ProceedingJoinPoint pjp) {
+        if (!ToolPollPolicy.isPollExcludedTool(toolName)) {
+            return 0;
+        }
+        try {
+            MethodSignature signature = (MethodSignature) pjp.getSignature();
+            Integer flag = resolvePollFlag(toolName, signature.getParameterNames(), pjp.getArgs());
+            if (flag == null) {
+                log.debug("ToolCallAspect: mail_start 的 unreadOnly 参数解析失败，is_poll 落 NULL（该行不计入统计）");
+            }
+            return flag;
+        } catch (Exception e) {
+            log.debug("ToolCallAspect: 解析轮询标记失败 tool={} err={}", toolName, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 纯函数版本，供单测直接钉「哪些入参算轮询」；不依赖切面上下文 */
+    static Integer resolvePollFlag(String toolName, String[] parameterNames, Object[] args) {
+        if (toolName == null) {
+            return null;
+        }
+        if (!ToolPollPolicy.isPollExcludedTool(toolName)) {
+            return 0;
+        }
+        if (parameterNames == null || args == null || parameterNames.length != args.length) {
+            return null;
+        }
+        for (int i = 0; i < parameterNames.length; i++) {
+            if ("unreadOnly".equals(parameterNames[i])) {
+                return Boolean.TRUE.equals(args[i]) ? 1 : 0;
+            }
+        }
+        return null;
     }
 
     /** 从方法上的 @Tool 注解取工具名；非工具方法返回 null（不记录） */

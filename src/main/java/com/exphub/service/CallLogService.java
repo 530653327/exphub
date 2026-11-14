@@ -246,6 +246,15 @@ public class CallLogService {
      *    （切面里已有 try-catch；这里再走 CallLogWriter，双保险。）
      */
     public void logToolCall(String toolName, boolean success, long costMs) {
+        logToolCall(toolName, success, costMs, 0);
+    }
+
+    /**
+     * 记录一次 MCP 工具调用，并标记这一行是否为哨兵轮询。
+     *
+     * @param isPoll 1=轮询（统计排除）/0=真实调用/null=解析失败（历史行语义，统计也排除）
+     */
+    public void logToolCall(String toolName, boolean success, long costMs, Integer isPoll) {
         if (toolName == null || toolName.isEmpty()) {
             return;
         }
@@ -254,6 +263,7 @@ public class CallLogService {
         entry.setToolName(toolName);
         entry.setCostMs((int) Math.min(costMs, Integer.MAX_VALUE));
         entry.setSuccess(success ? 1 : 0);
+        entry.setIsPoll(isPoll);
         entry.setDetail(success ? "成功" : "失败");
 
         fillCaller(entry);
@@ -456,6 +466,11 @@ public class CallLogService {
     /** 工具调用按助手分布 */
     public List<Map<String, Object>> getToolByAssistant(int days) {
         return callLogMapper.getToolByAssistant(days);
+    }
+
+    /** mail_start 分段调用数：轮询 / 真实读信 / 部署前未分类（口径见 ToolPollPolicy） */
+    public Map<String, Object> getMailStartPollStats(int days) {
+        return callLogMapper.getMailStartPollStats(days);
     }
 
     public List<Map<String, Object>> getAssistantRanking(int limit) {

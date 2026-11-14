@@ -15,6 +15,7 @@ import com.exphub.service.SectionSplicer;
 import com.exphub.service.SimilarityScorer;
 import com.exphub.service.SimilarityService;
 import com.exphub.service.DocTemplateService;
+import com.exphub.service.ToolPollPolicy;
 import com.exphub.service.ProjectService;
 import com.exphub.service.VersionArchiveService;
 import com.exphub.service.WriteOrigin;
@@ -2685,7 +2686,7 @@ public class ExpHubTools {
      * <p>关键一项是 <b>从未被调用的已注册工具</b>：注册表 + 埋点两边一减就知道哪些工具从来没被用过 ——
      * 这是精简的第一手依据，比「我觉得这个没人用」可靠。
      */
-    @Tool(name = "get_tool_stats", description = "【只读】工具调用统计：总览、使用榜、每日趋势、**从未被调用的工具清单**。数据来自 call_logs，只统计不修改。")
+    @Tool(name = "get_tool_stats", description = "【只读】工具调用统计：总览、使用榜、每日趋势、**从未被调用的工具清单**。数据来自 call_logs，只统计不修改。**已排除 mail_start 哨兵轮询（unreadOnly=true）；真实读信仍计入**，回执会报排除数与真实数。")
     public String getToolStats(
             @ToolParam(description = "可选。统计最近几天，默认 7，上限 90", required = false) Integer days,
             @ToolParam(description = "可选。使用榜最多列几个工具，默认 20，上限 50", required = false) Integer limit) {
@@ -2696,6 +2697,7 @@ public class ExpHubTools {
             Map<String, Object> overview = callLogService.getToolOverview();
             List<Map<String, Object>> ranking = callLogService.getToolRanking(d);
             List<Map<String, Object>> trend = callLogService.getToolDailyTrend(d);
+            Map<String, Object> pollStats = callLogService.getMailStartPollStats(d);
             Map<String, String> registered = mcpToolRegistry.getTools();
 
             StringBuilder sb = new StringBuilder();
@@ -2707,6 +2709,13 @@ public class ExpHubTools {
               .append("｜**有调用的工具 ").append(val(overview, "activeTools"))
               .append(" / 已注册 ").append(registered.size()).append("**\n");
 
+            long polls = pollStats == null ? 0L : num(firstNonNull(pollStats, "polls", "POLLS"));
+            long realCalls = pollStats == null ? 0L : num(firstNonNull(pollStats, "realCalls", "REALCALLS"));
+            long unclassified = pollStats == null ? 0L : num(firstNonNull(pollStats, "unclassified", "UNCLASSIFIED"));
+            sb.append("**统计排除**: ")
+              .append(ToolPollPolicy.explain(polls, realCalls, unclassified, d))
+              .append("\n");
+
             java.util.Set<String> called = new java.util.LinkedHashSet<>();
             for (Map<String, Object> m : ranking) {
                 Object t = firstNonNull(m, "toolName", "tool_name");
@@ -2714,6 +2723,8 @@ public class ExpHubTools {
             }
             java.util.List<String> neverCalled = new java.util.ArrayList<>();
             for (String t : registered.keySet()) {
+                // mail_start 调用量最大，只是按口径不计入统计；列进「从未被调用」会直接误导精简决策
+                if (ToolPollPolicy.isPollExcludedTool(t)) continue;
                 if (!called.contains(t)) neverCalled.add(t);
             }
             sb.append("\n**从未被调用（近 ").append(d).append(" 天，共 ")
@@ -2762,7 +2773,9 @@ public class ExpHubTools {
             }
 
             sb.append("\n⚠️ 口径：`action='TOOL'` 由工具调用切面写入；**没有经过 MCP 的调用不会出现在这里**。"
-                    + "「有调用的工具数」按近 ").append(d).append(" 天算，总数按注册表算 —— 两个数不同源，别相减去推别的结论。\n");
+                    + "「有调用的工具数」按近 ").append(d).append(" 天算，总数按注册表算 —— 两个数不同源，别相减去推别的结论。")
+              .append("mail_start 按行排除哨兵轮询，既不在使用榜、也不在「从未被调用」清单里；")
+              .append("它的真实读信仍计入上面的总调用与成功率。\n");
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.getToolStats: FAILED", e);

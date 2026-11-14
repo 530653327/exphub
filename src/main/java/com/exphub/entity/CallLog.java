@@ -21,6 +21,7 @@ public class CallLog {
     private Long docId;             // 文档ID（CREATE/UPDATE/DELETE 时用）
     private String docTitle;         // 文档标题（CREATE/UPDATE 时用）
     private String detail;           // 详细信息（如更新内容摘要）
+    private Integer isPoll;          // 是否哨兵轮询：1=轮询（统计排除）/0=真实调用/NULL=迁移前历史行（不回填）
     
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt; // 调用时间

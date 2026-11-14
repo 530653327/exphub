@@ -132,17 +132,23 @@ CREATE TABLE IF NOT EXISTS call_logs (
     id          BIGINT PRIMARY KEY AUTO_INCREMENT,
     api_key     VARCHAR(64) COMMENT 'API Key',
     caller_name VARCHAR(100) COMMENT '调用者名字',
-    action      VARCHAR(20) DEFAULT 'SEARCH' COMMENT '操作类型：SEARCH / CREATE / UPDATE / DELETE',
+    action      VARCHAR(20) DEFAULT 'SEARCH' COMMENT '操作类型：SEARCH / CREATE / UPDATE / DELETE / TOOL',
+    tool_name   VARCHAR(50) COMMENT 'MCP 工具名（action=TOOL 时记录）',
+    cost_ms     INT COMMENT '工具耗时毫秒（action=TOOL 时记录）',
+    success     TINYINT(1) COMMENT '成败 1成功 0失败；TOOL=工具执行成败，SEARCH=是否有结果',
     keyword     VARCHAR(500) COMMENT '检索关键字',
     hit_count   INT DEFAULT 0 COMMENT '命中数据条数',
     doc_id      BIGINT COMMENT '关联文档ID',
     doc_title   VARCHAR(200) COMMENT '文档标题',
-    detail      VARCHAR(500) COMMENT '详细信息',
+    detail      TEXT COMMENT '详细信息',
+    is_poll     TINYINT(1) DEFAULT NULL COMMENT '是否哨兵轮询：1=轮询（统计排除）/0=真实调用/NULL=历史行（不回填）',
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_api_key (api_key),
     INDEX idx_created_at (created_at),
     INDEX idx_action (action),
-    INDEX idx_doc_id (doc_id)
+    INDEX idx_doc_id (doc_id),
+    INDEX idx_tool_created (tool_name, created_at),
+    INDEX idx_tool_poll (tool_name, is_poll, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='调用日志表';
 
 -- ============================================================

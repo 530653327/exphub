@@ -5,6 +5,8 @@ import com.exphub.mcp.McpToolRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -53,6 +55,15 @@ public class ToolStatsService {
         overview.put("registrySize", registrySize);
         overview.put("zeroTools", Math.max(0, registrySize - activeTools));
         overview.put("successRate", total > 0 ? Math.round(successCalls * 1000.0 / total) / 10.0 : 0.0);
+        // 注册表里有、但按口径整体不计统计的工具（目前仅 mail_start）。
+        // 不单独说清楚的话，「有过调用 x / 注册 y」会被读成「有工具零调用」，而零调用清单里又没有它。
+        int pollExcludedTools = 0;
+        for (String t : toolRegistry.getTools().keySet()) {
+            if (ToolPollPolicy.isPollExcludedTool(t)) {
+                pollExcludedTools++;
+            }
+        }
+        overview.put("pollExcludedTools", pollExcludedTools);
 
         // 2. 工具使用榜（窗口内）
         List<Map<String, Object>> ranking = callLogMapper.getToolRanking(days);
@@ -86,6 +97,11 @@ public class ToolStatsService {
         // 3. 零调用工具（注册表 - 实际调用）
         List<Map<String, Object>> zeroTools = new ArrayList<>();
         for (Map.Entry<String, String> entry : toolRegistry.getTools().entrySet()) {
+            // 按行排除轮询的工具整体不进使用榜，也不该被当成「零调用」——
+            // 它恰恰是调用量最大的工具，列进精简候选会误导。
+            if (ToolPollPolicy.isPollExcludedTool(entry.getKey())) {
+                continue;
+            }
             if (!called.contains(entry.getKey())) {
                 Map<String, Object> m = new HashMap<>();
                 m.put("toolName", entry.getKey());
@@ -93,6 +109,9 @@ public class ToolStatsService {
                 zeroTools.add(m);
             }
         }
+
+        // 零调用卡片的数字必须与下面清单同源：先减掉了轮询工具再算，避免「卡片写 1、清单 0 条」
+        overview.put("zeroTools", zeroTools.size());
 
         // 4. 没注册但被调用过的工具（改名/已删的残留，说明统计或代码不一致）
         List<String> unknownCalled = new ArrayList<>();
@@ -102,12 +121,28 @@ public class ToolStatsService {
             }
         }
 
+        // 5. 被排除的轮询调用（页面与 get_tool_stats 共用同一句话）
+        Map<String, Object> excluded = callLogMapper.getMailStartPollStats(days);
+        if (excluded == null) {
+            excluded = new HashMap<>();
+        }
+        long polls = toLong(excluded.get("polls"));
+        long realCalls = toLong(excluded.get("realCalls"));
+        long unclassified = toLong(excluded.get("unclassified"));
+        excluded.put("polls", polls);
+        excluded.put("realCalls", realCalls);
+        excluded.put("unclassified", unclassified);
+        excluded.put("since", LocalDateTime.now().minusDays(days)
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+        excluded.put("text", ToolPollPolicy.explain(polls, realCalls, unclassified, days));
+
         out.put("overview", overview);
         out.put("ranking", ranking);
         out.put("zeroTools", zeroTools);
         out.put("unknownCalled", unknownCalled);
         out.put("trend", callLogMapper.getToolDailyTrend(days));
         out.put("byAssistant", callLogMapper.getToolByAssistant(days));
+        out.put("excluded", excluded);
         out.put("days", days);
         out.put("lowFreqThreshold", LOW_FREQ_THRESHOLD);
         return out;
