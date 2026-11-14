@@ -67,7 +67,7 @@ class MailSendChainMetadataReceiptTest {
     @Test
     @DisplayName("不传三个参数：回执与改动前一致，且入库就是默认值（老调用零改动）")
     void legacyReceiptUnchanged() {
-        String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null, null, null, null);
+        String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null, null, null, null, null);
 
         assertFalse(r.contains("授权链元数据"), "没传元数据就不该多出这一段：" + r);
         assertNull(stored.get().getChainId());
@@ -79,7 +79,7 @@ class MailSendChainMetadataReceiptTest {
     @DisplayName("回执报回读值：chainId / auto / depth 三个都要摆出来")
     void receiptShowsStoredValues() {
         String r = tools.mailSend("zhulong", "派单", "正文", null, "dispatch", null,
-                "CHAIN-A", true, 2);
+                "CHAIN-A", true, 2, null);
 
         assertTrue(r.contains("入库后回读"), "要说明这是回读值，不是复述入参：" + r);
         assertTrue(r.contains("chainId: CHAIN-A"), r);
@@ -92,7 +92,7 @@ class MailSendChainMetadataReceiptTest {
     @DisplayName("只传 chainId：回执必须写「depth/auto 用了默认值」，不许静默补默认")
     void receiptDeclaresDefaults() {
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null,
-                "CHAIN-B", null, null);
+                "CHAIN-B", null, null, null);
 
         assertTrue(r.contains("depth 未传，入库用默认 0"), r);
         assertTrue(r.contains("auto 未传，入库用默认 false"), r);
@@ -102,7 +102,7 @@ class MailSendChainMetadataReceiptTest {
     @DisplayName("depth 为负：回执是 ❌，且一封都不写库")
     void negativeDepthRejectedAtToolBoundary() {
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null,
-                "CHAIN-C", false, -1);
+                "CHAIN-C", false, -1, null);
 
         assertTrue(r.startsWith("❌"), "非法值必须明拒：" + r);
         assertTrue(r.contains("非负整数"), r);
@@ -113,7 +113,7 @@ class MailSendChainMetadataReceiptTest {
     @DisplayName("chainId 超长：回执是 ❌ 并报实际长度，不截断")
     void tooLongChainIdRejectedAtToolBoundary() {
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null,
-                "z".repeat(70), false, 0);
+                "z".repeat(70), false, 0, null);
 
         assertTrue(r.startsWith("❌"), r);
         assertTrue(r.contains("上限 64"), r);
@@ -125,7 +125,7 @@ class MailSendChainMetadataReceiptTest {
     @DisplayName("depth>0 但没 chainId：按原样入库，但回执要点明「没有可追溯的根」")
     void depthWithoutChainIsStoredButFlagged() {
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null,
-                null, true, 3);
+                null, true, 3, null);
 
         assertTrue(r.contains("depth>0 但 chainId 为空"), "缺链根的元数据必须点出来：" + r);
         assertEquals(3, stored.get().getChainDepth());
@@ -149,7 +149,7 @@ class MailSendChainMetadataReceiptTest {
         when(msgMapper.selectById(77L)).thenReturn(exist);
 
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", "CM-1",
-                "CHAIN-NEW", true, 5);
+                "CHAIN-NEW", true, 5, null);
 
         // 回执头仍是 #77（幂等命中，没有新建）
         assertTrue(r.contains("消息 #77"), r);

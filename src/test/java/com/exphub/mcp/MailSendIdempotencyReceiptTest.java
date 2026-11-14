@@ -83,7 +83,7 @@ class MailSendIdempotencyReceiptTest {
         oldLetter();
 
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", "CM-1",
-                null, null, null);
+                null, null, null, null);
 
         assertFalse(r.contains("✅ 已以"), "回放不许印「已发给」，那正是事故现场：" + r);
         assertTrue(r.startsWith("⚠️ 幂等命中"), r);
@@ -104,7 +104,7 @@ class MailSendIdempotencyReceiptTest {
         oldLetter();
 
         String r = tools.mailSend("zhulong", "W-20261114-02 发版", "另一份正文内容", null, "dispatch", "CM-1",
-                null, null, null);
+                null, null, null, null);
 
         assertTrue(r.contains("不是同一封信"), r);
         assertTrue(r.contains("主题不同"), "主题差异必须逐项说出来：" + r);
@@ -119,7 +119,7 @@ class MailSendIdempotencyReceiptTest {
         oldLetter(); // 库里那封是「新开线程」，这次却想当回信发
 
         String r = tools.mailSend("zhulong", "通知", "正文", 50L, "receipt", "CM-1",
-                null, null, null);
+                null, null, null, null);
 
         assertTrue(r.startsWith("❌"), r);
         assertTrue(r.contains("只能重放同一封信"), r);
@@ -134,7 +134,7 @@ class MailSendIdempotencyReceiptTest {
         exist.setToRole("白泽");
 
         String r = tools.mailSend("zhulong", "通知", "正文", null, "dispatch", "CM-1",
-                null, null, null);
+                null, null, null, null);
 
         assertTrue(r.startsWith("❌"), r);
         assertTrue(r.contains("改收件人必须换键重发"), r);
@@ -148,7 +148,7 @@ class MailSendIdempotencyReceiptTest {
         exist.setFromRole("白泽");
 
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", "CM-1",
-                null, null, null);
+                null, null, null, null);
 
         assertTrue(r.startsWith("❌"), r);
         assertTrue(r.contains("不同发件人不能共用同一个键"), r);
@@ -159,7 +159,7 @@ class MailSendIdempotencyReceiptTest {
     @DisplayName("没有幂等键的正常发信仍然从 ✅ 开始（不许把主路径改坏）")
     void freshSendStillRendersSuccess() {
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", null,
-                null, null, null);
+                null, null, null, null);
 
         assertTrue(r.startsWith("✅ 已以【阁主】"), r);
         assertTrue(r.contains("消息 #99"), r);
@@ -178,7 +178,7 @@ class MailSendIdempotencyReceiptTest {
         when(msgMapper.selectById(99L)).thenReturn(stored);
 
         String r = tools.mailSend("zhulong", "通知", "正文", null, "dispatch", "dispatch:ORDER-42",
-                null, null, null);
+                null, null, null, null);
 
         assertTrue(r.contains("本次新建: 是（created=true）"), r);
         assertTrue(r.contains("clientMsgId: dispatch:ORDER-42"), r);
@@ -194,7 +194,7 @@ class MailSendIdempotencyReceiptTest {
                 org.mockito.ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.QueryWrapper.class);
 
         String r = tools.mailSend("zhulong", "通知", "正文", null, "note", "  CM-1  ",
-                null, null, null);
+                null, null, null, null);
 
         verify(msgMapper).selectOne(cap.capture());
         cap.getValue().getSqlSegment(); // MyBatis-Plus 延迟生成参数占位符，先取一次片段才填 paramNameValuePairs

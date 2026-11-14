@@ -347,10 +347,11 @@ class ToolDescriptionRedundancyTest {
         //            （#2101：L0 模拟 118 条入队里 112 条是 0 行），默认 1 行、传 0 可回退。
         // 2026-11-14 按幂等键查消息（阁主 T261114084728-182）：仍 50 个工具（加参数不加工具，
         //            红线 13），mail_thread 加 clientMsgId，参数 211 → 212。理由：幂等命中后调用方
+        // 2026-11-14：参数 212 → 213，mail_send 新增 onBehalfOf（阁主 W-20261114-09 代发），工具数不变。
         //            只能翻 app.log 那行「幂等命中」核实，日志一滚就没证据；键本来就在
         //            mail_messages.client_msg_id（uk_mail_client）上，一次只读查询即可，不值得开新工具。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(212, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(213, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -10,6 +10,7 @@ import com.exphub.util.SensitiveContentGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -74,6 +75,18 @@ public class MailboxService {
      * 而「第几跳」是按链算的 —— 静默截断会让深度校验作用在错误的链上（AGENTS 9c）。
      */
     private static final int MAX_CHAIN_ID_LEN = 64;
+
+    /**
+     * 允许发起代发的配置来源前缀（逗号分隔，默认只有忆阁的 {@code cfg-gezhu-}）。
+     *
+     * <p><b>这是第二道弱锁，不是鉴权</b>：{@code x-exphub-config-source} 同样是客户端自报头
+     * （见 {@link MailDelegation} 类注释）。它挡的是「别的哨兵配错角色头」这类真实误用；
+     * 挡不住改头的人。真正的隔离要靠每角色独立 API Key，需越哥批。
+     *
+     * <p>不配时用默认值 —— 字段带初始值，单测里不注入 Spring 也能拿到同一口径。
+     */
+    @Value("${exphub.mail.delegation.config-source-prefixes:cfg-gezhu-}")
+    private String delegationConfigSourcePrefixes = "cfg-gezhu-";
 
     /** 当前可投递正名（{@code mail_roles} 里 {@code status='ACTIVE'} 的汉字行，已去空白）。 */
     public Set<String> knownRoles() {
@@ -248,7 +261,7 @@ public class MailboxService {
                             Long inReplyTo, String msgType, String clientMsgId,
                             String configSourceId) {
         return sendDetailed(fromRole, toRole, subject, body, inReplyTo, msgType, clientMsgId,
-                configSourceId, null, null, null).message();
+                configSourceId, null, null, null, null).message();
     }
 
     /**
@@ -260,7 +273,7 @@ public class MailboxService {
                             Long inReplyTo, String msgType, String clientMsgId,
                             String configSourceId, String chainId, Boolean auto, Integer depth) {
         return sendDetailed(fromRole, toRole, subject, body, inReplyTo, msgType, clientMsgId,
-                configSourceId, chainId, auto, depth).message();
+                configSourceId, chainId, auto, depth, null).message();
     }
 
     /**
@@ -285,10 +298,13 @@ public class MailboxService {
      * @param chainId 授权链根标识；null=不属于任何授权链。传空白或超过 64 字符直接拒（不静默修正）
      * @param auto    是否自动回合发出；null 视为 false
      * @param depth   当前跳数，null 视为 0；负数直接拒（不静默改成 0）
+     * @param onBehalfOf 代发对象（目前只允许「越哥」，且只有阁主能填）；null/空白=不是代发。
+     *                   非法值一律<b>明拒</b>，不静默丢弃、不改写成自己名义（AGENTS 9c）。
      */
     public SendResult sendDetailed(String fromRole, String toRole, String subject, String body,
                                    Long inReplyTo, String msgType, String clientMsgId,
-                                   String configSourceId, String chainId, Boolean auto, Integer depth) {
+                                   String configSourceId, String chainId, Boolean auto, Integer depth,
+                                   String onBehalfOf) {
         if (fromRole == null || fromRole.isBlank()) {
             throw new IllegalArgumentException("没有角色，发不了信：客户端配置里没有声明角色");
         }
@@ -296,6 +312,9 @@ public class MailboxService {
         // 客户端配置里可能仍是拼音（zhulong），这里统一换成「烛龙」——出口/日志/审计一律汉字。
         String from = roleCatalog == null ? fromRole.trim() : roleCatalog.canonicalRole(fromRole);
         if (from == null || from.isBlank()) from = fromRole.trim();
+        // 代发（2026-11-14 W-20261114-09）：校验放在最前面、入库前，且不依赖收件人解析 ——
+        // 非法代发不许因为「收件人先报错」而被绕成「以自己名义发出去了」。
+        String behalf = normalizeOnBehalfOf(from, onBehalfOf, configSourceId);
         // 收件人可以为空 <b>仅限回信</b>：带 inReplyTo 时收件人由父消息发件人决定（见下方 resolve）。
         if (subject == null || subject.isBlank()) {
             throw new IllegalArgumentException("主题是空的");
@@ -330,7 +349,7 @@ public class MailboxService {
             MailMessage exist = msgMapper.selectOne(new QueryWrapper<MailMessage>()
                     .eq("client_msg_id", key).last("LIMIT 1"));
             if (exist != null) {
-                assertReplayIsSameLetter(exist, from, rawTo, inReplyTo, key);
+                assertReplayIsSameLetter(exist, from, rawTo, inReplyTo, key, behalf);
                 // 日志也要能单独看出「没新建」：排障时只有 app.log 的人不能靠猜。
                 log.info("MailboxService.send: 幂等命中（本次未新建） clientMsgId={}, id={}, {} -> {}, thread={}",
                         key, exist.getId(), exist.getFromRole(), exist.getToRole(),
@@ -390,6 +409,7 @@ public class MailboxService {
         m.setThreadId(threadId);
         m.setInReplyTo(inReplyTo);
         m.setFromRole(from);
+        m.setOnBehalfOf(behalf);
         m.setToRole(toRole.trim());
         m.setMsgType(normalizeType(msgType));
         m.setSubject(subject.trim());
@@ -403,28 +423,41 @@ public class MailboxService {
 
         // 发件人自己的游标推到这条：自己写的不用再「未读」给自己
         advanceCursor(from, threadId, m.getId());
-        log.info("MailboxService.send: {} -> {}, thread={}, id={}", from, toRole, threadId, m.getId());
+        log.info("MailboxService.send: {} -> {}, thread={}, id={}{}", from, toRole, threadId, m.getId(),
+                behalf == null ? "" : "（代发 " + behalf + "，配置 " + blankToNull(configSourceId) + "）");
         return new SendResult(m, false);
     }
 
     /**
      * 幂等命中时，确认「这条旧信就是这次想发的那封」。
      *
-     * <p>三条硬冲突直接拒，<b>不静默返回别人的信</b>（AGENTS 9c：错误的输入宁可失败得刺眼）：
+     * <p>四条硬冲突直接拒，<b>不静默返回别人的信</b>（AGENTS 9c：错误的输入宁可失败得刺眼）：
      * <ol>
      *   <li>发件人不同 —— 幂等键全局唯一，别人用过的键不能顶替我的信；</li>
      *   <li>{@code inReplyTo} 不同 —— 回放一封「新开线程」的信来冒充回信，线程归属会全错；</li>
-     *   <li>收件人不同 —— 调用方以为发给了 A，实际返回的是发给 B 的旧信。</li>
+     *   <li>收件人不同 —— 调用方以为发给了 A，实际返回的是发给 B 的旧信；</li>
+     *   <li>代发对象不同 —— 回放一封「以自己名义发的」来冒充「以越哥名义发的」，收件人会按错误的
+     *       权威等级处理（2026-11-14 W-20261114-09）。</li>
      * </ol>
      * 主题/正文的差异不拒（重试时正文里可能带时间戳），但由工具层在回执里逐项点出来。
      */
     private void assertReplayIsSameLetter(MailMessage exist, String from, String rawTo,
-                                          Long inReplyTo, String clientMsgId) {
+                                          Long inReplyTo, String clientMsgId, String onBehalfOf) {
         String existFrom = canonicalOrRaw(exist.getFromRole());
         if (existFrom != null && !existFrom.equalsIgnoreCase(from)) {
             throw new IllegalArgumentException("clientMsgId「" + clientMsgId + "」已被【"
                     + exist.getFromRole() + "】用在消息 #" + exist.getId() + " 上，而这次发件人是【" + from
                     + "】。幂等键是全局唯一的，不同发件人不能共用同一个键 —— 请换一个键重发（未发出任何信）。");
+        }
+        String existBehalf = exist.getOnBehalfOf() == null ? null : exist.getOnBehalfOf().trim();
+        String givenBehalf = onBehalfOf == null || onBehalfOf.isBlank() ? null : onBehalfOf.trim();
+        if (!java.util.Objects.equals(existBehalf, givenBehalf)) {
+            throw new IllegalArgumentException("clientMsgId「" + clientMsgId + "」对应的消息 #" + exist.getId()
+                    + " " + (existBehalf == null ? "是【" + exist.getFromRole() + "】自己发的（没有代发）"
+                                                : "是以【" + existBehalf + "】的名义发的")
+                    + "，而这次 " + (givenBehalf == null ? "没有传 onBehalfOf"
+                                                         : "传的 onBehalfOf 是「" + givenBehalf + "」")
+                    + "。代发与否决定收件人按什么权威等级处理这封信，不能靠同一个键回放 —— 请换键重发（未发出任何信）。");
         }
         if (!java.util.Objects.equals(inReplyTo, exist.getInReplyTo())) {
             throw new IllegalArgumentException("clientMsgId「" + clientMsgId + "」已用于消息 #" + exist.getId()
@@ -504,6 +537,41 @@ public class MailboxService {
         return depth;
     }
 
+    /**
+     * 校验并规整 {@code onBehalfOf}（代发对象，2026-11-14 阁主 W-20261114-09）。
+     *
+     * <p>四道门，任何一道不过都<b>明拒</b>（不静默丢弃、不改写成「以自己名义发」）：
+     * <ol>
+     *   <li>代发对象必须在允许清单里（目前只有「越哥」）；</li>
+     *   <li>发起人必须是阁主；</li>
+     *   <li>必须带配置来源（x-exphub-config-source）—— 代发是审计动作，没有来源就无法追责；</li>
+     *   <li>配置来源必须命中允许前缀（默认 {@code cfg-gezhu-}，即忆阁）。</li>
+     * </ol>
+     *
+     * <p>第 2、4 道依据的都是<b>客户端自报头</b>，不是鉴权（见 {@link MailDelegation}）。
+     * 这里不假装它是安全边界：真正的隔离需要每角色独立 Key。
+     */
+    private String normalizeOnBehalfOf(String from, String raw, String configSourceId) {
+        if (raw == null || raw.isBlank()) return null;
+        String target = raw.trim();
+        if (!MailDelegation.allowedPrincipal(target)) {
+            throw new IllegalArgumentException(MailDelegation.rejectUnknownPrincipal(raw));
+        }
+        if (!MailDelegation.DELEGATOR.equalsIgnoreCase(from)) {
+            throw new IllegalArgumentException(MailDelegation.rejectNotDelegator(from, target, configSourceId));
+        }
+        String cfg = configSourceId == null ? "" : configSourceId.trim();
+        if (cfg.isEmpty()) {
+            throw new IllegalArgumentException(MailDelegation.rejectMissingConfigSource());
+        }
+        java.util.Set<String> prefixes = MailDelegation.parsePrefixes(delegationConfigSourcePrefixes);
+        boolean allowed = prefixes.isEmpty() || prefixes.stream().anyMatch(cfg.toLowerCase()::startsWith);
+        if (!allowed) {
+            throw new IllegalArgumentException(MailDelegation.rejectConfigSource(cfg, delegationConfigSourcePrefixes));
+        }
+        return target;
+    }
+
     // ---------------------------------------------------------------- 收件箱
 
     /** 一根线程的信封（列表行）。 */
@@ -511,6 +579,8 @@ public class MailboxService {
         public String threadId;
         public String subject;
         public String fromRole;
+        /** 代发对象（null=不是代发）。发件人展示统一走 {@link MailDelegation#display}。 */
+        public String onBehalfOf;
         /** 收件人。收件箱里通常是我自己；发件箱里是对方 —— 两种视角共用同一个结构，靠调用方决定怎么念。 */
         public String toRole;
         public String msgType;
@@ -580,6 +650,7 @@ public class MailboxService {
             if (kw != null && !kw.isEmpty()) {
                 boolean hit = contains(latest.getSubject(), kw)
                         || contains(latest.getFromRole(), kw)
+                        || contains(latest.getOnBehalfOf(), kw)
                         || contains(latest.getMsgType(), kw);
                 if (!hit) continue;
             }
@@ -588,6 +659,7 @@ public class MailboxService {
             env.threadId = threadId;
             env.subject = latest.getSubject();
             env.fromRole = latest.getFromRole();
+            env.onBehalfOf = latest.getOnBehalfOf();
             env.toRole = latest.getToRole();
             env.msgType = latest.getMsgType();
             env.latestAt = newestAny.getCreatedAt();
@@ -724,6 +796,7 @@ public class MailboxService {
             if (kw != null && !kw.isEmpty()) {
                 boolean hit = contains(latest.getSubject(), kw)
                         || contains(latest.getFromRole(), kw)
+                        || contains(latest.getOnBehalfOf(), kw)
                         || contains(latest.getMsgType(), kw);
                 if (!hit) continue;
             }
@@ -732,6 +805,7 @@ public class MailboxService {
             env.threadId = threadId;
             env.subject = latest.getSubject();
             env.fromRole = latest.getFromRole();
+            env.onBehalfOf = latest.getOnBehalfOf();
             env.toRole = latest.getToRole();
             env.msgType = latest.getMsgType();
             env.latestAt = newestAny.getCreatedAt();
@@ -803,6 +877,7 @@ public class MailboxService {
             env.threadId = latest.getThreadId();
             env.subject = latest.getSubject();
             env.fromRole = latest.getFromRole();
+            env.onBehalfOf = latest.getOnBehalfOf();
             env.toRole = latest.getToRole();
             env.msgType = latest.getMsgType();
             env.latestAt = latest.getCreatedAt();

@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS mail_messages (
     thread_id        VARCHAR(32)  NOT NULL COMMENT '线程号，服务端生成',
     in_reply_to      BIGINT       NULL     COMMENT '父消息ID；有值即回信',
     from_role        VARCHAR(32)  NOT NULL COMMENT '发件角色，服务端填',
+    on_behalf_of     VARCHAR(32)  NULL     COMMENT '代发对象（如 越哥）；NULL=不是代发，真实发件人仍在 from_role',
     to_role          VARCHAR(32)  NOT NULL COMMENT '收件角色',
     msg_type         VARCHAR(16)  NOT NULL DEFAULT 'note' COMMENT 'dispatch/receipt/accept/note/fix',
     subject          VARCHAR(200) NOT NULL,

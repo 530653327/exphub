@@ -80,7 +80,7 @@ class MailboxSmokeTest {
     @Test
     @DisplayName("smoke: 没角色发不了信（from 不许模型自己填）")
     void mailSendWithoutRoleMustRefuse() {
-        String r = tools.mailSend("baize", "主题", "正文", null, "note", null, null, null, null);
+        String r = tools.mailSend("baize", "主题", "正文", null, "note", null, null, null, null, null);
         assertTrue(r.startsWith("❌ 发不了"), "没角色必须拒绝，不能默认成某个人：\n" + r);
         verifyNoInteractions(mailboxService);
     }

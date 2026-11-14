@@ -6176,6 +6176,7 @@ public class ExpHubTools {
                 for (com.exphub.service.MailboxService.Envelope e : sentList) {
                     sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
                       .append(" · 发给【").append(e.toRole).append("】")
+                      .append(e.onBehalfOf == null ? "" : " · 代发「" + e.onBehalfOf + "」")
                       .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt)).append("\n");
                     sb.append("  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
                 }
@@ -6205,14 +6206,16 @@ public class ExpHubTools {
                     if (i > 0) json.append(",");
                     json.append("{\"threadId\":\"").append(jsonEscape(e.threadId))
                         .append("\",\"subject\":\"").append(jsonEscape(e.subject))
-                        .append("\",\"from\":\"").append(jsonEscape(e.fromRole))
+                        .append("\",\"from\":\"").append(jsonEscape(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf)))
+                        .append("\",\"fromRole\":\"").append(jsonEscape(e.fromRole))
+                        .append("\",\"onBehalfOf\":").append(e.onBehalfOf == null ? "null" : "\"" + jsonEscape(e.onBehalfOf) + "\"")
                         .append("\",\"type\":\"").append(jsonEscape(e.msgType))
                         .append("\",\"unread\":").append(e.freshCount)
                         .append(",\"lastAt\":\"")
                         .append(jsonEscape(com.exphub.service.MailboxService.time(e.latestAt)))
                         .append("\"}");
                     sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
-                      .append(" · ").append(e.fromRole).append(" · ").append(e.freshCount).append(" 封新")
+                      .append(" · ").append(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf)).append(" · ").append(e.freshCount).append(" 封新")
                       .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt)).append("\n");
                     sb.append("  「").append(e.subject).append("」\n");
                 }
@@ -6260,7 +6263,7 @@ public class ExpHubTools {
                   .append(withRead ? "（含已读）" : "有待看").append("\n");
                 for (com.exphub.service.MailboxService.Envelope e : page.items) {
                     sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
-                      .append(" · ").append(e.fromRole)
+                      .append(" · ").append(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf))
                       .append(" · ").append(e.freshCount).append(" 封新")
                       .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt))
                       .append(" · 最新 #").append(e.latestId);
@@ -6312,7 +6315,7 @@ public class ExpHubTools {
             sb.append("\n📬 ").append(list.size()).append(" 根线程").append(searchMode ? "（含已读）" : "有待看").append("\n");
             for (com.exphub.service.MailboxService.Envelope e : list) {
                 sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
-                  .append(" · ").append(e.fromRole)
+                  .append(" · ").append(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf))
                   .append(" · ").append(e.freshCount).append(" 封新")
                   .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt));
                 if (e.claimed) sb.append(" · 已认领(").append(e.claimedBy).append(")");
@@ -6375,7 +6378,9 @@ public class ExpHubTools {
             if (i > 0) json.append(",");
             json.append("{\"threadId\":\"").append(jsonEscape(e.threadId))
                 .append("\",\"subject\":\"").append(jsonEscape(e.subject))
-                .append("\",\"from\":\"").append(jsonEscape(e.fromRole))
+                .append("\",\"from\":\"").append(jsonEscape(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf)))
+                .append("\",\"fromRole\":\"").append(jsonEscape(e.fromRole))
+                .append("\",\"onBehalfOf\":").append(e.onBehalfOf == null ? "null" : "\"" + jsonEscape(e.onBehalfOf) + "\"")
                 .append("\",\"type\":\"").append(jsonEscape(e.msgType))
                 .append("\",\"unread\":").append(e.freshCount)
                 .append(",\"lastId\":").append(e.latestId)
@@ -6396,7 +6401,10 @@ public class ExpHubTools {
                       + "**回信（带 inReplyTo）的收件人强制取父消息发件人**，不接受自选。"
                       + "收件人被拒时返回结构化的 rejectedRole / candidates / roleList / hint；"
                       + "**候选和名单只用于展示，调用方不得据此自动改写收件人并重发**（roleList 已是全量 ACTIVE 名单；也可用 mail_start(roles=true) 主动查）。"
-                      + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。")
+                      + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。"
+                      + "**代发 onBehalfOf**：只有【阁主】能以【越哥】的名义发信（其它角色传了会被明拒）。"
+                      + "真实发件人仍是阁主（回信按它路由、审计按它记），「越哥」只进展示与留痕；"
+                      + "收件侧显示「越哥（经阁主代发）」——**不是**密码学意义的身份证明，见回执说明。")
     public String mailSend(
             @ToolParam(description = "收件人：正名优先写汉字（如「烛龙」「重明鸟」）；拼音（zhulong）也收，"
                     + "会归一到汉字后入库。开新线程必填；回信（带 inReplyTo）可留空 —— "
@@ -6411,7 +6419,11 @@ public class ExpHubTools {
             @ToolParam(description = "可选。授权链根标识（≤64 字符），如 T261109035247-364 或调用方自定义链号。"
                     + "不传=这封信不属于任何授权链。传空白或超长会明拒，不会截断", required = false) String chainId,
             @ToolParam(description = "可选。true=这封是代理人自动回合发出的；false 或不传=人工发出（默认 false）", required = false) Boolean auto,
-            @ToolParam(description = "可选。授权链第几跳，非负整数，0=链根（默认 0）。传负数直接拒，不会静默归零", required = false) Integer depth) {
+            @ToolParam(description = "可选。授权链第几跳，非负整数，0=链根（默认 0）。传负数直接拒，不会静默归零", required = false) Integer depth,
+            @ToolParam(description = "可选。代发：以谁的名义发出。目前只允许「越哥」，且**只有声明角色是阁主时**才允许"
+                    + "（其它角色传了直接明拒，不会静默改成以自己名义发）。真实发件人仍是阁主 —— "
+                    + "回信路由与审计按它；本参数只影响收件侧展示（「越哥（经阁主代发）」）与留痕。"
+                    + "不传=不是代发（历史行为不变）", required = false) String onBehalfOf) {
         try {
             String me = mailRole(null);
             if (me == null) {
@@ -6419,8 +6431,8 @@ public class ExpHubTools {
                         + "` 头，服务端不知道该署谁的名。先配好角色再发。";
             }
             com.exphub.service.MailboxService.SendResult sent = mailboxService.sendDetailed(me, to, subject, body,
-                    inReplyTo, type, clientMsgId, MailIdentity.configSource(), chainId, auto, depth);
-            return renderSendReceipt(me, to, subject, body, sent, chainId, auto, depth);
+                    inReplyTo, type, clientMsgId, MailIdentity.configSource(), chainId, auto, depth, onBehalfOf);
+            return renderSendReceipt(me, to, subject, body, sent, chainId, auto, depth, onBehalfOf);
         } catch (SensitiveContentGuard.Rejected e) {
             return e.getMessage();
         } catch (IllegalArgumentException iae) {
@@ -6438,7 +6450,7 @@ public class ExpHubTools {
      */
     private String renderSendReceipt(String me, String to, String subject, String body,
                                      com.exphub.service.MailboxService.SendResult sent,
-                                     String chainId, Boolean auto, Integer depth) {
+                                     String chainId, Boolean auto, Integer depth, String onBehalfOf) {
         MailMessage m = sent.message();
         StringBuilder sb = new StringBuilder();
         if (sent.replayed()) {
@@ -6462,6 +6474,18 @@ public class ExpHubTools {
             // 两行固定格式、真发与回放**都给**（缺省只在一边出现，调用方就没法用「字段缺失」当判据）。
             sb.append("本次新建: 是（created=true）\n");
             sb.append("clientMsgId: ").append(describeClientMsgIdFromDb(m)).append("\n");
+            // 2026-11-14 阁主 W-20261114-09：代发必须自证「显示什么、真实是谁」。
+            // 只写「已以越哥名义发出」会让人以为 from_role 变了 —— 实际没有，回信仍回阁主。
+            if (m.getOnBehalfOf() != null && !m.getOnBehalfOf().isBlank()) {
+                sb.append("代发: 是 —— 收件侧显示「")
+                  .append(com.exphub.service.MailDelegation.display(m.getFromRole(), m.getOnBehalfOf()))
+                  .append("」；真实发件人仍是【").append(m.getFromRole())
+                  .append("】（回信按它路由、审计按它记，历史信一个字没动）\n");
+                sb.append("代发依据: 声明角色=阁主 + 配置来源 ")
+                  .append(MailIdentity.configSource() == null ? "（未记录）" : MailIdentity.configSource())
+                  .append("｜**这是委托信任，不是密码学鉴权**：ExpHub 只有一把共享 Key，"
+                          + "改角色头的人照样能自称阁主。要真隔离需给阁主独立 Key（凭证变更，需越哥定）\n");
+            }
             // 2026-11-09 阁主 P9 第 3 条：回信的收件人**取父消息发件人**（服务端强制），
             // 不再按入参入库 —— 旧行为下 to 写错的回信照样入库、线程里看得见，
             // 对方收件箱里却没有，发件方还以为送到了。这里回读库里的 to_role 自证。
@@ -6493,9 +6517,13 @@ public class ExpHubTools {
         sb.append("消息 #").append(old.getId()).append("，线程 ").append(old.getThreadId())
           .append("，类型 ").append(old.getMsgType())
           .append("，原发送时间 ").append(at).append("\n");
-        sb.append("库里那封：【").append(old.getFromRole()).append("】→【").append(old.getToRole())
+        sb.append("库里那封：【").append(com.exphub.service.MailDelegation.display(old.getFromRole(), old.getOnBehalfOf()))
+          .append("】→【").append(old.getToRole())
           .append("】，主题「").append(brief(old.getSubject(), 60)).append("」")
           .append("，正文 ").append(old.getBody() == null ? 0 : old.getBody().length()).append(" 字");
+        if (old.getOnBehalfOf() != null && !old.getOnBehalfOf().isBlank()) {
+            sb.append("（代发；真实发件人【").append(old.getFromRole()).append("】）");
+        }
         if (old.getInReplyTo() != null) sb.append("，回复 #").append(old.getInReplyTo());
         sb.append("\n");
 
@@ -6715,7 +6743,8 @@ public class ExpHubTools {
               .append("　本批 ").append(list.size()).append(" 封 / 共 ").append(total).append(" 封\n\n");
             for (MailMessage m : list) {
                 sb.append("---\n#").append(m.getId()).append(" [").append(m.getMsgType()).append("] ")
-                  .append(m.getFromRole()).append(" → ").append(m.getToRole())
+                  .append(com.exphub.service.MailDelegation.display(m.getFromRole(), m.getOnBehalfOf()))
+                  .append(" → ").append(m.getToRole())
                   .append(" · ").append(com.exphub.service.MailboxService.time(m.getCreatedAt()));
                 if (m.getConfigSourceId() != null) sb.append(" · 配置 ").append(m.getConfigSourceId());
                 appendChainMeta(sb, m);
@@ -6770,8 +6799,12 @@ public class ExpHubTools {
             sb.append("结果: 1 封\n");
             sb.append("消息 #").append(m.getId()).append("，线程 ").append(m.getThreadId())
               .append("，类型 ").append(m.getMsgType()).append("\n");
-            sb.append("发送【").append(m.getFromRole()).append("】→【").append(m.getToRole()).append("】· ")
+            sb.append("发送【").append(com.exphub.service.MailDelegation.display(m.getFromRole(), m.getOnBehalfOf()))
+              .append("】→【").append(m.getToRole()).append("】· ")
               .append(com.exphub.service.MailboxService.time(m.getCreatedAt())).append("\n");
+            if (m.getOnBehalfOf() != null && !m.getOnBehalfOf().isBlank()) {
+                sb.append("真实发件人: 【").append(m.getFromRole()).append("】（代发；回信按真实发件人路由）\n");
+            }
             sb.append("主题「").append(brief(m.getSubject(), 80)).append("」")
               .append("，正文 ").append(m.getBody() == null ? 0 : m.getBody().length()).append(" 字\n");
             if (m.getInReplyTo() != null) sb.append("回复 #").append(m.getInReplyTo()).append("\n");

@@ -36,6 +36,19 @@ public class MailMessage {
     /** 发件角色，服务端按当前配置来源填，不接受模型传入。 */
     private String fromRole;
 
+    /**
+     * 代发对象：即「以谁的名义发出」，{@code null}=不是代发（2026-11-14 阁主 W-20261114-09）。
+     *
+     * <p><b>为什么不直接把 {@code from_role} 写成「越哥」</b>：回信的收件人取
+     * <b>父消息发件人</b>（{@code MailboxService.sendDetailed} 的 inReplyTo 分支，且刻意不校验
+     * ACTIVE 名单，防止老线程卡死）。若派单信 {@code from_role=越哥}，收件哨兵的回信就会写成
+     * {@code to_role=越哥} —— 越哥没有信箱，回执变成**静默死信**。
+     * 所以真实发件人永远是「阁主」（路由 + 审计按它），「越哥」只落在这一列做展示。
+     *
+     * <p>老数据与不传时都是 {@code NULL}，读侧对 {@code NULL} 逐字保持原样（历史信一个字都不动）。
+     */
+    private String onBehalfOf;
+
     private String toRole;
 
     /** dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。 */
