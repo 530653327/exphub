@@ -16,9 +16,17 @@
 -- ---------------------------------------------------------------------------
 -- 第一步：备份（只做一次；表 250k 行 / 数据 33MB，整表快照秒级）
 -- ---------------------------------------------------------------------------
+-- ⚠️ 列必须显式列出，不能写 SELECT *：
+--    备份表在加 is_poll **之前**创建，后续重跑时主表多了一列，
+--    `INSERT ... SELECT *` 会报 ERROR 1136 Column count doesn't match（2026-11-15 首次部署实测）。
+--    显式列在加列前后都存在，重跑安全；备份的语义是「加列前的整表快照」，不含 is_poll 正好。
 CREATE TABLE IF NOT EXISTS `call_logs_bak_20261115` LIKE `call_logs`;
 INSERT INTO `call_logs_bak_20261115`
-SELECT * FROM `call_logs`
+    (id, api_key, caller_name, action, tool_name, cost_ms, success,
+     keyword, hit_count, doc_id, doc_title, detail, created_at)
+SELECT id, api_key, caller_name, action, tool_name, cost_ms, success,
+       keyword, hit_count, doc_id, doc_title, detail, created_at
+FROM `call_logs`
 WHERE NOT EXISTS (SELECT 1 FROM `call_logs_bak_20261115` LIMIT 1);
 
 -- ---------------------------------------------------------------------------
