@@ -247,12 +247,35 @@ public class MailboxService {
     public MailMessage send(String fromRole, String toRole, String subject, String body,
                             Long inReplyTo, String msgType, String clientMsgId,
                             String configSourceId) {
-        return send(fromRole, toRole, subject, body, inReplyTo, msgType, clientMsgId,
-                configSourceId, null, null, null);
+        return sendDetailed(fromRole, toRole, subject, body, inReplyTo, msgType, clientMsgId,
+                configSourceId, null, null, null).message();
     }
 
     /**
      * 发一封信（带可选的授权链元数据）。
+     *
+     * @see #sendDetailed 需要区分「真新建」与「幂等回放」时用 sendDetailed
+     */
+    public MailMessage send(String fromRole, String toRole, String subject, String body,
+                            Long inReplyTo, String msgType, String clientMsgId,
+                            String configSourceId, String chainId, Boolean auto, Integer depth) {
+        return sendDetailed(fromRole, toRole, subject, body, inReplyTo, msgType, clientMsgId,
+                configSourceId, chainId, auto, depth).message();
+    }
+
+    /**
+     * 发信结果。
+     *
+     * <p>{@code replayed=true} 表示<b>本次没有新建任何消息</b>，{@code message} 是数据库里那封
+     * 已经存在的旧信（幂等回放）。调用方必须能看见这个区别 —— 2026-11-14 阁主
+     * T261114082605-521 就是「回执说成功、收件人信箱里没信」：工具层把回放渲染成了与真发
+     * 一模一样的成功回执，忆阁据此把委托单推进到了 running。
+     */
+    public record SendResult(MailMessage message, boolean replayed) {
+    }
+
+    /**
+     * 发一封信，并告诉调用方「这次是真新建」还是「幂等回放」。
      *
      * <p><b>为什么加这三个字段</b>（阁主 T261109035247-364）：忆阁代理人模式要做授权链深度控制，
      * 但服务端原本既没有链字段、也分不出「代理自动回合发的信」和「阁主本人发的信」——
@@ -263,9 +286,9 @@ public class MailboxService {
      * @param auto    是否自动回合发出；null 视为 false
      * @param depth   当前跳数，null 视为 0；负数直接拒（不静默改成 0）
      */
-    public MailMessage send(String fromRole, String toRole, String subject, String body,
-                            Long inReplyTo, String msgType, String clientMsgId,
-                            String configSourceId, String chainId, Boolean auto, Integer depth) {
+    public SendResult sendDetailed(String fromRole, String toRole, String subject, String body,
+                                   Long inReplyTo, String msgType, String clientMsgId,
+                                   String configSourceId, String chainId, Boolean auto, Integer depth) {
         if (fromRole == null || fromRole.isBlank()) {
             throw new IllegalArgumentException("没有角色，发不了信：客户端配置里没有声明角色");
         }
@@ -293,12 +316,22 @@ public class MailboxService {
 
         // 幂等：重试不重复发（工具超时重试很常见）。放在收件人解析之前 ——
         // 重试命中时父消息已存在，没必要再跑一遍校验/解析。
+        //
+        // ⚠️ 2026-11-14 阁主 T261114082605-521：命中**不等于**「这次想发的这封已经发出去了」。
+        // uk_mail_client 是全局唯一、无过期时间的键，换用途/换发件人/换线程只要字符串撞上，
+        // 就会拿到一封毫不相干的旧信 —— 旧实现照样返回它，工具层渲染出与真发一封逐字相同的
+        // 「✅ 已发给…」，忆阁据此把单子推进到 running，而收件人信箱里没有新信（#1986 被
+        // dispatch:W-20261114-02 在 08:14 回放）。所以命中时先确认「确实是同一封信」。
         if (clientMsgId != null && !clientMsgId.isBlank()) {
             MailMessage exist = msgMapper.selectOne(new QueryWrapper<MailMessage>()
                     .eq("client_msg_id", clientMsgId).last("LIMIT 1"));
             if (exist != null) {
-                log.info("MailboxService.send: 幂等命中 clientMsgId={}, id={}", clientMsgId, exist.getId());
-                return exist;
+                assertReplayIsSameLetter(exist, from, rawTo, inReplyTo, clientMsgId);
+                // 日志也要能单独看出「没新建」：排障时只有 app.log 的人不能靠猜。
+                log.info("MailboxService.send: 幂等命中（本次未新建） clientMsgId={}, id={}, {} -> {}, thread={}",
+                        clientMsgId, exist.getId(), exist.getFromRole(), exist.getToRole(),
+                        exist.getThreadId());
+                return new SendResult(exist, true);
             }
         }
 
@@ -367,7 +400,51 @@ public class MailboxService {
         // 发件人自己的游标推到这条：自己写的不用再「未读」给自己
         advanceCursor(from, threadId, m.getId());
         log.info("MailboxService.send: {} -> {}, thread={}, id={}", from, toRole, threadId, m.getId());
-        return m;
+        return new SendResult(m, false);
+    }
+
+    /**
+     * 幂等命中时，确认「这条旧信就是这次想发的那封」。
+     *
+     * <p>三条硬冲突直接拒，<b>不静默返回别人的信</b>（AGENTS 9c：错误的输入宁可失败得刺眼）：
+     * <ol>
+     *   <li>发件人不同 —— 幂等键全局唯一，别人用过的键不能顶替我的信；</li>
+     *   <li>{@code inReplyTo} 不同 —— 回放一封「新开线程」的信来冒充回信，线程归属会全错；</li>
+     *   <li>收件人不同 —— 调用方以为发给了 A，实际返回的是发给 B 的旧信。</li>
+     * </ol>
+     * 主题/正文的差异不拒（重试时正文里可能带时间戳），但由工具层在回执里逐项点出来。
+     */
+    private void assertReplayIsSameLetter(MailMessage exist, String from, String rawTo,
+                                          Long inReplyTo, String clientMsgId) {
+        String existFrom = canonicalOrRaw(exist.getFromRole());
+        if (existFrom != null && !existFrom.equalsIgnoreCase(from)) {
+            throw new IllegalArgumentException("clientMsgId「" + clientMsgId + "」已被【"
+                    + exist.getFromRole() + "】用在消息 #" + exist.getId() + " 上，而这次发件人是【" + from
+                    + "】。幂等键是全局唯一的，不同发件人不能共用同一个键 —— 请换一个键重发（未发出任何信）。");
+        }
+        if (!java.util.Objects.equals(inReplyTo, exist.getInReplyTo())) {
+            throw new IllegalArgumentException("clientMsgId「" + clientMsgId + "」已用于消息 #" + exist.getId()
+                    + "（" + (exist.getInReplyTo() == null ? "新开线程" : "回复 #" + exist.getInReplyTo())
+                    + "，线程 " + exist.getThreadId() + "），而这次传的 inReplyTo 是 "
+                    + (inReplyTo == null ? "空（新开线程）" : "#" + inReplyTo)
+                    + "。同一个键只能重放同一封信 —— 要发不同的信请换新键（未发出任何信）。");
+        }
+        if (inReplyTo == null && rawTo != null && !rawTo.isBlank()) {
+            String given = canonicalOrRaw(rawTo);
+            String existTo = canonicalOrRaw(exist.getToRole());
+            if (given != null && existTo != null && !given.equalsIgnoreCase(existTo)) {
+                throw new IllegalArgumentException("clientMsgId「" + clientMsgId + "」已被用于发给【" + existTo
+                        + "】的消息 #" + exist.getId() + "，而这次 to 是【" + given
+                        + "】。幂等键只对应一封信，改收件人必须换键重发（未发出任何信）。");
+            }
+        }
+    }
+
+    /** 归一到正名；认不出的代号退回原样（trim 后），避免把「查不到」当成「没冲突」。 */
+    private String canonicalOrRaw(String role) {
+        if (role == null) return null;
+        String canon = canonicalRole(role);
+        return (canon == null || canon.isBlank()) ? role.trim() : canon;
     }
 
     private String newThreadId() {

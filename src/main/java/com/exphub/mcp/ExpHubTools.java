@@ -6388,7 +6388,9 @@ public class ExpHubTools {
 
     @Tool(name = "mail_send",
           description = "给另一个助手发信。**from 由服务端按当前角色填，不接受传入**；回信只传 inReplyTo，线程自动推导（没有 threadId 参数）。"
-                      + "消息只追加不可改，要纠错发一条 type=fix 引用原信。clientMsgId 做幂等，工具超时重试不会发两封。"
+                      + "消息只追加不可改，要纠错发一条 type=fix 引用原信。clientMsgId 做幂等，工具超时重试不会发两封；"
+                      + "**同键二次发送不会新建消息**，回执首行是「⚠️ 幂等命中」并报出原消息 id（这次请求与库里那封不一致时会逐项点出差异）。"
+                      + "键全局唯一且永久有效，同一键只对应它首次入库的那封信 —— 换内容、换收件人、换线程都必须换键。"
                       + "类型：dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。"
                       + "**收件人正名是汉字（如「烛龙」）；拼音（zhulong）和错拼（zhuolong）仍兼容，会归一到汉字并在回执里说明**。"
                       + "**回信（带 inReplyTo）的收件人强制取父消息发件人**，不接受自选。"
@@ -6403,7 +6405,9 @@ public class ExpHubTools {
             @ToolParam(description = "正文。建议不超过 8000 字，超了拆成多条；禁止写账号密码密钥") String body,
             @ToolParam(description = "可选。回信填父消息ID；不填=开新线程", required = false) Long inReplyTo,
             @ToolParam(description = "可选。类型：dispatch/receipt/accept/note/fix，默认 note", required = false) String type,
-            @ToolParam(description = "可选。幂等键。工具超时重试时带同一个值，不会重复发", required = false) String clientMsgId,
+            @ToolParam(description = "可选。幂等键。工具超时重试时带同一个值，不会重复发；"
+                    + "**同键二次调用不会新建消息**，回执会写明「幂等命中」并报原消息 id。键全局唯一、永久有效，"
+                    + "换内容/收件人/线程请换新键（沿用旧键只会回放旧信）", required = false) String clientMsgId,
             @ToolParam(description = "可选。授权链根标识（≤64 字符），如 T261109035247-364 或调用方自定义链号。"
                     + "不传=这封信不属于任何授权链。传空白或超长会明拒，不会截断", required = false) String chainId,
             @ToolParam(description = "可选。true=这封是代理人自动回合发出的；false 或不传=人工发出（默认 false）", required = false) Boolean auto,
@@ -6414,9 +6418,32 @@ public class ExpHubTools {
                 return "❌ 发不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE
                         + "` 头，服务端不知道该署谁的名。先配好角色再发。";
             }
-            MailMessage m = mailboxService.send(me, to, subject, body, inReplyTo, type, clientMsgId,
-                    MailIdentity.configSource(), chainId, auto, depth);
-            StringBuilder sb = new StringBuilder();
+            com.exphub.service.MailboxService.SendResult sent = mailboxService.sendDetailed(me, to, subject, body,
+                    inReplyTo, type, clientMsgId, MailIdentity.configSource(), chainId, auto, depth);
+            return renderSendReceipt(me, to, subject, body, sent, chainId, auto, depth);
+        } catch (SensitiveContentGuard.Rejected e) {
+            return e.getMessage();
+        } catch (IllegalArgumentException iae) {
+            return "❌ " + iae.getMessage();
+        } catch (Exception e) {
+            log.error("ExpHubTools.mailSend: FAILED", e);
+            return "发信失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /**
+     * mail_send 的回执渲染。**真新建与幂等回放必须长得不一样** ——
+     * 2026-11-14 阁主 T261114082605-521 的现场就是两者逐字相同：调用方拿到「✅ 已发给」，
+     * 把委托单推进到 running，收件人信箱里却没有任何新信（#1986 被 dispatch:W-20261114-02 回放）。
+     */
+    private String renderSendReceipt(String me, String to, String subject, String body,
+                                     com.exphub.service.MailboxService.SendResult sent,
+                                     String chainId, Boolean auto, Integer depth) {
+        MailMessage m = sent.message();
+        StringBuilder sb = new StringBuilder();
+        if (sent.replayed()) {
+            appendIdempotentReplayReceipt(sb, m, subject, body);
+        } else {
             sb.append("✅ 已以【").append(me).append("】");
             String cfg = MailIdentity.configSource();
             if (cfg != null) sb.append("（配置来源 ").append(cfg).append("）");
@@ -6440,21 +6467,66 @@ public class ExpHubTools {
                 sb.append("收件人取自父消息 #").append(m.getInReplyTo()).append(" 的发件人【")
                   .append(storedTo).append("】（回信不许自选收件人，避免 to 写错却照样入库）\n");
             }
-            // 传了授权链元数据 → 回读库里的实际值再报，不按入参复述（AGENTS 第 10 章）
-            if (chainId != null || auto != null || depth != null) {
-                appendChainMetadataReceipt(sb, m.getId(), chainId, auto, depth);
-            }
-            return sb.toString();
-        } catch (SensitiveContentGuard.Rejected e) {
-            return e.getMessage();
-        } catch (IllegalArgumentException iae) {
-            return "❌ " + iae.getMessage();
-        } catch (Exception e) {
-            log.error("ExpHubTools.mailSend: FAILED", e);
-            return "发信失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+        // 传了授权链元数据 → 回读库里的实际值再报，不按入参复述（AGENTS 第 10 章）
+        if (chainId != null || auto != null || depth != null) {
+            appendChainMetadataReceipt(sb, m.getId(), chainId, auto, depth);
+        }
+        return sb.toString();
     }
 
+    /**
+     * 幂等回放的回执：**首句就说「本次没有新建消息」**，并给出旧信的 id/线程/原时间，
+     * 让调用方能当场判断「这是重试成功」还是「键被复用了、这封根本没发出去」。
+     */
+    private void appendIdempotentReplayReceipt(StringBuilder sb, MailMessage old, String subject, String body) {
+        String at = old.getCreatedAt() == null ? "（库里未记录时间）"
+                : com.exphub.service.MailboxService.time(old.getCreatedAt());
+        sb.append("⚠️ 幂等命中：本次**没有新建消息**，一封新信也没有发出。\n");
+        sb.append("消息 #").append(old.getId()).append("，线程 ").append(old.getThreadId())
+          .append("，类型 ").append(old.getMsgType())
+          .append("，原发送时间 ").append(at).append("\n");
+        sb.append("库里那封：【").append(old.getFromRole()).append("】→【").append(old.getToRole())
+          .append("】，主题「").append(brief(old.getSubject(), 60)).append("」")
+          .append("，正文 ").append(old.getBody() == null ? 0 : old.getBody().length()).append(" 字");
+        if (old.getInReplyTo() != null) sb.append("，回复 #").append(old.getInReplyTo());
+        sb.append("\n");
+
+        // 同一键对应的旧信与本次请求不一样 → 这不是重试，是键被复用（这正是本次事故的形态）。
+        boolean subjectDiff = !java.util.Objects.equals(trimToNull(subject), trimToNull(old.getSubject()));
+        String reqBody = body == null ? "" : body;
+        String oldBody = old.getBody() == null ? "" : old.getBody();
+        boolean bodyDiff = !reqBody.equals(oldBody);
+        if (subjectDiff || bodyDiff) {
+            sb.append("⚠️ 本次请求与库里那封**不是同一封信**：");
+            if (subjectDiff) {
+                sb.append("主题不同（库里「").append(brief(old.getSubject(), 40))
+                  .append("」，本次「").append(brief(subject, 40)).append("」）");
+            }
+            if (bodyDiff) {
+                if (subjectDiff) sb.append("；");
+                sb.append("正文不同（库里 ").append(oldBody.length()).append(" 字，本次 ")
+                  .append(reqBody.length()).append(" 字）");
+            }
+            sb.append("。clientMsgId 只对应它首次入库的那封，换了内容沿用旧键永远不会发出去。\n");
+            sb.append("**要发这封新信，请换一个没被用过的 clientMsgId 重发。**\n");
+        } else {
+            sb.append("这封信与库里那封内容一致，是同一封的重试 —— 首次那次已经成功，不必再发。\n");
+        }
+        sb.append("**别把它当成「刚发出去」**：如果你要的是新消息（例如派单信），现在是没发出去的。\n");
+    }
+
+    private static String trimToNull(String s) {
+        if (s == null) return null;
+        String v = s.trim();
+        return v.isEmpty() ? null : v;
+    }
+
+    private static String brief(String s, int max) {
+        if (s == null) return "";
+        String v = s.trim().replace("\n", " ");
+        return v.length() <= max ? v : v.substring(0, max) + "…";
+    }
     /**
      * 授权链元数据的发信回执：<b>回读库里的值</b>再报，并把「默认值」与「幂等未覆盖」说清。
      *

@@ -34,7 +34,7 @@ public class HealthController {
     private DocMapper docMapper;
 
     /** 产品版本单一来源：exphub.version（MCP serverInfo 也读同一个值） */
-    @Value("${exphub.version:2.5.2}")
+    @Value("${exphub.version:2.5.3}")
     private String appVersion;
 
     @Value("${exphub.mcp.sse-heartbeat-seconds:30}")
