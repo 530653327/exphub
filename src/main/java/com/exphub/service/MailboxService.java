@@ -298,8 +298,10 @@ public class MailboxService {
      * @param chainId 授权链根标识；null=不属于任何授权链。传空白或超过 64 字符直接拒（不静默修正）
      * @param auto    是否自动回合发出；null 视为 false
      * @param depth   当前跳数，null 视为 0；负数直接拒（不静默改成 0）
-     * @param onBehalfOf 代发对象（目前只允许「越哥」，且只有阁主能填）；null/空白=不是代发。
+     * @param onBehalfOf 代发对象（目前只允许「越哥」，且声明角色须为阁主）；null/空白=不是代发。
      *                   非法值一律<b>明拒</b>，不静默丢弃、不改写成自己名义（AGENTS 9c）。
+     *                   ⚠️ 声明角色与配置来源都是客户端自报头，这道检查挡的是「哨兵配错角色/配错配置来源」
+     *                   这类真实误用，<b>不是鉴权</b>，挡不住改 http 头的人（见 {@link MailDelegation} 类注释）。
      */
     public SendResult sendDetailed(String fromRole, String toRole, String subject, String body,
                                    Long inReplyTo, String msgType, String clientMsgId,

@@ -80,8 +80,9 @@ exphub:
   # ⚠️ 这不是 pom.xml 的 Maven artifact 版本（仍是 1.0.0）：改 pom 会改 jar 文件名，
   #    而 systemd service 与 deploy.sh 里写死了 target/exphub-1.0.0.jar，一改就得
   #    同步服务器配置，否则线上服务起不来。产品版本单独放，改它零部署风险。
-  # 2.5.5 = 信箱代发（阁主 W-20261114-09）：mail_send 加 onBehalfOf（只有阁主能以「越哥」名义发，
-  #         真实 from_role 仍是阁主，所以回信路由与历史信不变）；新增列 mail_messages.on_behalf_of
+  # 2.5.5 = 信箱代发（阁主 W-20261114-09）：mail_send 加 onBehalfOf（按声明角色判定 ——
+  #         声明角色须为阁主，才能以「越哥」的名义发；角色头是自报的，这是配置归属检查不是鉴权，
+  #         挡不住改 http 头的人）；真实 from_role 仍是阁主，所以回信路由与历史信不变；新增列 mail_messages.on_behalf_of
   #         （NULL=不是代发）；收件侧显示「越哥（经阁主代发）」，JSON 增加 fromRole/onBehalfOf；
   #         幂等命中时 onBehalfOf 不同直接明拒。⚠️ 鉴权口径未变：仍是共享 Key + 自报角色头，
   #         这是委托信任、不是「只有忆阁」的密码学证明（#1540）；真隔离需每角色独立 Key。

@@ -120,6 +120,60 @@ class DelegationWordingGuardTest {
                 "2.5.5 说明里必须写明「鉴权口径未变 / 委托信任」，否则读的人以为代发带来了隔离：" + note);
     }
 
+    @Test
+    @DisplayName("注释与 yml 里也不许把代发写成排他断言（剥注释的扫描恰好漏掉这两处）")
+    void commentsAndYmlMustNotAssertExclusivity() throws IOException {
+        // 上一版只扫「剥注释后的代码字面量」，于是注释与 application.yml 成了盲区：
+        // 2026-11-14 复核时发现两处仍在写排他断言 ——
+        //   application.yml「只有阁主能以『越哥』名义发」
+        //   MailboxService 的 @param「且只有阁主能填」
+        // 阁主第 1 条的原话是「任何文档、**注释**、回执里都不许写成」，注释本身就在禁令范围内。
+        //
+        // 判定原则：**引号里的是被引用/被禁止的示例，引号外的是断言**。
+        // 所以先剥掉「…」引号跨度，再扫「只有…能以/能填/能代发」。
+        // 这样「不许写成『只有忆阁能代发』」这类反面引用不会被误报，而真断言一定抓得到。
+        java.util.regex.Pattern exclusive =
+                java.util.regex.Pattern.compile("只有[^。\\n]{0,15}(能以|能填|能代发)");
+
+        List<String> hits = new ArrayList<>();
+        for (Path p : List.of(MAIL_DELEGATION, MAILBOX_SERVICE, EXP_HUB_TOOLS, APP_YML)) {
+            String raw = Files.readString(p, StandardCharsets.UTF_8);
+            String[] lines = stripQuoted(raw).split("\n", -1);
+            for (int i = 0; i < lines.length; i++) {
+                if (exclusive.matcher(lines[i]).find()) {
+                    hits.add(p.getFileName() + ":" + (i + 1) + " → " + lines[i].trim());
+                }
+            }
+        }
+        assertTrue(hits.isEmpty(),
+                "代发权的边界必须写成「只接受…前缀 / 声明角色须为…」这类规则描述，"
+                        + "不许写成「只有 X 能」的排他断言（X 是自报头，挡不住改头的人）：\n  "
+                        + String.join("\n  ", hits));
+    }
+
+    /**
+     * 剥掉「…」引号跨度。用于区分「引用一个被禁止的说法」与「真的这样断言」。
+     *
+     * <p>只处理成对的直角引号；引号未闭合时保留原文（宁可误报，也不让断言漏网）。
+     */
+    static String stripQuoted(String src) {
+        StringBuilder out = new StringBuilder(src.length());
+        int i = 0;
+        while (i < src.length()) {
+            char c = src.charAt(i);
+            if (c == '「') {
+                int end = src.indexOf('」', i + 1);
+                if (end < 0) { out.append(src, i, src.length()); break; }
+                out.append('　'); // 占位，避免把两侧文字粘成一个新词
+                i = end + 1;
+            } else {
+                out.append(c);
+                i++;
+            }
+        }
+        return out.toString();
+    }
+
     // ------------------------------------------------------------------ 工具
 
     /**
