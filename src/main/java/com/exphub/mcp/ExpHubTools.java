@@ -6402,7 +6402,7 @@ public class ExpHubTools {
                       + "收件人被拒时返回结构化的 rejectedRole / candidates / roleList / hint；"
                       + "**候选和名单只用于展示，调用方不得据此自动改写收件人并重发**（roleList 已是全量 ACTIVE 名单；也可用 mail_start(roles=true) 主动查）。"
                       + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。"
-                      + "**代发 onBehalfOf**：只有【阁主】能以【越哥】的名义发信（其它角色传了会被明拒）。"
+                      + "**代发 onBehalfOf**：按声明角色判定 —— 声明角色是【阁主】才能以【越哥】的名义发信。"
                       + "真实发件人仍是阁主（回信按它路由、审计按它记），「越哥」只进展示与留痕；"
                       + "收件侧显示「越哥（经阁主代发）」——**不是**密码学意义的身份证明，见回执说明。")
     public String mailSend(
@@ -6420,7 +6420,7 @@ public class ExpHubTools {
                     + "不传=这封信不属于任何授权链。传空白或超长会明拒，不会截断", required = false) String chainId,
             @ToolParam(description = "可选。true=这封是代理人自动回合发出的；false 或不传=人工发出（默认 false）", required = false) Boolean auto,
             @ToolParam(description = "可选。授权链第几跳，非负整数，0=链根（默认 0）。传负数直接拒，不会静默归零", required = false) Integer depth,
-            @ToolParam(description = "可选。代发：以谁的名义发出。目前只允许「越哥」，且**只有声明角色是阁主时**才允许"
+            @ToolParam(description = "可选。代发：以谁的名义发出。目前只允许「越哥」，且**声明角色须为阁主**"
                     + "（其它角色传了直接明拒，不会静默改成以自己名义发）。真实发件人仍是阁主 —— "
                     + "回信路由与审计按它；本参数只影响收件侧展示（「越哥（经阁主代发）」）与留痕。"
                     + "不传=不是代发（历史行为不变）", required = false) String onBehalfOf) {
