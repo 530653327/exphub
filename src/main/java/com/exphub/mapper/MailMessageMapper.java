@@ -22,6 +22,25 @@ public interface MailMessageMapper extends BaseMapper<MailMessage> {
     long countThreads();
 
     /**
+     * 按委托单号取该单全部关联线程（2026-11-14 阁主 W-20261114-12）。
+     *
+     * <p>"同一单支持多根线程（正式派单线、补发线、哨兵补发线等），封存必须覆盖全部，
+     * 不能只封主线程" —— 这里就是「全部」的口径：只要该线程里有一封信解析出了这个单号，
+     * 它就算这单的线程。order_no 由发信时解析落库（见 MailThreadSealService.orderNoOf）。
+     */
+    @Select("SELECT DISTINCT thread_id FROM mail_messages WHERE order_no = #{orderNo}")
+    List<String> selectThreadIdsByOrderNo(@Param("orderNo") String orderNo);
+
+    /**
+     * 某根线程里最大的消息 id（2026-11-14 W-20261114-12 封存水位用）。
+     *
+     * <p>封存时把它记成 {@code seal_from_id}：id 大于它的不再唤醒，小于等于它的仍唤醒一次 ——
+     * 触发封存的那封（通常是 delivered 回执）必须还能叫醒收件人一次，否则验收那一步永远推进不了。
+     */
+    @Select("SELECT MAX(id) FROM mail_messages WHERE thread_id = #{threadId}")
+    Long selectMaxIdByThread(@Param("threadId") String threadId);
+
+    /**
      * 原子认领：以<b>受影响行数</b>判胜负。
      *
      * <p>两条会话并发认领时，「谁先到」在应用层判不出来 —— 时序没有先后。

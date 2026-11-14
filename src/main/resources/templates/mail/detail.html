@@ -100,6 +100,50 @@
         </div>
     </div>
 
+    <div class="card mb-3" th:if="${sealState != null}">
+        <div class="card-body py-3">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6 class="mb-1">
+                        <i class="fas fa-lock mr-1" style="color:#b26a00"></i>
+                        线程封存状态：<strong th:text="${sealState.state == 'SEALED' ? '已封存（不唤醒）' : '已解锁（正常唤醒）'}"></strong>
+                    </h6>
+                    <div class="hint">
+                        单号 <span th:text="${sealState.orderNo != null ? sealState.orderNo : '（未标注）'}"></span>
+                        · 封存 <span th:text="${sealState.sealedAt != null ? #temporals.format(sealState.sealedAt, 'MM-dd HH:mm') : '-'}"></span>
+                        由 <span th:text="${sealState.sealedBy != null ? sealState.sealedBy : '-'}"></span>
+                        <span th:if="${sealState.sealReason != null}" th:text="'，原因：' + ${sealState.sealReason}"></span>
+                    </div>
+                    <div class="hint" th:if="${sealState.unsealedAt != null}">
+                        最近解锁 <span th:text="${#temporals.format(sealState.unsealedAt, 'MM-dd HH:mm')}"></span>
+                        由 <span th:text="${sealState.unsealedBy != null ? sealState.unsealedBy : '-'}"></span>
+                    </div>
+                    <div class="hint mt-1">
+                        封存只影响**唤醒源**：新信照常入库、照常可读，但不会叫醒任何人。
+                    </div>
+                </div>
+                <div th:if="${sealState.state == 'SEALED'}">
+                    <form th:action="@{'/mail/thread/' + ${threadId} + '/unseal'}" method="post" class="form-inline">
+                        <input type="hidden" name="back" th:value="@{'/mail/' + ${current.id}}">
+                        <input type="text" class="form-control form-control-sm mr-2" name="note"
+                               placeholder="解锁原因（写进留痕）" style="width:180px">
+                        <button type="submit" class="btn btn-sm btn-outline-success">
+                            <i class="fas fa-unlock mr-1"></i>解除封存
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="mt-2" th:if="${sealLog != null and not #lists.isEmpty(sealLog)}">
+                <div class="hint">留痕（最近 [[${#lists.size(sealLog)}]] 条）：
+                    <span th:each="l, it : ${sealLog}">
+                        <span th:if="${!it.first}">；</span>
+                        <span th:text="${l.action + ' by ' + l.actor + ' @ ' + #temporals.format(l.createdAt, 'MM-dd HH:mm')}"></span>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="hint mb-2">
         同一根线程的全部消息（按时间先后）。只看单封判断不了「回执到了没」，所以这里不按游标截断。
     </div>

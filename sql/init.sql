@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS mail_messages (
     in_reply_to      BIGINT       NULL     COMMENT '父消息ID；有值即回信',
     from_role        VARCHAR(32)  NOT NULL COMMENT '发件角色，服务端填',
     on_behalf_of     VARCHAR(32)  NULL     COMMENT '代发对象（如 越哥）；NULL=不是代发，真实发件人仍在 from_role',
+    order_no         VARCHAR(32)  NULL     COMMENT '所属委托单号（发信时从正文首部「单号: W-YYYYMMDD-NN」解析）；NULL=不属于任何单或历史信未回填',
     to_role          VARCHAR(32)  NOT NULL COMMENT '收件角色',
     msg_type         VARCHAR(16)  NOT NULL DEFAULT 'note' COMMENT 'dispatch/receipt/accept/note/fix',
     subject          VARCHAR(200) NOT NULL,
@@ -255,7 +256,8 @@ CREATE TABLE IF NOT EXISTS mail_messages (
     created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_mail_client (client_msg_id),
     KEY idx_mail_to (to_role, id),
-    KEY idx_mail_thread (thread_id, id)
+    KEY idx_mail_thread (thread_id, id),
+    KEY idx_mail_order (order_no, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='助手间信箱消息（只追加）';
 
 CREATE TABLE IF NOT EXISTS mail_cursors (
@@ -265,6 +267,51 @@ CREATE TABLE IF NOT EXISTS mail_cursors (
     updated_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (role, thread_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='信箱阅读游标';
+
+-- 线程封存（2026-11-14 阁主 W-20261114-12）：SEALED 线程不进唤醒源，信照常入库可见。
+-- 行不删：state='OPEN' 的行本身就是「曾经被封存过、谁在什么时候解的」审计证据。
+CREATE TABLE IF NOT EXISTS mail_thread_states (
+    thread_id    VARCHAR(32)  NOT NULL,
+    order_no     VARCHAR(32)  NULL,
+    state        VARCHAR(16)  NOT NULL DEFAULT 'SEALED' COMMENT 'SEALED=已封存（不进唤醒源）/ OPEN=已解锁',
+    seal_from_id BIGINT       NOT NULL DEFAULT 0 COMMENT '封存水位：id 大于它的消息不再唤醒；<= 它的（含触发封存的回执）仍唤醒一次',
+    sealed_at    DATETIME     NULL,
+    sealed_by    VARCHAR(64)  NULL,
+    seal_reason  VARCHAR(255) NULL,
+    unsealed_at  DATETIME     NULL,
+    unsealed_by  VARCHAR(64)  NULL,
+    unseal_note  VARCHAR(255) NULL,
+    updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (thread_id),
+    KEY idx_mts_order (order_no, state)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='信箱线程封存状态（SEALED 不进唤醒源；不删行，行即审计）';
+
+-- 封存/解锁留痕（只追加）：解锁动作要能查到「谁解的、什么时候、哪根线程」。
+CREATE TABLE IF NOT EXISTS mail_thread_state_log (
+    id         BIGINT      PRIMARY KEY AUTO_INCREMENT,
+    thread_id  VARCHAR(32) NOT NULL,
+    order_no   VARCHAR(32) NULL,
+    action     VARCHAR(16) NOT NULL COMMENT 'SEAL / UNSEAL',
+    actor      VARCHAR(64) NOT NULL,
+    note       VARCHAR(500) NULL,
+    created_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_mtsl_thread (thread_id, id),
+    KEY idx_mtsl_order (order_no, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='信箱线程封存/解锁留痕（只追加）';
+
+-- 唤醒去重账本：键 = 单号 + clientMsgId；窗口内不二次唤醒，窗口外放行重试（不制造静默死信）。
+CREATE TABLE IF NOT EXISTS mail_wake_offers (
+    dedupe_key       VARCHAR(160) NOT NULL COMMENT 'order_no|client_msg_id',
+    order_no         VARCHAR(32)  NOT NULL,
+    client_msg_id    VARCHAR(64)  NOT NULL,
+    thread_id        VARCHAR(32)  NOT NULL,
+    message_id       BIGINT       NOT NULL,
+    first_offered_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_offered_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    offer_count      INT          NOT NULL DEFAULT 1,
+    PRIMARY KEY (dedupe_key),
+    KEY idx_mwo_msg (message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='唤醒去重账本（单号+clientMsgId，窗口内不二次唤醒）';
 
 -- ============================================================
 -- 15/16. 信箱角色清单（2026-11-09，阁主 #255 P9 定案 · A+B 合并；#679 正名改汉字）

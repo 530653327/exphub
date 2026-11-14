@@ -80,7 +80,12 @@ class OnUpdateColumnGuardTest {
      * 修改时间改由 {@code DocTemplateController.update} 显式写入。
      * 现在两边一致，删表再重建也不会出现行为差异。新增条目会立刻让下面那条测试变红。
      */
-    private static final Map<String, String> KNOWN_DDL_ONLY = Map.of();
+    private static final Map<String, String> KNOWN_DDL_ONLY = Map.of(
+            // 2026-11-14 W-20261114-12：mail_thread_states 是这一单新建的表，本单发版=否，
+            // 线上还没有它（因此不在 LIVE_ON_UPDATE 里）。部署后线上与 DDL 同构，
+            // 届时把这条从本清单移到 LIVE_ON_UPDATE —— 这一步不做，本用例会红着提醒。
+            "mail_thread_states.updated_at",
+            "2026-11-14 新建表尚未部署；ON UPDATE 与 mail_cursors/mail_roles 同口径，部署后即同构");
 
     /**
      * 历史脚本的豁免：它们**不在** deploy 的自动执行范围里。

@@ -133,7 +133,9 @@ class MailSendDelegationReceiptTest {
         MailIdentity.set("zhulong", "cfg-zhulong-opencode-mac");
         when(mailboxService.canonicalRole("zhulong")).thenReturn("烛龙");
         when(mailboxService.unreadCount("烛龙")).thenReturn(1);
-        when(mailboxService.inbox(eq("烛龙"), isNull(), anyInt(), eq(false))).thenReturn(List.of(env));
+        MailboxService.WakeFeed feed = new MailboxService.WakeFeed();
+        feed.items.add(env);
+        when(mailboxService.wakeFeed(eq("烛龙"), anyInt())).thenReturn(feed);
 
         // unreadOnly 分支带末行 JSON（默认分支本来就不印 JSON，别拿它验 JSON）
         String r = tools.mailStart(null, null, null, null, true, null, null, null, null);

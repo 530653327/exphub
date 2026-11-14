@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.exphub.entity.MailCursor;
 import com.exphub.entity.MailMessage;
+import com.exphub.entity.MailThreadState;
 import com.exphub.mapper.MailCursorMapper;
 import com.exphub.mapper.MailMessageMapper;
 import com.exphub.util.SensitiveContentGuard;
@@ -67,6 +68,16 @@ public class MailboxService {
      */
     @Autowired
     private MailRoleCatalog roleCatalog;
+
+    /**
+     * 线程封存 + 唤醒去重（2026-11-14 阁主 W-20261114-12）。
+     *
+     * <p>{@code required = false}：本类在单测里是 {@code new MailboxService()} 直接构造的，
+     * 注入不进来时所有封存/去重逻辑都必须<b>降级成「未封存、不去重」</b>，
+     * 不能让老测试因为多了一个协作对象就 NPE（那会把「新增能力」变成「改坏既有行为」）。
+     */
+    @Autowired(required = false)
+    private MailThreadSealService sealService;
 
     /**
      * 授权链标识的长度上限，<b>与 {@code mail_messages.chain_id VARCHAR(64)} 对齐</b>。
@@ -421,6 +432,15 @@ public class MailboxService {
         m.setChainId(chain);
         m.setAutoFlag(autoRound);
         m.setChainDepth(hop);
+        // 2026-11-14 阁主 W-20261114-12：从正文首部解析委托单号落库。
+        // 解析不到就是 NULL（不属于任何单），绝不猜 —— 猜错会把别的单的线程一起封掉。
+        if (sealService != null) {
+            try {
+                m.setOrderNo(MailThreadSealService.orderNoOf(subject, body));
+            } catch (Exception e) {
+                log.warn("解析委托单号失败（不影响发信，按无单号处理）: {}", e.toString());
+            }
+        }
         msgMapper.insert(m);
 
         // 发件人自己的游标推到这条：自己写的不用再「未读」给自己
@@ -599,6 +619,36 @@ public class MailboxService {
         public int freshCount;   // 游标之后的新消息数
         public boolean claimed;
         public String claimedBy;
+        /** 该线程已封存（2026-11-14 W-20261114-12）：信照常可见，但不进唤醒源。 */
+        public boolean sealed;
+        /** 该线程标注的委托单号（可能为 NULL = 未标注）。 */
+        public String orderNo;
+        public String sealedBy;
+        public java.time.LocalDateTime sealedAt;
+    }
+
+    /**
+     * 给一批信封补上封存状态（一次批量查询，不做 N+1）。
+     *
+     * <p>降级策略：封存表读不到时<b>一律按未封存</b>处理 —— 宁可多唤醒一次，
+     * 也不要把所有人的信箱在故障期静默封死。
+     */
+    private void fillSealInfo(List<Envelope> out) {
+        if (out == null || out.isEmpty() || sealService == null) return;
+        try {
+            for (Envelope e : out) {
+                MailThreadState s = sealService.stateOf(e.threadId);
+                if (s == null) continue;
+                e.orderNo = s.getOrderNo();
+                e.sealed = MailThreadSealService.ST_SEALED.equals(s.getState());
+                if (e.sealed) {
+                    e.sealedBy = s.getSealedBy();
+                    e.sealedAt = s.getSealedAt();
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("补充封存状态失败（按未封存展示）: {}", ex.toString());
+        }
     }
 
     /**
@@ -675,6 +725,7 @@ public class MailboxService {
 
         out.sort(Comparator.comparingLong((Envelope x) -> idOfThread(x.threadId, byThread, latestMine)).reversed());
         if (out.size() > limit) out = out.subList(0, limit);
+        fillSealInfo(out);
         return out;
     }
 
@@ -822,6 +873,7 @@ public class MailboxService {
         out.sort(Comparator.comparingLong((Envelope x) -> x.latestId).reversed());
         page.matched = out.size();
         if (out.size() > limit) out = new ArrayList<>(out.subList(0, limit));
+        fillSealInfo(out);
         page.items.addAll(out);
         if (!out.isEmpty()) {
             page.nextBeforeId = out.get(out.size() - 1).latestId;
@@ -839,6 +891,164 @@ public class MailboxService {
         for (MailMessage m : a) if (m.getId() != null && m.getId() < min) min = m.getId();
         for (MailMessage m : b) if (m.getId() != null && m.getId() < min) min = m.getId();
         return min == Long.MAX_VALUE ? null : min;
+    }
+
+    /**
+     * 唤醒源视图（2026-11-14 阁主 W-20261114-12）。
+     *
+     * <p><b>ExpHub 不做唤醒，只提供唤醒源</b>：唤醒回合由忆阁的唤醒扫描按
+     * {@code mail_start(unreadOnly=true)} 的 items 决定要不要起。所以「封存后不再唤醒」在这里的
+     * 落地方式就是<b>把已封存线程挡在 items 之外</b>，而不是去改任何人的回合逻辑。
+     *
+     * <p>三件事一起做，且都是<b>显式计数</b>（不许静默丢）：
+     * <ol>
+     *   <li>已封存线程 → 不计入唤醒源，计入 {@code sealedThreads / sealedMessages}；</li>
+     *   <li>同一「单号 + clientMsgId」在去重窗口内重复出现 → 不计入唤醒源，计入
+     *       {@code dedupedThreads / dedupedMessages}（防异常重扫，见
+     *       {@link MailThreadSealService#claimWakeOffer}）；</li>
+     *   <li>去重窗口已过的重试 → 正常放行，计入 {@code retriedMessages}。</li>
+     * </ol>
+     * 被封存/被去重挡下的信**仍然在信箱里**：默认列表、includeRead 分页、mail_thread 都能读，
+     * 只是不再进唤醒源。
+     */
+    public static class WakeFeed {
+        public final List<Envelope> items = new ArrayList<>();
+        public int sealedThreads;
+        public int sealedMessages;
+        public final List<String> sealedThreadIds = new ArrayList<>();
+        public int dedupedThreads;
+        public int dedupedMessages;
+        public final List<String> dedupedThreadIds = new ArrayList<>();
+        /** 去重窗口已过、本次放行重试的消息数。 */
+        public int retriedMessages;
+        /** 本次被去重吞掉的消息数（= 各线程 deduped 之和）。 */
+        public int suppressedMessages;
+        /** 已封存、但「触发封存的那封」仍会唤醒一次的线程数（设计如此，要报出来）。 */
+        public int sealedTriggerThreads;
+        /** 已封存线程里被水位挡下的消息数。 */
+        public int sealedSuppressedMessages;
+        public final List<String> sealedTriggerThreadIds = new ArrayList<>();
+    }
+
+    public WakeFeed wakeFeed(String role, int limit) {
+        WakeFeed feed = new WakeFeed();
+        if (role == null || role.isBlank()) return feed;
+        Set<String> meVariants = roleVariants(role);
+        if (meVariants.isEmpty()) return feed;
+
+        List<MailMessage> all = msgMapper.selectList(new QueryWrapper<MailMessage>()
+                .in("to_role", meVariants)
+                .orderByDesc("id")
+                .last("LIMIT " + SCAN_BATCH));
+        if (all.isEmpty()) return feed;
+        List<MailMessage> mine = msgMapper.selectList(new QueryWrapper<MailMessage>()
+                .in("from_role", meVariants)
+                .orderByDesc("id")
+                .last("LIMIT " + SCAN_BATCH));
+
+        Map<String, List<MailMessage>> byThread = new LinkedHashMap<>();
+        for (MailMessage m : all) {
+            byThread.computeIfAbsent(m.getThreadId(), k -> new ArrayList<>()).add(m);
+        }
+        Map<String, MailMessage> latestMine = new LinkedHashMap<>();
+        for (MailMessage m : mine) latestMine.putIfAbsent(m.getThreadId(), m);
+
+        Map<String, Long> sealed;
+        try {
+            sealed = sealService == null ? Map.of() : sealService.sealedWatermarks();
+        } catch (Exception e) {
+            log.warn("读封存线程失败，本次按未封存处理: {}", e.toString());
+            sealed = Map.of();
+        }
+
+        List<Envelope> out = new ArrayList<>();
+        for (Map.Entry<String, List<MailMessage>> e : byThread.entrySet()) {
+            String threadId = e.getKey();
+            List<MailMessage> msgs = e.getValue();
+            long cursor = cursorOf(role.trim(), threadId);
+            List<MailMessage> fresh = new ArrayList<>();
+            for (MailMessage m : msgs) {
+                if (m.getId() != null && m.getId() > cursor) fresh.add(m);
+            }
+            if (fresh.isEmpty()) continue;
+
+            boolean sealedThread = sealed.containsKey(threadId);
+            int sealedAbove = 0;
+            if (sealedThread) {
+                // 封存水位：id 大于水位的不再唤醒；id 小于等于水位的（含触发封存的那封回执）
+                // 仍唤醒一次 —— 一刀切会把交付回执本身吞掉，验收那一步就永远推进不了。
+                long watermark = sealed.get(threadId) == null ? 0L : sealed.get(threadId);
+                List<MailMessage> aboveWatermark = new ArrayList<>();
+                List<MailMessage> atWatermark = new ArrayList<>();
+                for (MailMessage m : fresh) {
+                    if (m.getId() != null && m.getId() > watermark) aboveWatermark.add(m);
+                    else atWatermark.add(m);
+                }
+                sealedAbove = aboveWatermark.size();
+                feed.sealedMessages += sealedAbove;
+                if (atWatermark.isEmpty()) {
+                    feed.sealedThreads++;
+                    feed.sealedThreadIds.add(threadId);
+                    continue;
+                }
+                fresh = atWatermark;
+            }
+
+            int offered = 0;
+            int suppressed = 0;
+            int retried = 0;
+            for (MailMessage m : fresh) {
+                MailThreadSealService.WakeOffer verdict = sealService == null
+                        ? MailThreadSealService.WakeOffer.FIRST
+                        : sealService.claimWakeOffer(m.getOrderNo(), m.getClientMsgId(), threadId, m.getId());
+                if (verdict == MailThreadSealService.WakeOffer.SUPPRESSED) {
+                    suppressed++;
+                    continue;
+                }
+                if (verdict == MailThreadSealService.WakeOffer.RETRY) retried++;
+                offered++;
+            }
+            feed.suppressedMessages += suppressed;
+            feed.retriedMessages += retried;
+            if (offered == 0) {
+                feed.dedupedThreads++;
+                feed.dedupedMessages += suppressed;
+                feed.dedupedThreadIds.add(threadId);
+                continue;
+            }
+            if (sealedThread) {
+                // 只有真的会唤醒时才记「触发封存的那封仍唤醒一次」—— 被去重吞掉的不能算。
+                feed.sealedTriggerThreads++;
+                feed.sealedTriggerThreadIds.add(threadId);
+                feed.sealedSuppressedMessages += sealedAbove;
+            }
+
+            MailMessage latest = msgs.get(0);
+            MailMessage mineInThread = latestMine.get(threadId);
+            MailMessage newestAny = latest;
+            if (mineInThread != null && mineInThread.getId() > newestAny.getId()) newestAny = mineInThread;
+
+            Envelope env = new Envelope();
+            env.threadId = threadId;
+            env.subject = latest.getSubject();
+            env.fromRole = latest.getFromRole();
+            env.onBehalfOf = latest.getOnBehalfOf();
+            env.toRole = latest.getToRole();
+            env.msgType = latest.getMsgType();
+            env.latestAt = newestAny.getCreatedAt();
+            env.latestSnippet = snippet(newestAny.getBody());
+            env.latestId = Math.max(latest.getId(), mineInThread == null ? 0L : mineInThread.getId());
+            env.freshCount = offered;
+            env.claimed = latest.getClaimedBy() != null;
+            env.claimedBy = latest.getClaimedBy();
+            env.orderNo = latest.getOrderNo();
+            out.add(env);
+        }
+
+        out.sort(Comparator.comparingLong((Envelope x) -> x.latestId).reversed());
+        if (out.size() > limit) out = new ArrayList<>(out.subList(0, limit));
+        feed.items.addAll(out);
+        return feed;
     }
 
     /**
@@ -890,6 +1100,7 @@ public class MailboxService {
             out.add(env);
         }
         if (out.size() > limit) out = out.subList(0, limit);
+        fillSealInfo(out);
         return out;
     }
 

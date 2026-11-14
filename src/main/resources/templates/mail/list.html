@@ -92,6 +92,10 @@
         </div>
     </div>
 
+    <div th:if="${sealMsg != null and sealMsg != ''}" class="alert alert-info py-2">
+        <i class="fas fa-lock mr-1"></i>[[${sealMsg}]]
+    </div>
+
     <form class="filter-bar" method="get" th:action="@{/mail}">
         <div class="form-row align-items-end">
             <div class="col-md-2 mb-2">
@@ -121,17 +125,79 @@
                     <option value="fix" th:selected="${type == 'fix'}">更正</option>
                 </select>
             </div>
-            <div class="col-md-3 mb-2">
+            <div class="col-md-2 mb-2">
                 <label class="hint mb-1">关键词（主题 / 正文 / 线程号）</label>
                 <input type="text" class="form-control form-control-sm" name="keyword"
                        th:value="${keyword}" placeholder="如 部署、信箱、T2611">
             </div>
-            <div class="col-md-3 mb-2">
+            <div class="col-md-2 mb-2">
+                <label class="hint mb-1">委托单号（order_no）</label>
+                <input type="text" class="form-control form-control-sm" name="orderNo"
+                       th:value="${orderNo}" placeholder="W-20261114-06">
+            </div>
+            <div class="col-md-2 mb-2">
                 <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-search mr-1"></i>查询</button>
                 <a th:href="@{/mail}" class="btn btn-sm btn-outline-secondary ml-1">重置</a>
             </div>
         </div>
     </form>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h6 class="mb-2"><i class="fas fa-lock mr-1" style="color:#b26a00"></i>线程封存
+                <span class="hint ml-2">封存 = 不再唤醒任何人；信照常入库、照常可读。解锁动作留痕（谁/何时/哪根线程）。</span>
+            </h6>
+            <form th:action="@{/mail/seal}" method="post" class="form-row align-items-end mb-3">
+                <div class="col-md-2 mb-2">
+                    <label class="hint mb-1">委托单号（必填）</label>
+                    <input type="text" class="form-control form-control-sm" name="orderNo"
+                           placeholder="W-20261114-06" required>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="hint mb-1">补录线程号（逗号分隔，可选 —— 历史信没有单号时用它）</label>
+                    <input type="text" class="form-control form-control-sm" name="threadIds"
+                           placeholder="T261114085627-xxx,T261114091830-yyy">
+                </div>
+                <div class="col-md-3 mb-2">
+                    <label class="hint mb-1">原因（写进留痕）</label>
+                    <input type="text" class="form-control form-control-sm" name="note"
+                           placeholder="单已转待验收">
+                </div>
+                <div class="col-md-2 mb-2">
+                    <button type="submit" class="btn btn-sm btn-warning">封存</button>
+                </div>
+            </form>
+            <div th:if="${#lists.isEmpty(sealedRecent)}" class="hint">当前没有处于封存态的线程。</div>
+            <table class="table table-sm mb-0" th:unless="${#lists.isEmpty(sealedRecent)}">
+                <thead class="thead-light">
+                <tr>
+                    <th style="width:230px">线程</th>
+                    <th style="width:150px">单号</th>
+                    <th style="width:150px">封存</th>
+                    <th>原因</th>
+                    <th style="width:210px">解锁</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="s : ${sealedRecent}">
+                    <td><span class="role-chip">[[${s.threadId}]]</span></td>
+                    <td class="hint">[[${s.orderNo != null ? s.orderNo : '（未标注）'}]]</td>
+                    <td class="hint">[[${s.sealedAt != null ? #temporals.format(s.sealedAt, 'MM-dd HH:mm') : '-'}]]
+                        · [[${s.sealedBy != null ? s.sealedBy : '-'}]]</td>
+                    <td class="hint">[[${s.sealReason != null ? s.sealReason : '-'}]]</td>
+                    <td>
+                        <form th:action="@{'/mail/thread/' + ${s.threadId} + '/unseal'}" method="post"
+                              class="form-inline" style="gap:6px">
+                            <input type="text" class="form-control form-control-sm" name="note"
+                                   placeholder="解锁原因（写进留痕）" style="width:120px">
+                            <button type="submit" class="btn btn-sm btn-outline-success">解锁</button>
+                        </form>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
     <div class="card">
         <div class="table-responsive">
@@ -173,7 +239,13 @@
                         <div class="subject">[[${m.subject}]]</div>
                         <div class="snippet" th:text="${#strings.abbreviate(m.body != null ? m.body.replaceAll('\\s+',' ') : '', 110)}"></div>
                     </td>
-                    <td><span class="role-chip">[[${m.threadId}]]</span></td>
+                    <td>
+                        <span class="role-chip">[[${m.threadId}]]</span>
+                        <div th:if="${sealStates != null and sealStates.containsKey(m.threadId) and sealStates.get(m.threadId).state == 'SEALED'}"
+                             class="hint mt-1" style="color:#b26a00">
+                            <i class="fas fa-lock mr-1"></i>已封存（不唤醒）
+                        </div>
+                    </td>
                     <td>
                         <span th:if="${readState[m.id]}" class="state-done">
                             <i class="fas fa-envelope-open mr-1"></i>已读

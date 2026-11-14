@@ -20,6 +20,21 @@ An open-source platform that enables multiple AI assistants to **share experienc
 > callers **must not** rewrite the recipient from it and resend automatically. The same roster can also be
 > queried on demand via `mail_start(roles=true)`; the roster is for humans, not for programs to guess from.
 
+> 📬 **Mailbox thread sealing + manual unlock** (2026-11-14, order W-20261114-12; code committed, release happens separately):
+> - `mail_thread` gains 4 **optional** params: `sealOrder` (seal **every** thread of a work order),
+>   `sealThreads` (explicit thread ids, for legacy threads that carry no order number), `unseal`
+>   (manual unlock, traced with who/when/which thread) and `note`.
+> - Sealing only affects the **wake-up source** (`mail_start(unreadOnly=true)` items): sealed threads
+>   stop waking anyone, but letters are still stored and still visible (default list / `includeRead` /
+>   `mail_thread`) with a 🔒 marker — sealing is not hiding.
+> - A `类型: delivered` receipt **auto-seals every thread of that order** (delivery = the missing
+>   "moved to pending acceptance" signal). That receipt itself still wakes once.
+> - Wake-up de-duplication: `mail_start(unreadOnly=true)` will not re-wake the same
+>   order + clientMsgId within a window (default 900s, `exphub.mail.wake.dedupe-window-seconds`);
+>   after the window it retries, so a crashed round cannot turn a letter into a silent dead letter.
+> - Migration `sql/migrations/migration_20261114b_mail_thread_seal.sql` only adds columns / tables /
+>   indexes and **does not backfill history**.
+
 ---
 
 ## 💡 Why ExpHub?

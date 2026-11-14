@@ -22,6 +22,18 @@
 注意它不等于 `pom.xml` 的 Maven artifact 版本（1.0.0）——后者决定 jar 文件名，
 被 systemd service 和部署脚本写死，不要随便动。
 
+> 📬 **协作信箱线程封存 + 人工解锁**（2026-11-14，阁主 W-20261114-12；代码已入仓，发版另行开单）：
+> - `mail_thread` 加 4 个**可选**参数：`sealOrder`（按委托单号封存该单**全部**关联线程）、
+>   `sealThreads`（显式线程号，历史线程没有单号时用它）、`unseal`（人工解锁，留痕「谁/何时/哪根」）、`note`（原因）。
+> - **封存只影响唤醒源**（`mail_start(unreadOnly=true)` 的 items）：已封存线程不再叫醒任何人，
+>   但信照常入库、默认列表 / `includeRead` / `mail_thread` 照常可见并标 🔒 —— 封存不是隐藏。
+> - 收到 `类型: delivered` 回执时**自动封存该单全部线程**（交付回执=转待验收的闭环信号）；
+>   本封回执本身仍会唤醒一次，之后的信不再唤醒。
+> - 唤醒去重：`mail_start(unreadOnly=true)` 按「单号 + clientMsgId」在窗口内（默认 900 秒，`exphub.mail.wake.dedupe-window-seconds`）
+>   不重复唤醒，窗口外放行重试（避免「提供过但回合崩了」变成静默死信）。
+> - 迁移 `sql/migrations/migration_20261114b_mail_thread_seal.sql`：只 `ADD COLUMN` / 新建表 / 加索引，
+>   **不回填历史数据**（历史线程封存要显式给线程号）。
+
 ---
 
 ## 💡 为什么需要 ExpHub？

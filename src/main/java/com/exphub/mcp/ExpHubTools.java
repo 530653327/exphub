@@ -98,6 +98,15 @@ public class ExpHubTools {
     private com.exphub.service.MailboxService mailboxService;
 
     /**
+     * 线程封存 + 唤醒去重（2026-11-14 阁主 W-20261114-12）。
+     *
+     * <p>{@code required = false}：本类在若干单元测试里是直接 new + 反射注入的，
+     * 没有它时必须降级（未封存、不去重），不能让「新增能力」把老用例打成 NPE。
+     */
+    @Autowired(required = false)
+    private com.exphub.service.MailThreadSealService mailSealService;
+
+    /**
      * 获取当前调用者权限信息
      */
     private AiAssistant getCaller() {
@@ -6098,9 +6107,11 @@ public class ExpHubTools {
             @ToolParam(description = "可选。角色兜底（汉字正名或拼音别名都行，服务端会归一成汉字）。优先用客户端配置的 x-exphub-role；只有客户端带不了 header 时才传", required = false) String role,
             @ToolParam(description = "可选。true=发件视角（我发出去的，列出收件人）；**默认 false**，不传就是收件视角。"
                     + "发信方自查「到底发给了谁」用它 —— 收件视角永远看不到自己发的信", required = false) Boolean sent,
-            @ToolParam(description = "可选。true=**只读未读摘要**：只给线程数/消息数/每根的主题类型，"
-                    + "**不含正文摘要**，不推游标、不改任何状态（调多次结果一样）。外部系统做未读角标用它，"
-                    + "默认 false 行为不变", required = false) Boolean unreadOnly,
+            @ToolParam(description = "可选。true=**只读未读摘要（同时是唤醒源视图）**：只给线程数/消息数/每根的主题类型，"
+                    + "**不含正文摘要**，不推游标、不改已读状态。⚠️ 2026-11-14 起：**已封存线程**与"
+                    + "「同一单 + clientMsgId 在去重窗口内已投递过」的重复信**不进 items**（封存=不再唤醒），"
+                    + "回执会分别报根数/封数并列出线程号 —— 信仍在信箱里（默认列表 / includeRead 可读）。"
+                    + "外部系统做未读角标用它，默认 false 行为不变", required = false) Boolean unreadOnly,
             @ToolParam(description = "可选。true=**按需查全量角色名单**：只列当前 status=ACTIVE 的角色（汉字正名），"
                     + "停用与待复核不出现；不读信封、不推游标。拒绝响应本身已带全量名单，"
                     + "这个入口用于主动查询；**名单只用于展示，不得据此自动改写收件人并重发**", required = false) Boolean roles,
@@ -6186,21 +6197,40 @@ public class ExpHubTools {
             }
 
             // 2026-11-08（越哥批准走「改现有工具」而不是加第 51 个）：只读未读摘要，供忆阁做角标。
-            // 幂等的根本原因：只走 inbox（内部只调 cursorOf 读游标），全程没有 advanceCursor。
+            // 幂等的根本原因：只走 cursorOf 读游标，全程没有 advanceCursor。
+            //
+            // ⚠️ 2026-11-14 阁主 W-20261114-12：这个分支同时是**唤醒源**（忆阁唤醒扫描就按它的
+            // items 决定要不要起回合）。所以它从「纯只读」变成「读 + 唤醒去重记账」：
+            //   ① 已封存线程不进 items（封存 = 不再唤醒，信仍在信箱里可见）；
+            //   ② 同一「单号 + clientMsgId」在去重窗口内重复出现只算一次（防异常重扫）。
+            // 两者都必须**显式报数**，不许让读者自己去猜「为什么少了几封」。
             if (Boolean.TRUE.equals(unreadOnly)) {
-                List<com.exphub.service.MailboxService.Envelope> un =
-                        mailboxService.inbox(me, null, lim, false);
+                com.exphub.service.MailboxService.WakeFeed feed = mailboxService.wakeFeed(me, lim);
+                List<com.exphub.service.MailboxService.Envelope> un = feed.items;
                 // 2026-11-10 阁主 #634：续写必须在首行那句话里，不许另起一行让标点顶到行首。
                 continueIdentityLine(sb);
                 sb.append("；只读模式\n");
-                if (un.isEmpty()) {
+
+                int wakeableMessages = un.stream().mapToInt(x -> x.freshCount).sum();
+                if (un.isEmpty() && feed.sealedThreads == 0 && feed.dedupedThreads == 0) {
                     sb.append("📭 没有未读。\n");
                     sb.append("{\"threads\":0,\"messages\":0,\"items\":[]}\n");
                     return sb.toString();
                 }
-                sb.append("\n📬 未读：").append(un.size()).append(" 根线程 / ").append(unread).append(" 封消息\n");
+                if (un.isEmpty()) {
+                    sb.append("📭 没有可唤醒的新信。\n");
+                } else {
+                    sb.append("\n📬 可唤醒（唤醒源视图）：").append(un.size()).append(" 根线程 / ")
+                      .append(wakeableMessages).append(" 封消息\n");
+                }
                 StringBuilder json = new StringBuilder("{\"threads\":").append(un.size())
-                        .append(",\"messages\":").append(unread).append(",\"items\":[");
+                        .append(",\"messages\":").append(wakeableMessages)
+                        .append(",\"sealedThreads\":").append(feed.sealedThreads)
+                        .append(",\"sealedMessages\":").append(feed.sealedMessages)
+                        .append(",\"sealedTriggerThreads\":").append(feed.sealedTriggerThreads)
+                        .append(",\"dedupedThreads\":").append(feed.dedupedThreads)
+                        .append(",\"dedupedMessages\":").append(feed.dedupedMessages)
+                        .append(",\"items\":[");
                 for (int i = 0; i < un.size(); i++) {
                     com.exphub.service.MailboxService.Envelope e = un.get(i);
                     if (i > 0) json.append(",");
@@ -6209,18 +6239,49 @@ public class ExpHubTools {
                         .append("\",\"from\":\"").append(jsonEscape(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf)))
                         .append("\",\"fromRole\":\"").append(jsonEscape(e.fromRole))
                         .append("\",\"onBehalfOf\":").append(e.onBehalfOf == null ? "null" : "\"" + jsonEscape(e.onBehalfOf) + "\"")
-                        .append("\",\"type\":\"").append(jsonEscape(e.msgType))
+                        .append(",\"type\":\"").append(jsonEscape(e.msgType))
                         .append("\",\"unread\":").append(e.freshCount)
+                        .append(",\"orderNo\":").append(e.orderNo == null ? "null" : "\"" + jsonEscape(e.orderNo) + "\"")
                         .append(",\"lastAt\":\"")
                         .append(jsonEscape(com.exphub.service.MailboxService.time(e.latestAt)))
                         .append("\"}");
                     sb.append("- [").append(e.threadId).append("] ").append(e.msgType)
                       .append(" · ").append(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf)).append(" · ").append(e.freshCount).append(" 封新")
-                      .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt)).append("\n");
-                    sb.append("  「").append(e.subject).append("」\n");
+                      .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt));
+                    if (e.orderNo != null) sb.append(" · 单号 ").append(e.orderNo);
+                    sb.append("\n  「").append(e.subject).append("」\n");
                 }
                 json.append("]}");
-                sb.append("\n> 只读：不推游标、不改任何状态，重复调用结果逐字相同。不含正文摘要。\n");
+                // 「封存」与「去重」两行：只在真的发生了才印，且把线程/封数一起摆出来。
+                if (feed.sealedThreads > 0) {
+                    sb.append("\n🔒 另有 ").append(feed.sealedThreads).append(" 根已封存线程 / ")
+                      .append(feed.sealedMessages).append(" 封新信**不计入唤醒**：");
+                    sb.append(String.join("、", feed.sealedThreadIds.stream().limit(8)
+                            .map(t -> "[" + t + "]").collect(java.util.stream.Collectors.toList())));
+                    if (feed.sealedThreadIds.size() > 8) sb.append(" 等 ").append(feed.sealedThreadIds.size()).append(" 根");
+                    sb.append("\n   信仍在信箱里（默认列表 / includeRead / mail_thread 都能读），只是不再叫醒你。");
+                    sb.append("要恢复唤醒：`mail_thread(threadId=…, unseal=true, note=\"…\")`。\n");
+                }
+                if (feed.sealedTriggerThreads > 0) {
+                    sb.append("\n🔓 另有 ").append(feed.sealedTriggerThreads)
+                      .append(" 根已封存线程里「触发封存的那封」本次仍会各唤醒一次（设计如此：交付回执必须叫醒收件人一次）：");
+                    sb.append(String.join("、", feed.sealedTriggerThreadIds.stream().limit(8)
+                            .map(t -> "[" + t + "]").collect(java.util.stream.Collectors.toList())));
+                    if (feed.sealedTriggerThreadIds.size() > 8) sb.append(" 等 ").append(feed.sealedTriggerThreadIds.size()).append(" 根");
+                    sb.append("；之后该线程的新信不再唤醒。\n");
+                }
+                if (feed.dedupedThreads > 0) {
+                    sb.append("\n⏭ 另有 ").append(feed.dedupedThreads).append(" 根线程 / ")
+                      .append(feed.dedupedMessages).append(" 封新信在**唤醒去重窗口**内（同一单 + clientMsgId 已投递过），本次不重复唤醒：");
+                    sb.append(String.join("、", feed.dedupedThreadIds.stream().limit(8)
+                            .map(t -> "[" + t + "]").collect(java.util.stream.Collectors.toList())));
+                    if (feed.dedupedThreadIds.size() > 8) sb.append(" 等 ").append(feed.dedupedThreadIds.size()).append(" 根");
+                    sb.append("\n   窗口过期后仍会重试（不会永久吞信）；要立刻看，用 mail_thread 直接展开。\n");
+                }
+                if (feed.retriedMessages > 0) {
+                    sb.append("\n↻ 本次有 ").append(feed.retriedMessages).append(" 封是**去重窗口已过**后重试投递的。\n");
+                }
+                sb.append("\n> 只读：不推游标、不改已读状态；唯一的记账是唤醒去重账本（同单同 clientMsgId 窗口内不二次唤醒）。不含正文摘要。\n");
                 sb.append(json).append("\n");
                 return sb.toString();
             }
@@ -6267,6 +6328,7 @@ public class ExpHubTools {
                       .append(" · ").append(e.freshCount).append(" 封新")
                       .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt))
                       .append(" · 最新 #").append(e.latestId);
+                    if (e.sealed) sb.append(" · 🔒 已封存").append(e.orderNo == null ? "" : "（单号 " + e.orderNo + "）");
                     if (e.claimed) sb.append(" · 已认领(").append(e.claimedBy).append(")");
                     sb.append("\n  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
                 }
@@ -6318,6 +6380,7 @@ public class ExpHubTools {
                   .append(" · ").append(com.exphub.service.MailDelegation.display(e.fromRole, e.onBehalfOf))
                   .append(" · ").append(e.freshCount).append(" 封新")
                   .append(" · ").append(com.exphub.service.MailboxService.time(e.latestAt));
+                if (e.sealed) sb.append(" · 🔒 已封存").append(e.orderNo == null ? "" : "（单号 " + e.orderNo + "）");
                 if (e.claimed) sb.append(" · 已认领(").append(e.claimedBy).append(")");
                 sb.append("\n  「").append(e.subject).append("」").append(e.latestSnippet).append("\n");
             }
@@ -6402,6 +6465,10 @@ public class ExpHubTools {
                       + "收件人被拒时返回结构化的 rejectedRole / candidates / roleList / hint；"
                       + "**候选和名单只用于展示，调用方不得据此自动改写收件人并重发**（roleList 已是全量 ACTIVE 名单；也可用 mail_start(roles=true) 主动查）。"
                       + "可选的授权链元数据 chainId/auto/depth **只记录、不推导**：服务端分不出自动回合与本人生成的信，只能由调用方自报。"
+                      + "**委托单号从正文首部解析**：正文前 15 行里的 `单号: W-YYYYMMDD-NN` 会落库成 order_no，"
+                      + "用于「按单号封存该单全部线程」与唤醒去重；主题里出现单号也会被识别。解析不到就是没有单号（不猜）。"
+                      + "**收到 `类型: delivered` 回执时自动封存该单全部线程**（交付回执=转待验收的闭环信号），"
+                      + "封存后这些线程不再唤醒任何人，但本封仍会唤醒一次；往已封存线程发信时回执会明确提示「不会唤醒」。"
                       + "**代发 onBehalfOf**：按声明角色判定 —— 声明角色是【阁主】才能以【越哥】的名义发信。"
                       + "真实发件人仍是阁主（回信按它路由、审计按它记），「越哥」只进展示与留痕；"
                       + "收件侧显示「越哥（经阁主代发）」——**不是**密码学意义的身份证明，见回执说明。")
@@ -6432,7 +6499,8 @@ public class ExpHubTools {
             }
             com.exphub.service.MailboxService.SendResult sent = mailboxService.sendDetailed(me, to, subject, body,
                     inReplyTo, type, clientMsgId, MailIdentity.configSource(), chainId, auto, depth, onBehalfOf);
-            return renderSendReceipt(me, to, subject, body, sent, chainId, auto, depth, onBehalfOf);
+            String receipt = renderSendReceipt(me, to, subject, body, sent, chainId, auto, depth, onBehalfOf);
+            return receipt + appendSealAfterSend(me, sent);
         } catch (SensitiveContentGuard.Rejected e) {
             return e.getMessage();
         } catch (IllegalArgumentException iae) {
@@ -6441,6 +6509,66 @@ public class ExpHubTools {
             log.error("ExpHubTools.mailSend: FAILED", e);
             return "发信失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * 发信之后的两件封存相关的事（2026-11-14 阁主 W-20261114-12）：
+     *
+     * <ol>
+     *   <li><b>告诉发件方「这封信不会唤醒对方」</b> —— 往已封存线程里发信仍然入库、仍然可见，
+     *       但不再触发唤醒。不写这一句，发件方会以为对方被叫醒了，跟 W-06 那批空回执是同一个坑。</li>
+     *   <li><b>delivered 回执自动封存</b> —— 交付回执 = 该单转待验收的闭环信号，
+     *       自动把该单<b>全部</b>线程封存（这正是「单到待验收后没有任何闭环信号」缺的那一步）。</li>
+     * </ol>
+     *
+     * <p><b>副作用纪律（AGENTS 第 2 章）</b>：封存失败只降级成一行提示 + WARN，
+     * 绝不能让「发信」因为封存出错而失败 —— 信已经入库了，回执也不能装作没发出去。
+     */
+    private String appendSealAfterSend(String me, com.exphub.service.MailboxService.SendResult sent) {
+        if (mailSealService == null || sent == null || sent.message() == null) return "";
+        StringBuilder sb = new StringBuilder();
+        com.exphub.entity.MailMessage m = sent.message();
+        try {
+            if (mailSealService.isSealed(m.getThreadId())) {
+                sb.append("🔒 该线程已封存").append(m.getOrderNo() == null ? "" : "（单号 " + m.getOrderNo() + "）")
+                  .append("：这封信已入库、收件人信箱里能看到，但**不会触发唤醒**。")
+                  .append("要对方处理请先解锁：`mail_thread(threadId=\"").append(m.getThreadId())
+                  .append("\", unseal=true, note=\"为什么要恢复\")`\n");
+            }
+        } catch (Exception e) {
+            log.warn("发信后读封存状态失败（不提示）: {}", e.toString());
+        }
+        if (sent.replayed()) return sb.toString();
+        try {
+            com.exphub.service.MailThreadSealService.AutoSealOutcome auto =
+                    mailSealService.autoSealIfDelivered(m);
+            if (auto != null && auto.outcome() != null) {
+                com.exphub.service.MailThreadSealService.SealOutcome o = auto.outcome();
+                sb.append("🔒 收到 `类型: delivered` 回执（该单转待验收）→ 处理单 ").append(auto.orderNo())
+                  .append(" 的关联线程：新封 ").append(o.sealed().size()).append(" 根");
+                if (!o.alreadySealed().isEmpty()) sb.append("、原已封 ").append(o.alreadySealed().size()).append(" 根");
+                if (!o.skippedHumanOpen().isEmpty()) {
+                    sb.append("、**人工解锁过、自动封存不覆盖** ").append(o.skippedHumanOpen().size()).append(" 根");
+                }
+                if (!o.notFound().isEmpty()) sb.append("、线程不存在 ").append(o.notFound().size()).append(" 根");
+                sb.append("\n");
+                if (o.sealed().isEmpty() && o.alreadySealed().isEmpty()
+                        && o.notFound().isEmpty() && o.orderThreads().isEmpty()) {
+                    sb.append("⚠️ 该单在库里查不到任何线程（历史信没有 order_no），本次没封到东西 —— ")
+                      .append("要封老线程请用 `mail_thread(sealOrder=\"…\", sealThreads=\"线程号,…\")` 显式补录。\n");
+                }
+                if (o.sealed().isEmpty() && !o.skippedHumanOpen().isEmpty()) {
+                    sb.append("ℹ️ 该单的线程此前被人**显式解锁**过，自动封存按设计不覆盖人工动作。")
+                      .append("要重新封存请显式调 `mail_thread(sealOrder=\"").append(auto.orderNo()).append("\", note=\"…\")`。\n");
+                }
+                sb.append("> 这些线程之后不再唤醒任何人；**本封回执本身仍会唤醒一次**（它就是触发封存的那封）。")
+                  .append("恢复唤醒用 mail_thread(unseal=true)。\n");
+            }
+        } catch (Exception e) {
+            log.warn("delivered 回执自动封存失败（不影响发信）: {}", e.toString());
+            sb.append("⚠️ 自动封存失败（不影响这封信入库）：").append(e.getMessage()).append("\n");
+        }
+        return sb.toString();
     }
 
     /**
@@ -6622,12 +6750,28 @@ public class ExpHubTools {
         }
     }
 
+    /**
+     * 兼容重载：老的 8 参形态（封存相关参数全空）。
+     *
+     * <p>保留它是为了让既有调用点与既有单测一个字都不用改 —— 新加的封存/解锁参数全部默认空，
+     * 行为与改动前逐字一致。MCP 暴露的仍然是下面那个带 {@code @Tool} 的 12 参签名。
+     */
+    public String mailThread(String threadId, String clientMsgId, Boolean full, Integer limit,
+                             String ackIds, Long claimId, Boolean peek, Long advanceTo) {
+        return mailThread(threadId, clientMsgId, full, limit, ackIds, claimId, peek, advanceTo,
+                null, null, null, null);
+    }
+
     @Tool(name = "mail_thread",
           description = "展开一根线程。默认只给**游标之后的新消息**（最多 10 条），full=true 才从头分页回溯。"
                       + "读完服务端自动推游标 —— 同样的参数不用再调一次，不会重复给同一批。"
                       + "peek=true 则只读：推游标由调用方用 advanceTo 显式确认，适合「读成功才算读过」的自动唤醒。"
                       + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ackIds 只记「处理过」，不参与去重。"
                       + "带授权链元数据的消息会在头部回显 链/第几跳/自动或人工（没有元数据的历史消息不多印一个字）。"
+                      + "**线程封存（2026-11-14 W-20261114-12）**：`sealOrder` 按委托单号封存该单全部关联线程、"
+                      + "`sealThreads` 封存指定线程（老线程没有单号时用它）、`unseal=true` 人工解锁本线程 —— "
+                      + "封存只把线程挡在**唤醒源**外（不再叫醒任何人），信照常入库、照常可读；解锁留痕（谁/何时/哪根）。"
+                      + "封存/解锁是维护动作：不返回正文、不推游标，也不接受和 peek/full/advanceTo/claimId/ackIds/clientMsgId 混传。"
                       + "**也可以按幂等键查单条消息**：传 clientMsgId（与 threadId 二选一）就按 mail_messages.client_msg_id 查，"
                       + "回执给消息 id / 线程 / 创建时间 / 发件人→收件人 / 类型 / 主题 / 正文字数；键没落库会明说。"
                       + "该分支纯只读：不推游标、不改任何状态，也不接受 full/peek/advanceTo/claimId/ackIds。")
@@ -6645,8 +6789,30 @@ public class ExpHubTools {
                     + "与 advanceTo 互斥。默认 false 行为不变", required = false) Boolean peek,
             @ToolParam(description = "可选。把游标显式推进到这条消息ID，**不返回正文**（peek 之后的确认步）。"
                     + "只接受本线程里真实存在的消息ID，且只前进不后退；跨线程的ID会被拒。"
-                    + "目标之后还有几封会写在回执里", required = false) Long advanceTo) {
+                    + "目标之后还有几封会写在回执里", required = false) Long advanceTo,
+            @ToolParam(description = "可选。**按委托单号封存该单全部线程**（2026-11-14 W-20261114-12）："
+                    + "封存后这些线程不再进唤醒源（不再叫醒任何人），但信照常入库、在信箱里照常可见。"
+                    + "传单号（W-YYYYMMDD-NN）；与 unseal 互斥，且不能和 peek/full/advanceTo/claimId/ackIds/clientMsgId 同传。"
+                    + "这是维护动作：不返回正文，只回封存清单。", required = false) String sealOrder,
+            @ToolParam(description = "可选。**封存指定线程**（逗号分隔，与 sealOrder 一起用时是补录没有单号的历史线程）。"
+                    + "历史信没有 order_no（本单不回填历史数据），所以老线程要显式给线程号才封得住。",
+                    required = false) String sealThreads,
+            @ToolParam(description = "可选。true=**解除本线程封存**（人工解锁入口，与 sealOrder/sealThreads 互斥）："
+                    + "解锁后该线程恢复正常唤醒，并留痕（谁解的、什么时候、备注）。必须与 threadId 一起用。",
+                    required = false) Boolean unseal,
+            @ToolParam(description = "可选。封存/解锁的原因或备注，写进留痕（建议写清「为什么」——"
+                    + "W-06 那次事故就是事后分不清哪封信是重扫唤醒的）。", required = false) String note) {
         try {
+            // ---------- 2026-11-14 阁主 W-20261114-12：线程封存 / 人工解锁（维护动作） ----------
+            // 说明：这里只做「封存状态」的读写，**不动任何信件**（消息只追加的纪律不变）。
+            boolean sealByOrder = sealOrder != null && !sealOrder.isBlank();
+            boolean sealByIds = sealThreads != null && !sealThreads.isBlank();
+            boolean unsealMode = Boolean.TRUE.equals(unseal);
+            if (sealByOrder || sealByIds || unsealMode) {
+                return handleThreadSeal(threadId, sealOrder, sealThreads, unsealMode, note,
+                        clientMsgId, peek, full, advanceTo, claimId, ackIds);
+            }
+
             // 参数自身的错误先判：这些分支不需要读名单（mailRole 会归一角色，可能触发一次清单读取），
             // 「缺 threadId」「peek 与 advanceTo 互斥」应当在碰任何信箱数据之前就拒掉。
             String key = clientMsgId == null ? null : clientMsgId.trim();
@@ -6733,11 +6899,13 @@ public class ExpHubTools {
             List<MailMessage> list = mailboxService.thread(me, threadId.trim(), backfill, lim, peekMode);
             long total = mailboxService.countThread(threadId.trim());
 
+            StringBuilder sb = new StringBuilder(head);
+            appendSealBanner(sb, threadId.trim());
             if (list.isEmpty()) {
-                return head + "📭 这根线程没有新消息（游标已到头，共 " + total + " 封）。要重看历史传 `full=true`。";
+                sb.append("📭 这根线程没有新消息（游标已到头，共 ").append(total).append(" 封）。要重看历史传 `full=true`。");
+                return sb.toString();
             }
 
-            StringBuilder sb = new StringBuilder(head);
             sb.append("📬 线程 ").append(threadId.trim())
               .append("「").append(mailboxService.threadSubject(threadId.trim())).append("」")
               .append("　本批 ").append(list.size()).append(" 封 / 共 ").append(total).append(" 封\n\n");
@@ -6772,6 +6940,179 @@ public class ExpHubTools {
         } catch (Exception e) {
             log.error("ExpHubTools.mailThread: FAILED", e);
             return "读线程失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    /**
+     * 线程封存 / 人工解锁（2026-11-14 阁主 W-20261114-12）。
+     *
+     * <p><b>为什么挂在 mail_thread 上而不是新开一个工具</b>：MCP 工具总数在 50 冻结（红线 13），
+     * 而封存就是「对某根线程的一次维护动作」，与 claimId / advanceTo / ackIds 同族 ——
+     * 加参数是这条红线允许的唯一方向。
+     *
+     * <p><b>口径</b>：封存只影响<b>唤醒源</b>（{@code mail_start(unreadOnly=true)} 的 items）。
+     * 信照常入库、在信箱里照常可见 —— 不然「封存之后真需要追加说明时对方看不到」，
+     * 那就比现在的多回话更难查（阁主原话）。
+     */
+    private String handleThreadSeal(String threadId, String sealOrder, String sealThreads, boolean unsealMode,
+                                    String note, String clientMsgId, Boolean peek, Boolean full,
+                                    Long advanceTo, Long claimId, String ackIds) {
+        if (mailSealService == null) {
+            return "❌ 封存服务不可用（服务端未装配 MailThreadSealService）—— 本次没有做任何改动。";
+        }
+        String me = mailRole(null);
+        if (me == null) {
+            return "❌ 做不了：客户端配置里没有 `" + MailIdentity.HEADER_ROLE + "` 头，服务端不知道该署谁的名。";
+        }
+        boolean sealByOrder = sealOrder != null && !sealOrder.isBlank();
+        boolean sealByIds = sealThreads != null && !sealThreads.isBlank();
+        if (unsealMode && (sealByOrder || sealByIds)) {
+            return "❌ unseal 与 sealOrder/sealThreads 互斥：一次只能做一个方向（封存 or 解锁），"
+                    + "免得回执里两个动作的结论互相覆盖。";
+        }
+        String conflict = clientMsgId != null && !clientMsgId.isBlank() ? "clientMsgId"
+                : Boolean.TRUE.equals(peek) ? "peek"
+                : Boolean.TRUE.equals(full) ? "full"
+                : advanceTo != null ? "advanceTo"
+                : claimId != null ? "claimId"
+                : (ackIds != null && !ackIds.isBlank()) ? "ackIds" : null;
+        if (conflict != null) {
+            return "❌ 封存/解锁是维护动作，不能和 " + conflict + " 同传"
+                    + "（它不返回正文、不推游标、不认领）。要读线程请单独调一次 mail_thread。";
+        }
+
+        if (unsealMode) {
+            if (threadId == null || threadId.isBlank()) {
+                return "❌ unseal 必须带 threadId：解锁是按「某根线程」解的，不接受按单号一次解全部"
+                        + "（那等于把封存的意义抹掉）。";
+            }
+            String tid = threadId.trim();
+            com.exphub.service.MailThreadSealService.UnsealOutcome r =
+                    mailSealService.unseal(tid, me, note);
+            StringBuilder sb = new StringBuilder();
+            if (!r.changed()) {
+                sb.append("ℹ️ 没有发生变更：").append(r.detail()).append("\n");
+            } else {
+                sb.append("🔓 已解锁线程 ").append(tid).append("\n");
+            }
+            com.exphub.entity.MailThreadState st = r.state();
+            if (st != null) {
+                sb.append("- 单号: ").append(st.getOrderNo() == null ? "（未标注）" : st.getOrderNo()).append("\n");
+                sb.append("- 当前状态: ").append(st.getState()).append("（SEALED=已封存 / OPEN=已解锁）\n");
+                if (st.getSealedAt() != null) {
+                    sb.append("- 封存: ").append(com.exphub.service.MailboxService.time(st.getSealedAt()))
+                      .append(" 由 ").append(st.getSealedBy() == null ? "（未记录）" : st.getSealedBy()).append("\n");
+                }
+                if (st.getUnsealedAt() != null) {
+                    sb.append("- 解锁: ").append(com.exphub.service.MailboxService.time(st.getUnsealedAt()))
+                      .append(" 由 ").append(st.getUnsealedBy() == null ? "（未记录）" : st.getUnsealedBy())
+                      .append(st.getUnsealNote() == null ? "" : "（备注：" + st.getUnsealNote() + "）").append("\n");
+                }
+            }
+            if (r.changed()) {
+                long left = mailboxService.countAfterCursor(me, threadId.trim());
+                sb.append("> 你（").append(me).append("）在这根线程里还有 ").append(left)
+                  .append(" 封未读：解锁后下一轮唤醒会一并处理（只想看新的，先 mail_thread 读一遍即可）。\n");
+            }
+            appendSealLog(sb, threadId.trim());
+            sb.append("> 留痕：谁解的、什么时候、哪根线程都记在 mail_thread_state_log，后台 /mail 页面可查。\n");
+            return sb.toString();
+        }
+
+        List<String> extra = new ArrayList<>();
+        if (sealByIds) {
+            for (String t : sealThreads.split("[,，\\s]+")) {
+                if (!t.isBlank()) extra.add(t.trim());
+            }
+        }
+        String orderNo = null;
+        if (sealByOrder) {
+            String raw = sealOrder.trim();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("W-\\d{8}-\\d{1,3}")
+                    .matcher(raw.toUpperCase());
+            if (!m.find()) {
+                return "❌ 单号格式不对：ExpHub 实际收到「" + raw + "」，认的是 W-YYYYMMDD-NN"
+                        + "（如 W-20261114-12）。不猜、不改写 —— 单号写错会把别的单的线程一起封掉。";
+            }
+            orderNo = m.group();
+        }
+        if (orderNo == null && extra.isEmpty()) {
+            return "❌ 要封存什么还没说清：传 sealOrder（按单号封全部线程）或 sealThreads（显式线程号）。";
+        }
+        if (threadId != null && !threadId.isBlank()) extra.add(threadId.trim());
+
+        com.exphub.service.MailThreadSealService.SealOutcome r = orderNo == null
+                ? mailSealService.sealThreads(extra, null, null, me, note, false)
+                : mailSealService.sealOrder(orderNo, extra, me, note, false);
+        StringBuilder sb = new StringBuilder();
+        sb.append("🔒 已封存")
+          .append(orderNo == null ? "指定线程" : "单 " + orderNo + " 的全部关联线程").append("\n");
+        sb.append("- 本次新封存: ").append(r.sealed().size());
+        if (!r.sealed().isEmpty()) sb.append("（").append(String.join("、", r.sealed())).append("）");
+        sb.append("\n");
+        if (!r.alreadySealed().isEmpty()) {
+            sb.append("- 原本已封存（未重复写）: ").append(r.alreadySealed().size())
+              .append("（").append(String.join("、", r.alreadySealed())).append("）\n");
+        }
+        if (!r.skippedHumanOpen().isEmpty()) {
+            sb.append("- 人工解锁过、本次跳过: ").append(r.skippedHumanOpen().size())
+              .append("（").append(String.join("、", r.skippedHumanOpen()))
+              .append("）—— 人工解锁优先，要重新封存请显式再调一次\n");
+        }
+        if (!r.notFound().isEmpty()) {
+            sb.append("- ⚠️ 线程不存在（没封）: ").append(String.join("、", r.notFound())).append("\n");
+        }
+        if (orderNo != null) {
+            sb.append("- 该单在库里能查到的线程: ").append(r.orderThreads().size()).append(" 根");
+            if (r.orderThreads().isEmpty()) {
+                sb.append("（⚠️ 一封都没查到：历史信没有 order_no 列值，需用 sealThreads 显式给线程号）");
+            }
+            sb.append("\n");
+        }
+        sb.append("> 封存只影响**唤醒源**：这些线程不再出现在 mail_start(unreadOnly=true) 的 items 里，")
+          .append("不会再叫醒任何人；信照常入库、在信箱默认列表 / includeRead / mail_thread 里照常可见并标 🔒。\n");
+        sb.append("> 生效点：**从这次封存时的最新一封之后**生效 —— 已有的未读仍会各唤醒一次")
+          .append("（不做静默吞信），之后进线程的新信不再唤醒。\n");
+        sb.append("> 恢复唤醒：`mail_thread(threadId=\"<线程>\", unseal=true, note=\"为什么要恢复\")`。\n");
+        sb.append("> 留痕：谁封的、什么时候、为什么，都进 mail_thread_state_log。\n");
+        return sb.toString();
+    }
+
+    /** 线程的封存/解锁留痕（最近 5 条），解锁回执里自证「谁解的、什么时候」。 */
+    private void appendSealLog(StringBuilder sb, String threadId) {
+        if (mailSealService == null) return;
+        List<com.exphub.entity.MailThreadStateLog> logs = mailSealService.logOf(threadId, 5);
+        if (logs == null || logs.isEmpty()) return;
+        sb.append("> 留痕（最近 ").append(logs.size()).append(" 条）：");
+        for (int i = 0; i < logs.size(); i++) {
+            com.exphub.entity.MailThreadStateLog l = logs.get(i);
+            if (i > 0) sb.append("；");
+            sb.append(l.getAction()).append(" by ").append(l.getActor())
+              .append(" @ ").append(com.exphub.service.MailboxService.time(l.getCreatedAt()));
+        }
+        sb.append("\n");
+    }
+
+    /**
+     * 已封存线程的抬头横幅（2026-11-14 W-20261114-12）。
+     *
+     * <p>不印这一行，读者会以为「这封信没有唤醒我」是链路故障 —— 实际是设计如此。
+     * 同时给出恢复入口，免得又要翻文档。
+     */
+    private void appendSealBanner(StringBuilder sb, String threadId) {
+        if (mailSealService == null) return;
+        try {
+            com.exphub.entity.MailThreadState st = mailSealService.stateOf(threadId);
+            if (st == null || !"SEALED".equals(st.getState())) return;
+            sb.append("🔒 本线程已封存");
+            if (st.getOrderNo() != null) sb.append("（单号 ").append(st.getOrderNo()).append("）");
+            sb.append("：").append(com.exphub.service.MailboxService.time(st.getSealedAt()))
+              .append(" 由 ").append(st.getSealedBy() == null ? "（未记录）" : st.getSealedBy()).append(" 封存");
+            if (st.getSealReason() != null) sb.append("，原因：").append(st.getSealReason());
+            sb.append("\n> 信照常入库、照常可读；但**新信不再触发唤醒**。"
+                    + "要恢复唤醒：`mail_thread(threadId=\"").append(threadId).append("\", unseal=true, note=\"…\")`\n");
+        } catch (Exception e) {
+            log.warn("读封存状态失败（不印横幅）thread={}: {}", threadId, e.toString());
         }
     }
 

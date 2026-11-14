@@ -118,8 +118,10 @@ class MailboxSmokeTest {
     void unreadOnlyCarriesNoSnippet() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
         when(mailboxService.unreadCount("zhulong")).thenReturn(2);
-        when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false)))
-                .thenReturn(List.of(envelope("T261108000000-001", "gezhu")));
+        // 2026-11-14 W-20261114-12：只读摘要已改为「唤醒源视图」（wakeFeed）——
+        // 它要顺带把已封存线程与窗口内重复投递挡在 items 之外，并各自报数。
+        when(mailboxService.wakeFeed(eq("zhulong"), anyInt()))
+                .thenReturn(feed(envelope("T261108000000-001", "gezhu")));
 
         String r = tools.mailStart(null, null, null, null, true, null, null, null, null);
 
@@ -344,8 +346,8 @@ class MailboxSmokeTest {
     void unreadOnlyContinuationMustNotStartLineWithSemicolon() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
         when(mailboxService.unreadCount("zhulong")).thenReturn(1);
-        when(mailboxService.inbox(eq("zhulong"), isNull(), anyInt(), eq(false)))
-                .thenReturn(List.of(envelope("T-A", "zhulong")));
+        when(mailboxService.wakeFeed(eq("zhulong"), anyInt()))
+                .thenReturn(feed(envelope("T-A", "zhulong")));
 
         String r = tools.mailStart(null, null, null, null, true, null, null, null, null);
 
@@ -433,6 +435,14 @@ class MailboxSmokeTest {
         m.setBody("正文");
         m.setCreatedAt(java.time.LocalDateTime.now());
         return m;
+    }
+
+    /** 2026-11-14 W-20261114-12：只读摘要走 WakeFeed（唤醒源视图），带封存/去重计数。 */
+    private static com.exphub.service.MailboxService.WakeFeed feed(
+            com.exphub.service.MailboxService.Envelope... items) {
+        com.exphub.service.MailboxService.WakeFeed f = new com.exphub.service.MailboxService.WakeFeed();
+        for (com.exphub.service.MailboxService.Envelope e : items) f.items.add(e);
+        return f;
     }
 
     private static com.exphub.service.MailboxService.Envelope envelope(String threadId, String to) {        com.exphub.service.MailboxService.Envelope e = new com.exphub.service.MailboxService.Envelope();

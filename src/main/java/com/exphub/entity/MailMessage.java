@@ -49,6 +49,18 @@ public class MailMessage {
      */
     private String onBehalfOf;
 
+    /**
+     * 所属委托单号（{@code W-YYYYMMDD-NN}，2026-11-14 阁主 W-20261114-12）。
+     *
+     * <p>发信时从<b>正文首部</b>的 {@code 单号: …} 协议行解析后落库（回执协议第一行就是它，
+     * 派单信首行也是它）。用途两个：① 封存时按单号找出「该单全部线程」，不能只封主线程；
+     * ② 唤醒去重按「单号 + clientMsgId」记账。
+     *
+     * <p>⚠️ 只对<b>新信</b>生效，历史信不回填（本单明确禁止改已有数据）。
+     * 历史线程要封存时由调用方显式给 threadId。
+     */
+    private String orderNo;
+
     private String toRole;
 
     /** dispatch 派单 / receipt 回执 / accept 验收 / note 通知 / fix 更正。 */

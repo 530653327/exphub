@@ -123,4 +123,127 @@ class PageTemplateRenderTest {
         assertTrue(html.contains("超期未验证"), "缺「超期未验证」文案");
         assertTrue(html.contains("105"), "STALE 的计数没有渲染出来（problemCounts 没被读到）");
     }
+
+    // ── 协作信箱（2026-11-14 阁主 W-20261114-12：线程封存 / 人工解锁）────────────────
+
+    /** 信箱列表页的模型（与 MailAdminController.list 保持一致）。 */
+    private WebContext mailContext() {
+        MockServletContext servletContext = new MockServletContext();
+        MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
+        request.setContextPath(CTX_PATH);
+        request.setRequestURI(CTX_PATH + "/mail");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        JakartaServletWebApplication webApp = JakartaServletWebApplication.buildApplication(servletContext);
+        WebContext ctx = new WebContext(webApp.buildExchange(request, response), Locale.SIMPLIFIED_CHINESE);
+
+        com.exphub.entity.MailMessage m = new com.exphub.entity.MailMessage();
+        m.setId(2092L);
+        m.setThreadId("T261114142452-739");
+        m.setFromRole("阁主");
+        m.setToRole("烛龙");
+        m.setMsgType("dispatch");
+        m.setSubject("派单 W-20261114-12");
+        m.setBody("单号: W-20261114-12\n正文");
+        m.setOrderNo("W-20261114-12");
+        m.setCreatedAt(java.time.LocalDateTime.now());
+
+        com.exphub.entity.MailThreadState st = new com.exphub.entity.MailThreadState();
+        st.setThreadId("T261114142452-739");
+        st.setOrderNo("W-20261114-12");
+        st.setState("SEALED");
+        st.setSealedAt(java.time.LocalDateTime.now());
+        st.setSealedBy("阁主");
+        st.setSealReason("单已转待验收");
+
+        java.util.Map<String, com.exphub.entity.MailThreadState> states = new java.util.HashMap<>();
+        states.put(st.getThreadId(), st);
+
+        ctx.setVariable("contextPath", CTX_PATH);
+        ctx.setVariable("active", "mail");
+        ctx.setVariable("pageTitle", "协作信箱");
+        ctx.setVariable("messages", List.of(m));
+        ctx.setVariable("currentPage", 1L);
+        ctx.setVariable("totalPages", 1L);
+        ctx.setVariable("totalRows", 1L);
+        ctx.setVariable("fromRole", "");
+        ctx.setVariable("toRole", "");
+        ctx.setVariable("type", "");
+        ctx.setVariable("keyword", "");
+        ctx.setVariable("orderNo", "W-20261114-12");
+        ctx.setVariable("sealMsg", "已解锁 T261114142452-739");
+        ctx.setVariable("roles", List.of("阁主", "烛龙"));
+        ctx.setVariable("sealStates", states);
+        ctx.setVariable("sealedRecent", List.of(st));
+        ctx.setVariable("readState", java.util.Map.of(2092L, Boolean.TRUE));
+        ctx.setVariable("totalMessages", 1L);
+        ctx.setVariable("totalThreads", 1L);
+        ctx.setVariable("todayMessages", 1L);
+        ctx.setVariable("unreadMessages", 1L);
+        ctx.setVariable("_csrf", null);
+        return ctx;
+    }
+
+    @Test
+    @DisplayName("信箱列表：封存块、🔒 标记、解锁表单、单号筛选都必须渲染出来")
+    void mailListRendersSealSection() {
+        String html = engine().process("mail/list", mailContext());
+
+        assertTrue(html.contains("线程封存"), "缺封存块 —— 越哥就没有人工解锁入口了");
+        assertTrue(html.contains("已封存（不唤醒）"), "行内 🔒 标记没渲染（读者会以为封存失败=链路坏了）");
+        assertTrue(html.contains("/mail/thread/T261114142452-739/unseal"), "解锁表单 action 不对");
+        assertTrue(html.contains("委托单号"), "缺少按单号筛选/封存的入口");
+        assertTrue(html.contains("已解锁 T261114142452-739"), "sealMsg 没渲染出来");
+    }
+
+    @Test
+    @DisplayName("信箱详情：封存状态 + 留痕 + 解除封存按钮必须渲染出来")
+    void mailDetailRendersSealState() {
+        MockServletContext servletContext = new MockServletContext();
+        MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
+        request.setContextPath(CTX_PATH);
+        request.setRequestURI(CTX_PATH + "/mail/2092");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        JakartaServletWebApplication webApp = JakartaServletWebApplication.buildApplication(servletContext);
+        WebContext ctx = new WebContext(webApp.buildExchange(request, response), Locale.SIMPLIFIED_CHINESE);
+
+        com.exphub.entity.MailMessage m = new com.exphub.entity.MailMessage();
+        m.setId(2092L);
+        m.setThreadId("T261114142452-739");
+        m.setFromRole("阁主");
+        m.setToRole("烛龙");
+        m.setMsgType("dispatch");
+        m.setSubject("派单 W-20261114-12");
+        m.setBody("正文");
+        m.setCreatedAt(java.time.LocalDateTime.now());
+
+        com.exphub.entity.MailThreadState st = new com.exphub.entity.MailThreadState();
+        st.setThreadId("T261114142452-739");
+        st.setOrderNo("W-20261114-12");
+        st.setState("SEALED");
+        st.setSealedAt(java.time.LocalDateTime.now());
+        st.setSealedBy("阁主");
+
+        com.exphub.entity.MailThreadStateLog lg = new com.exphub.entity.MailThreadStateLog();
+        lg.setAction("SEAL");
+        lg.setActor("阁主");
+        lg.setCreatedAt(java.time.LocalDateTime.now());
+
+        ctx.setVariable("contextPath", CTX_PATH);
+        ctx.setVariable("active", "mail");
+        ctx.setVariable("pageTitle", "信件详情");
+        ctx.setVariable("current", m);
+        ctx.setVariable("thread", List.of(m));
+        ctx.setVariable("threadSize", 1);
+        ctx.setVariable("threadId", "T261114142452-739");
+        ctx.setVariable("readState", java.util.Map.of(2092L, Boolean.FALSE));
+        ctx.setVariable("sealState", st);
+        ctx.setVariable("sealLog", List.of(lg));
+        ctx.setVariable("_csrf", null);
+
+        String html = engine().process("mail/detail", ctx);
+
+        assertTrue(html.contains("已封存（不唤醒）"), "详情页没显示封存状态");
+        assertTrue(html.contains("解除封存"), "详情页缺解锁按钮");
+        assertTrue(html.contains("SEAL by 阁主"), "留痕没渲染（这就是「谁解的」的证据）");
+    }
 }

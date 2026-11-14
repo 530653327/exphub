@@ -348,10 +348,14 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-14 按幂等键查消息（阁主 T261114084728-182）：仍 50 个工具（加参数不加工具，
         //            红线 13），mail_thread 加 clientMsgId，参数 211 → 212。理由：幂等命中后调用方
         // 2026-11-14：参数 212 → 213，mail_send 新增 onBehalfOf（阁主 W-20261114-09 代发），工具数不变。
+        // 2026-11-14：参数 213 → 217，mail_thread 新增 sealOrder / sealThreads / unseal / note
+        //            （阁主 W-20261114-12 线程封存 + 人工解锁）。理由：工具数已冻结 50（红线 13），
+        //            封存是「对某根线程的维护动作」，与 claimId/advanceTo/ackIds 同族，只能加参数；
+        //            解锁必须能被阁主（MCP）调用，而后台 /mail 页面是越哥的人工入口（两条路同一张留痕表）。
         //            只能翻 app.log 那行「幂等命中」核实，日志一滚就没证据；键本来就在
         //            mail_messages.client_msg_id（uk_mail_client）上，一次只读查询即可，不值得开新工具。
         assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(213, paramCount, "参数数变了（201 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(217, paramCount, "参数数变了（213 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════
