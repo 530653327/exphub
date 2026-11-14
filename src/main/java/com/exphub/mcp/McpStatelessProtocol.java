@@ -38,7 +38,7 @@ public class McpStatelessProtocol {
     private final String version;
 
     public McpStatelessProtocol(ToolCallbackProvider toolCallbackProvider, ObjectMapper mapper,
-                                @Value("${exphub.version:2.5.3}") String version) {
+                                @Value("${exphub.version:2.5.4}") String version) {
         this.toolCallbackProvider = toolCallbackProvider;
         this.mapper = mapper;
         this.version = version;

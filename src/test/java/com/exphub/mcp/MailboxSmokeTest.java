@@ -89,8 +89,9 @@ class MailboxSmokeTest {
     @DisplayName("smoke: 缺 threadId 直接拒，不猜线程")
     void mailThreadRequiresThreadId() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
-        String r = tools.mailThread(null, null, null, null, null, null, null);
-        assertEquals("❌ 要 threadId。从 mail_start 的信封列表里抄，别自己编。", r);
+        String r = tools.mailThread(null, null, null, null, null, null, null, null);
+        assertTrue(r.startsWith("❌ 要 threadId 或 clientMsgId"), r);
+        assertTrue(r.contains("别自己编"), r);
         verifyNoInteractions(mailboxService);
     }
 
@@ -140,7 +141,7 @@ class MailboxSmokeTest {
                 .thenReturn(List.of(message(42L, "T-PEEK")));
         when(mailboxService.countThread("T-PEEK")).thenReturn(2L);
 
-        String r = tools.mailThread("T-PEEK", null, null, null, null, true, null);
+        String r = tools.mailThread("T-PEEK", null, null, null, null, null, true, null);
 
         assertTrue(r.contains("#42"), "peek 必须照常给正文：" + r);
         assertTrue(r.contains("游标**未推进**"), "peek 必须明说游标没动，否则调用方会以为读过了：" + r);
@@ -161,7 +162,7 @@ class MailboxSmokeTest {
         when(mailboxService.advanceCursorTo("zhulong", "T-ADV", 42L)).thenReturn(1);
         when(mailboxService.countAfterCursor("zhulong", "T-ADV")).thenReturn(3L);
 
-        String r = tools.mailThread("T-ADV", null, null, null, null, null, 42L);
+        String r = tools.mailThread("T-ADV", null, null, null, null, null, null, 42L);
 
         assertTrue(r.contains("#40 → #42"), "必须回显推进前后的实际值，不能只说「已推进」：" + r);
         assertTrue(r.contains("还有 3 封"), "要说明推进后还剩多少没读：" + r);
@@ -179,7 +180,7 @@ class MailboxSmokeTest {
         when(mailboxService.advanceCursorTo("zhulong", "T-IDEM", 48L)).thenReturn(0);
         when(mailboxService.countAfterCursor("zhulong", "T-IDEM")).thenReturn(0L);
 
-        String r = tools.mailThread("T-IDEM", null, null, null, null, null, 48L);
+        String r = tools.mailThread("T-IDEM", null, null, null, null, null, null, 48L);
 
         assertTrue(r.contains("游标未变"), "重复推进不是错误，要说清而不是报失败：" + r);
         assertTrue(r.contains("#50"), "当前游标要摆出来：" + r);
@@ -193,7 +194,7 @@ class MailboxSmokeTest {
         when(mailboxService.advanceCursorTo("zhulong", "T-A", 9L))
                 .thenThrow(new IllegalArgumentException("#9 属于线程 T-B，不是 T-A —— 跨线程推进会把别的线程的信标成已读，拒绝"));
 
-        String r = tools.mailThread("T-A", null, null, null, null, null, 9L);
+        String r = tools.mailThread("T-A", null, null, null, null, null, null, 9L);
 
         assertTrue(r.startsWith("❌"), "必须明拒，不能吞掉当成功：" + r);
         assertTrue(r.contains("T-B"), "要说清它其实属于哪个线程：" + r);
@@ -204,7 +205,7 @@ class MailboxSmokeTest {
     void peekAndAdvanceToAreMutuallyExclusive() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
 
-        String r = tools.mailThread("T-X", null, null, null, null, true, 42L);
+        String r = tools.mailThread("T-X", null, null, null, null, null, true, 42L);
 
         assertTrue(r.startsWith("❌"), r);
         assertTrue(r.contains("peek"), "要点名是哪个参数冲突了：" + r);
@@ -217,7 +218,7 @@ class MailboxSmokeTest {
     void fullAndAdvanceToAreAlsoMutuallyExclusive() {
         MailIdentity.set("zhulong", "cfg-zhulong-01");
 
-        String r = tools.mailThread("T-X", true, null, null, null, null, 42L);
+        String r = tools.mailThread("T-X", null, true, null, null, null, null, 42L);
 
         assertTrue(r.startsWith("❌"), r);
         assertTrue(r.contains("full"), r);
@@ -238,7 +239,7 @@ class MailboxSmokeTest {
         when(mailboxService.countThread("T-CHAIN")).thenReturn(1L);
         when(mailboxService.threadSubject("T-CHAIN")).thenReturn("主题");
 
-        String r = tools.mailThread("T-CHAIN", null, null, null, null, null, null);
+        String r = tools.mailThread("T-CHAIN", null, null, null, null, null, null, null);
 
         assertTrue(r.contains("链 CHAIN-A"), "必须回显链标识：" + r);
         assertTrue(r.contains("第 3 跳"), "必须回显跳数：" + r);
@@ -254,7 +255,7 @@ class MailboxSmokeTest {
         when(mailboxService.countThread("T-OLD")).thenReturn(1L);
         when(mailboxService.threadSubject("T-OLD")).thenReturn("主题");
 
-        String r = tools.mailThread("T-OLD", null, null, null, null, null, null);
+        String r = tools.mailThread("T-OLD", null, null, null, null, null, null, null);
 
         org.junit.jupiter.api.Assertions.assertFalse(r.contains(" · 链 "),
                 "老消息不该多出授权链段，否则所有人的回执都被改了一遍：" + r);

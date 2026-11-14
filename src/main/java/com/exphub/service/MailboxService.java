@@ -323,13 +323,17 @@ public class MailboxService {
         // 「✅ 已发给…」，忆阁据此把单子推进到 running，而收件人信箱里没有新信（#1986 被
         // dispatch:W-20261114-02 在 08:14 回放）。所以命中时先确认「确实是同一封信」。
         if (clientMsgId != null && !clientMsgId.isBlank()) {
+            // 查询与入库必须用同一个值：入库走 blankToNull() 会 trim，查询若用原值，
+            // 传「 CM-1 」就查不到库里那条「CM-1」，会走到 insert 撞唯一键报错 ——
+            // 同一个键两个口径，正是「同一个决策在两个出口结论相反」的形态。
+            String key = clientMsgId.trim();
             MailMessage exist = msgMapper.selectOne(new QueryWrapper<MailMessage>()
-                    .eq("client_msg_id", clientMsgId).last("LIMIT 1"));
+                    .eq("client_msg_id", key).last("LIMIT 1"));
             if (exist != null) {
-                assertReplayIsSameLetter(exist, from, rawTo, inReplyTo, clientMsgId);
+                assertReplayIsSameLetter(exist, from, rawTo, inReplyTo, key);
                 // 日志也要能单独看出「没新建」：排障时只有 app.log 的人不能靠猜。
                 log.info("MailboxService.send: 幂等命中（本次未新建） clientMsgId={}, id={}, {} -> {}, thread={}",
-                        clientMsgId, exist.getId(), exist.getFromRole(), exist.getToRole(),
+                        key, exist.getId(), exist.getFromRole(), exist.getToRole(),
                         exist.getThreadId());
                 return new SendResult(exist, true);
             }
@@ -901,6 +905,21 @@ public class MailboxService {
 
     public MailMessage byId(Long id) {
         return msgMapper.selectById(id);
+    }
+
+    /**
+     * 按幂等键（{@code client_msg_id}，唯一键 {@code uk_mail_client}）查消息。
+     *
+     * <p>为什么要有这个入口（阁主 T261114084728-182 第 2 问）：幂等命中时调用方只拿到一封
+     * 「看起来成功」的回执，事后想核实「这个键到底落没落库、对应哪条消息」，原先只能翻
+     * app.log 的「幂等命中」那行 —— 日志滚动窗口一过就查不到任何证据。
+     *
+     * <p>返回 {@code null} 不是异常：键没用过就是没有对应消息，下次用它发信会是一次新建。
+     */
+    public MailMessage byClientMsgId(String clientMsgId) {
+        if (clientMsgId == null || clientMsgId.isBlank()) return null;
+        return msgMapper.selectOne(new QueryWrapper<MailMessage>()
+                .eq("client_msg_id", clientMsgId.trim()).last("LIMIT 1"));
     }
 
     // ---------------------------------------------------------------- 游标

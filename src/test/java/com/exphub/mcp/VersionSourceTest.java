@@ -11,7 +11,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 版本号的单一来源守卫（2026-11-11 起产品版本 = 2.5.3）。
+ * 版本号的单一来源守卫（2026-11-11 起产品版本 = 2.5.4）。
  *
  * health、SSE 的 serverInfo、无状态端点的 serverInfo 三处都会对外报版本。
  * 以前各写各的数字，改一次要找三个地方，漏一个就出现「同一个服务报两个版本」。
@@ -24,18 +24,18 @@ class VersionSourceTest {
     }
 
     @Test
-    @DisplayName("产品版本是 2.5.3，且只在 application.yml 定义一次")
+    @DisplayName("产品版本是 2.5.4，且只在 application.yml 定义一次")
     void productVersionIsSingleSourced() throws IOException {
         String yml = read("src/main/resources/application.yml");
-        assertTrue(yml.contains("version: 2.5.3"), "application.yml 里必须定义 exphub.version: 2.5.3");
-        assertEquals(1, countOf(yml, "version: 2.5.3"), "产品版本只应在一处写字面值");
+        assertTrue(yml.contains("version: 2.5.4"), "application.yml 里必须定义 exphub.version: 2.5.4");
+        assertEquals(1, countOf(yml, "version: 2.5.4"), "产品版本只应在一处写字面值");
     }
 
     @Test
     @DisplayName("SSE 的 serverInfo 通过占位符引用同一个版本")
     void sseServerInfoReferencesSameVersion() throws IOException {
         String yml = read("src/main/resources/application.yml");
-        assertTrue(yml.contains("version: ${exphub.version:2.5.3}"),
+        assertTrue(yml.contains("version: ${exphub.version:2.5.4}"),
                 "spring.ai.mcp.server.version 必须引用 exphub.version，别再写死数字");
     }
 
@@ -44,8 +44,8 @@ class VersionSourceTest {
     void bothEndpointsReadSameProperty() throws IOException {
         String health = read("src/main/java/com/exphub/controller/HealthController.java");
         String stateless = read("src/main/java/com/exphub/mcp/McpStatelessProtocol.java");
-        assertTrue(health.contains("@Value(\"${exphub.version:2.5.3}\")"), "health 读 exphub.version");
-        assertTrue(stateless.contains("@Value(\"${exphub.version:2.5.3}\")"), "无状态端点读 exphub.version");
+        assertTrue(health.contains("@Value(\"${exphub.version:2.5.4}\")"), "health 读 exphub.version");
+        assertTrue(stateless.contains("@Value(\"${exphub.version:2.5.4}\")"), "无状态端点读 exphub.version");
         assertFalse(stateless.contains("info.put(\"version\", \"1.0.0\")"),
                 "serverInfo 不许再硬编码 1.0.0");
     }

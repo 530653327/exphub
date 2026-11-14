@@ -45,7 +45,7 @@ spring:
       server:
         name: exphub
         # 与 health / 无状态端点同源，别再各写一份数字
-        version: ${exphub.version:2.5.3}
+        version: ${exphub.version:2.5.4}
         stdio: false
 
 # MCP SSE 心跳间隔（秒）。
@@ -55,8 +55,12 @@ spring:
 # 用户体感为「偶尔连不上」）。服务端每 30s 发一个 SSE 注释行保活。
 # ⚠️ 调整时须小于上述各层的最小空闲超时，否则心跳无效。
 exphub:
-  # 产品版本号（2026-11-14 起为 2.5.3；2.5.2 是 2026-11-11 部署的上一版）。health、SSE 的 serverInfo、无状态端点的
+  # 产品版本号（2026-11-14 起为 2.5.4；2.5.3 是同日早些时候部署的上一版）。health、SSE 的 serverInfo、无状态端点的
   # serverInfo 全部读这一处，改版本只改这里。
+  # 2.5.4 = mail_send 幂等回执补两个机读字段 + 新增按幂等键查消息（阁主 T261114084728-182）：
+  #         回执固定印「本次新建: 是/否（created/replayed）」与「clientMsgId: <入库值>」，真发与回放两边对称；
+  #         mail_thread 加 clientMsgId 参数（与 threadId 二选一），按 uk_mail_client 查该键对应的消息，
+  #         只读、不推游标；查不到明说「没落库、下次会新建」。幂等键查库前统一 trim，与入库口径一致。
   # 2.5.3 = mail_send 幂等命中可区分（阁主 T261114082605-521）：同 clientMsgId 二次发送不新建消息，
   #         回执首句改为「⚠️ 幂等命中：本次没有新建消息」并报原消息 id/线程/原时间；本次请求与库里那封
   #         内容/收件人/线程不一致时逐项点出并劝换新键；发件人不同（键被别的角色占用）直接明拒。
@@ -76,7 +80,7 @@ exphub:
   # ⚠️ 这不是 pom.xml 的 Maven artifact 版本（仍是 1.0.0）：改 pom 会改 jar 文件名，
   #    而 systemd service 与 deploy.sh 里写死了 target/exphub-1.0.0.jar，一改就得
   #    同步服务器配置，否则线上服务起不来。产品版本单独放，改它零部署风险。
-  version: 2.5.3
+  version: 2.5.4
   mcp:
     sse-heartbeat-seconds: 30
     # MCP 单次请求体上限（字节）。默认 5MB；Nginx 对应 client_max_body_size 10m。

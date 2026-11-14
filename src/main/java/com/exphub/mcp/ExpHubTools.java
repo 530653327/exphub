@@ -6458,6 +6458,10 @@ public class ExpHubTools {
               .append("，类型 ").append(m.getMsgType());
             if (m.getInReplyTo() != null) sb.append("，回复 #").append(m.getInReplyTo());
             sb.append("\n");
+            // 2026-11-14 阁主 T261114084728-182 第 1 问：回执要能机读区分「新建」与「命中已存在」。
+            // 两行固定格式、真发与回放**都给**（缺省只在一边出现，调用方就没法用「字段缺失」当判据）。
+            sb.append("本次新建: 是（created=true）\n");
+            sb.append("clientMsgId: ").append(describeClientMsgIdFromDb(m)).append("\n");
             // 2026-11-09 阁主 P9 第 3 条：回信的收件人**取父消息发件人**（服务端强制），
             // 不再按入参入库 —— 旧行为下 to 写错的回信照样入库、线程里看得见，
             // 对方收件箱里却没有，发件方还以为送到了。这里回读库里的 to_role 自证。
@@ -6483,6 +6487,9 @@ public class ExpHubTools {
         String at = old.getCreatedAt() == null ? "（库里未记录时间）"
                 : com.exphub.service.MailboxService.time(old.getCreatedAt());
         sb.append("⚠️ 幂等命中：本次**没有新建消息**，一封新信也没有发出。\n");
+        // 与真发一封对称的两行：调用方按「本次新建: 否」判，不必再靠比对消息 id / 日志。
+        sb.append("本次新建: 否（replayed=true）\n");
+        sb.append("clientMsgId: ").append(formatClientMsgId(old.getClientMsgId())).append("\n");
         sb.append("消息 #").append(old.getId()).append("，线程 ").append(old.getThreadId())
           .append("，类型 ").append(old.getMsgType())
           .append("，原发送时间 ").append(at).append("\n");
@@ -6514,6 +6521,26 @@ public class ExpHubTools {
             sb.append("这封信与库里那封内容一致，是同一封的重试 —— 首次那次已经成功，不必再发。\n");
         }
         sb.append("**别把它当成「刚发出去」**：如果你要的是新消息（例如派单信），现在是没发出去的。\n");
+    }
+
+    /**
+     * 回执里的 clientMsgId 行：**回读库里的值**，不复述入参（AGENTS 第 10 章）。
+     *
+     * <p>真新建时消息刚 insert，本地对象的字段未必等于库里存的值（例如入库前被 trim），
+     * 所以按 id 再读一次；读不到才退回本地对象并说明，不假装自证成功。
+     */
+    private String describeClientMsgIdFromDb(MailMessage m) {
+        MailMessage stored = mailboxService.byId(m.getId());
+        if (stored == null) return formatClientMsgId(m.getClientMsgId()) + "（⚠️ 回读失败，这是内存值）";
+        return formatClientMsgId(stored.getClientMsgId());
+    }
+
+    /** 「没有键」要说出后果，不能只印一个空白 —— 没键就等于没有幂等保护。 */
+    private static String formatClientMsgId(String key) {
+        if (key == null || key.isBlank()) {
+            return "（未入库 —— 这次没传键，没有幂等保护：链路超时重试会重复发信）";
+        }
+        return key;
     }
 
     private static String trimToNull(String s) {
@@ -6572,9 +6599,15 @@ public class ExpHubTools {
                       + "读完服务端自动推游标 —— 同样的参数不用再调一次，不会重复给同一批。"
                       + "peek=true 则只读：推游标由调用方用 advanceTo 显式确认，适合「读成功才算读过」的自动唤醒。"
                       + "claim_id 认领派单（数据库原子抢锁，已被别人认领会告诉你被谁认了）；ackIds 只记「处理过」，不参与去重。"
-                      + "带授权链元数据的消息会在头部回显 链/第几跳/自动或人工（没有元数据的历史消息不多印一个字）。")
+                      + "带授权链元数据的消息会在头部回显 链/第几跳/自动或人工（没有元数据的历史消息不多印一个字）。"
+                      + "**也可以按幂等键查单条消息**：传 clientMsgId（与 threadId 二选一）就按 mail_messages.client_msg_id 查，"
+                      + "回执给消息 id / 线程 / 创建时间 / 发件人→收件人 / 类型 / 主题 / 正文字数；键没落库会明说。"
+                      + "该分支纯只读：不推游标、不改任何状态，也不接受 full/peek/advanceTo/claimId/ackIds。")
     public String mailThread(
-            @ToolParam(description = "线程号，从 mail_start 的信封列表里抄") String threadId,
+            @ToolParam(description = "线程号，从 mail_start 的信封列表里抄。与 clientMsgId 二选一（必须传其中一个）",
+                    required = false) String threadId,
+            @ToolParam(description = "可选。按幂等键查消息：给出该 clientMsgId 对应的那条消息（id/线程/创建时间/收发人/类型/主题/字数）。"
+                    + "与 threadId 二选一；查不到 = 这个键没落库过。纯只读，不推游标。", required = false) String clientMsgId,
             @ToolParam(description = "可选。true=从线程头开始（分页回溯）；默认 false 只给游标之后的新消息", required = false) Boolean full,
             @ToolParam(description = "可选。条数上限：默认 10，回溯模式默认 30，都封顶 50", required = false) Integer limit,
             @ToolParam(description = "可选。逗号分隔的消息ID，标记「我处理过了」。只做展示，不推游标、不影响去重", required = false) String ackIds,
@@ -6588,11 +6621,33 @@ public class ExpHubTools {
         try {
             // 参数自身的错误先判：这些分支不需要读名单（mailRole 会归一角色，可能触发一次清单读取），
             // 「缺 threadId」「peek 与 advanceTo 互斥」应当在碰任何信箱数据之前就拒掉。
-            if (threadId == null || threadId.isBlank()) {
-                return "❌ 要 threadId。从 mail_start 的信封列表里抄，别自己编。";
+            String key = clientMsgId == null ? null : clientMsgId.trim();
+            boolean byKey = key != null && !key.isEmpty();
+            boolean hasThread = threadId != null && !threadId.isBlank();
+            if (byKey && hasThread) {
+                return "❌ threadId 与 clientMsgId 只能传一个：展开一根线程传 threadId，"
+                        + "按幂等键查单条消息传 clientMsgId（两者混用不知道该按哪个口径返回）。";
             }
             boolean peekMode = Boolean.TRUE.equals(peek);
             boolean backfill = Boolean.TRUE.equals(full);
+            if (byKey) {
+                // 按键查是**只读**查询：跟推游标/认领/标已处理混在一起，会让人以为它把这封信消费掉了。
+                String conflict = backfill ? "full"
+                        : peekMode ? "peek"
+                        : advanceTo != null ? "advanceTo"
+                        : claimId != null ? "claimId"
+                        : (ackIds != null && !ackIds.isBlank()) ? "ackIds" : null;
+                if (conflict != null) {
+                    return "❌ clientMsgId 查询是纯只读的，不接受 " + conflict
+                            + "（它不推游标、不认领、不标已处理）。要展开整根线程，查到消息后按回执里的 threadId 再调一次。";
+                }
+                return renderMessageByClientMsgId(key, limit);
+            }
+            if (!hasThread) {
+                return "❌ 要 threadId 或 clientMsgId，二选一：\n"
+                        + "- 展开一根线程：threadId 从 mail_start 的信封列表里抄，别自己编；\n"
+                        + "- 查某个幂等键到底落没落库、对应哪条消息：传 clientMsgId。";
+            }
             if (advanceTo != null && (peekMode || backfill)) {
                 return "❌ advanceTo 不能和 " + (peekMode ? "peek" : "full") + " 一起传："
                         + "advanceTo 只推游标、不返回正文，peek 是只读，full 是回溯读正文 —— 三者语义冲突。"
@@ -6689,6 +6744,56 @@ public class ExpHubTools {
             log.error("ExpHubTools.mailThread: FAILED", e);
             return "读线程失败: " + e.getClass().getName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * 按幂等键查一条消息（阁主 T261114084728-182 第 2 问）。
+     *
+     * <p>为什么需要它：幂等命中之后，调用方想事后核实「这个键到底落没落库、对应哪条消息」，
+     * 原先唯一证据是 app.log 里那行「幂等命中」—— 日志滚动窗口一过就什么都查不到。
+     * 键存在 {@code mail_messages.client_msg_id}（唯一键），直接查即可，不需要新表也不需要新工具
+     * （工具数已到 50 上限，加能力优先加参数）。
+     *
+     * <p>只读：不推游标、不认领、不标已处理。正文不打印，只给字数 —— 这个入口是给「核对」用的，
+     * 读全文请用 threadId 展开。
+     */
+    private String renderMessageByClientMsgId(String key, Integer limit) {
+        MailMessage m = mailboxService.byClientMsgId(key);
+        StringBuilder sb = new StringBuilder();
+        sb.append("🔎 按 clientMsgId 查询（只读）：「").append(key).append("」\n");
+        if (m == null) {
+            sb.append("结果: 库里没有这个键对应的消息。\n");
+            sb.append("→ 要么从未成功落库，要么那次写入回滚了 / 该行已被清理。\n");
+            sb.append("→ 下次用这个键发信会是一次**新建**，不会回放任何旧信。\n");
+            sb.append("（消息只追加、不可改：查不到不等于「发过但被撤回」，这里没有撤回动作。）\n");
+        } else {
+            sb.append("结果: 1 封\n");
+            sb.append("消息 #").append(m.getId()).append("，线程 ").append(m.getThreadId())
+              .append("，类型 ").append(m.getMsgType()).append("\n");
+            sb.append("发送【").append(m.getFromRole()).append("】→【").append(m.getToRole()).append("】· ")
+              .append(com.exphub.service.MailboxService.time(m.getCreatedAt())).append("\n");
+            sb.append("主题「").append(brief(m.getSubject(), 80)).append("」")
+              .append("，正文 ").append(m.getBody() == null ? 0 : m.getBody().length()).append(" 字\n");
+            if (m.getInReplyTo() != null) sb.append("回复 #").append(m.getInReplyTo()).append("\n");
+            sb.append("认领: ").append(m.getClaimedBy() == null ? "未认领" : "已认领(" + m.getClaimedBy() + ")").append("\n");
+            sb.append("处理: ").append(m.getProcessedAt() == null ? "未处理" : "已处理").append("\n");
+            boolean hasChain = m.getChainId() != null && !m.getChainId().isBlank();
+            boolean auto = Boolean.TRUE.equals(m.getAutoFlag());
+            int depth = m.getChainDepth() == null ? 0 : m.getChainDepth();
+            if (hasChain || auto || depth > 0) {
+                sb.append("授权链: ").append(hasChain ? m.getChainId() : "（未记录）")
+                  .append(" · 第 ").append(depth).append(" 跳 · ")
+                  .append(auto ? "自动回合" : "人工").append("\n");
+            }
+            sb.append("→ 这个键已被这条占用：再用同键发信只会回放它，不会新建；要发新信请换键。\n");
+            sb.append("→ 看全文 / 整根线程：mail_thread(threadId=\"").append(m.getThreadId()).append("\"")
+              .append(")（要历史传 full=true）。\n");
+        }
+        if (limit != null) {
+            sb.append("> limit 对单条查询无意义，已忽略（回执不按它裁剪，也不会少给字段）。\n");
+        }
+        sb.append("> 本分支只读：不推游标、不认领、不改任何状态。\n");
+        return sb.toString();
     }
 
     /**

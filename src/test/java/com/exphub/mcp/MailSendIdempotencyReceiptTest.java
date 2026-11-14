@@ -92,6 +92,9 @@ class MailSendIdempotencyReceiptTest {
         assertTrue(r.contains("原发送时间 11-14 00:26"), r);
         assertTrue(r.contains("首次那次已经成功"), "内容一致时要说清楚这是重试：" + r);
         assertTrue(r.contains("别把它当成「刚发出去」"), r);
+        // 阁主 T261114084728-182 第 1 问：两行固定字段，调用方不必解析整段文本。
+        assertTrue(r.contains("本次新建: 否（replayed=true）"), "必须给机读的布尔值：" + r);
+        assertTrue(r.contains("clientMsgId: CM-1"), "必须回显本次请求的键（库里值）：" + r);
         verify(msgMapper, never()).insert(any(MailMessage.class));
     }
 
@@ -161,6 +164,43 @@ class MailSendIdempotencyReceiptTest {
         assertTrue(r.startsWith("✅ 已以【阁主】"), r);
         assertTrue(r.contains("消息 #99"), r);
         assertFalse(r.contains("幂等命中"), r);
+        assertTrue(r.contains("本次新建: 是（created=true）"), "新建也要给布尔值（两边对称才可用字段当判据）：" + r);
+        assertTrue(r.contains("这次没传键，没有幂等保护"), "没键要说清后果：" + r);
         verify(msgMapper, times(1)).insert(any(MailMessage.class));
+    }
+
+    @Test
+    @DisplayName("带键的新建：回显入库后的键（回读库，不复述入参）")
+    void freshSendEchoesStoredKey() {
+        MailMessage stored = new MailMessage();
+        stored.setId(99L);
+        stored.setClientMsgId("dispatch:ORDER-42");
+        when(msgMapper.selectById(99L)).thenReturn(stored);
+
+        String r = tools.mailSend("zhulong", "通知", "正文", null, "dispatch", "dispatch:ORDER-42",
+                null, null, null);
+
+        assertTrue(r.contains("本次新建: 是（created=true）"), r);
+        assertTrue(r.contains("clientMsgId: dispatch:ORDER-42"), r);
+        verify(msgMapper, times(1)).insert(any(MailMessage.class));
+    }
+
+    @Test
+    @DisplayName("查库前 trim：传「 CM-1 」必须命中库里那条 CM-1，不许走到 insert 撞唯一键")
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void lookupKeyIsTrimmedLikeInsert() {
+        oldLetter();
+        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.QueryWrapper> cap =
+                org.mockito.ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.QueryWrapper.class);
+
+        String r = tools.mailSend("zhulong", "通知", "正文", null, "note", "  CM-1  ",
+                null, null, null);
+
+        verify(msgMapper).selectOne(cap.capture());
+        cap.getValue().getSqlSegment(); // MyBatis-Plus 延迟生成参数占位符，先取一次片段才填 paramNameValuePairs
+        assertTrue(cap.getValue().getParamNameValuePairs().containsValue("CM-1"),
+                "入库走 trim，查询也必须用 trim 后的值：" + cap.getValue().getParamNameValuePairs());
+        assertTrue(r.startsWith("⚠️ 幂等命中"), r);
+        verify(msgMapper, never()).insert(any(MailMessage.class));
     }
 }
