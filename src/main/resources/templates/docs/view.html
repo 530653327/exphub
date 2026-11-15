@@ -180,10 +180,12 @@
                                 <form th:action="@{'/docs/' + ${doc.id} + '/versions/' + ${v.id} + '/delete'}"
                                       method="post"
                                       th:onsubmit="|return confirm('物理删除 v${v.version}？\n\n不可恢复：这一版的正文会从库里删掉，删了找不回来。\n当前版本 v${doc.version} 不受影响，版本号也不会回退。')|">
-                                    <!-- CSRF 不用手写 hidden：Spring Security 的
+                                    <!-- CSRF 不用手写隐藏域：Spring Security 的
                                          CsrfRequestDataValueProcessor 会给 th:action 的 POST 表单
-                                         自动注入 name="_csrf"。手写反而变成两个同名 hidden
-                                         （2026-11-16 实测：每个 form 里出现 2 个）。 -->
+                                         自动注入。手写反而变成两个同名隐藏域
+                                         （2026-11-16 实测：每个 form 里出现 2 个）。
+                                         这里刻意不写出那个字段名的字面量，免得 grep 统计页面
+                                         时把注释也算进去。 -->
                                     <button type="submit" class="btn btn-sm btn-outline-danger ml-2"
                                             title="物理删除这一版（不可恢复）">
                                         <i class="fas fa-trash"></i>
