@@ -97,7 +97,7 @@ class ToolStatsPollExclusionTest {
 
         String page = read("src/main/resources/templates/tool-stats.html");
         assertTrue(page.contains("excluded.text"), "页面没渲染统一口径说明");
-        assertTrue(page.contains("真实读信仍写日志"), "页面没说明真实读信仍计入");
+        assertTrue(page.contains("历史轮询记录仍按行排除"), "页面没说明历史轮询记录仍按行排除（信箱已下线）");
     }
 
     @Test

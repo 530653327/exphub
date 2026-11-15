@@ -81,11 +81,9 @@ class OnUpdateColumnGuardTest {
      * 现在两边一致，删表再重建也不会出现行为差异。新增条目会立刻让下面那条测试变红。
      */
     private static final Map<String, String> KNOWN_DDL_ONLY = Map.of(
-            // 2026-11-14 W-20261114-12：mail_thread_states 是这一单新建的表，本单发版=否，
-            // 线上还没有它（因此不在 LIVE_ON_UPDATE 里）。部署后线上与 DDL 同构，
-            // 届时把这条从本清单移到 LIVE_ON_UPDATE —— 这一步不做，本用例会红着提醒。
-            "mail_thread_states.updated_at",
-            "2026-11-14 新建表尚未部署；ON UPDATE 与 mail_cursors/mail_roles 同口径，部署后即同构");
+            // 2026-11-16 信箱功能整体移除（越哥要求）：mail_thread_states 等 7 张表已删，
+            // 这条漂移随之清零。清单为空 = DDL 与线上一致；新增条目会立刻让下面那条测试变红。
+    );
 
     /**
      * 历史脚本的豁免：它们**不在** deploy 的自动执行范围里。
@@ -152,9 +150,10 @@ class OnUpdateColumnGuardTest {
         // 2026-10-29 实数：8 条；2026-11-09 migration_20261109b +3 条 = 11 条：
         //   ① 停用旧版 A 段的拼音正名行；② 历史消息 from/to/claimed_by 刷成汉字；
         //   ③ 把 OBSERVED 压回 PENDING_REVIEW。
-        // 2026-11-09 收尾（阁主 T261109120139-277）：migration_20261109c 由 UPDATE 改成 DELETE，
-        //   UPDATE 条数回到 11 —— 数字变小是**这次改动的预期结果**，不是解析退化。
-        assertEquals(11, seen,
+        // 2026-11-16 信箱功能整体移除（越哥要求）：4 个信箱 migration 脚本已删，
+        //   其中 migration_20261109b 的这 3 条 UPDATE 随之消失，条数 11 → 8。
+        //   这次变**少**是删功能的预期结果，不是解析退化。
+        assertEquals(8, seen,
                 "扫到的 UPDATE 条数变了（实际 " + seen + "）。新增脚本请同步这个数字；"
                         + "数字变**少**通常意味着分号/注释解析退化，守卫会在没人察觉的情况下失效");
     }

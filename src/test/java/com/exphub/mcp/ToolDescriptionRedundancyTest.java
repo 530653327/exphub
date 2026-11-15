@@ -354,8 +354,11 @@ class ToolDescriptionRedundancyTest {
         //            解锁必须能被阁主（MCP）调用，而后台 /mail 页面是越哥的人工入口（两条路同一张留痕表）。
         //            只能翻 app.log 那行「幂等命中」核实，日志一滚就没证据；键本来就在
         //            mail_messages.client_msg_id（uk_mail_client）上，一次只读查询即可，不值得开新工具。
-        assertEquals(50, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(217, paramCount, "参数数变了（213 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-11-16 信箱功能整体移除（越哥要求）：mail_start / mail_send / mail_thread 三个工具一并删除，
+        //            工具数 50 → 47。这是**唯一一次工具数下降**，红线 13（冻结 50）仍有效，只是上限更低。
+        //            参数 217 → 186（三个信箱工具共 31 个 @ToolParam 一并消失）。
+        assertEquals(47, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(186, paramCount, "参数数变了（186 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

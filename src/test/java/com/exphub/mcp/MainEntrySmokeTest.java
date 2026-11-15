@@ -7,7 +7,6 @@ import com.exphub.interceptor.ApiKeyInterceptor;
 import com.exphub.service.CallLogService;
 import com.exphub.service.DocService;
 import com.exphub.service.DocTemplateService;
-import com.exphub.service.MailboxService;
 import com.exphub.service.ProjectService;
 import com.exphub.service.ReviewCandidateService;
 import com.exphub.service.SimilarityService;
@@ -63,7 +62,6 @@ class MainEntrySmokeTest {
     @Mock private ReviewCandidateService reviewCandidateService;
     @Mock private VersionArchiveService versionArchiveService;
     @Mock private SimilarityService similarityService;
-    @Mock private MailboxService mailboxService;
 
     @InjectMocks private ExpHubTools tools;
 
