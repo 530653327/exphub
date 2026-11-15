@@ -2102,6 +2102,43 @@ public class DocService {
         return versionMapper.selectList(wrapper);
     }
 
+    /**
+     * 物理删除一个历史版本（后台管理入口，2026-11-16 越哥要求）。
+     *
+     * <p><b>为什么要有这个入口</b>：`archive_old_versions` 只搬不删，`doc_versions` 只增不减。
+     * 一条错写就会留一份带敏感值的全文快照，原先只能直接改库清理 —— 给后台一个受控的删除口，
+     * 比让人手敲 SQL 安全，也比「先 export 再手工 DELETE」可靠。
+     *
+     * <p><b>三条边界（改了任一条都会出事）</b>：
+     * <ol>
+     *   <li>只删 {@code doc_versions} 里的一行，<b>不动</b>主表当前正文；当前版本根本不在这个列表里。</li>
+     *   <li><b>不回退 {@code docs.version}</b> —— 版本号是「写过几次」的计数器，回退会让下一次写入
+     *       撞上已被删掉的号，历史顺序与版本号就此错位。</li>
+     *   <li>删除前必须证明这行版本属于该文档：否则构造一个别的 {@code docId} 就能删掉别人家的快照。</li>
+     * </ol>
+     *
+     * <p>只删主表，不碰 {@code doc_versions_archive}：归档层是冷备份，页面上也看不到，
+     * 真要清归档得单独做入口（现在没有）。
+     *
+     * @throws IllegalArgumentException 版本不存在、或不属于该文档 —— 文案直接回显给用户
+     */
+    public DocVersion deleteVersion(Long docId, Long versionId) {
+        if (docId == null || versionId == null) {
+            throw new IllegalArgumentException("文档 ID 与版本 ID 都必须给");
+        }
+        DocVersion v = versionMapper.selectById(versionId);
+        if (v == null) {
+            throw new IllegalArgumentException("版本不存在（可能已被删过一次，刷新页面看最新列表）");
+        }
+        if (!docId.equals(v.getDocId())) {
+            throw new IllegalArgumentException("这个版本不属于当前文档，拒绝删除");
+        }
+        versionMapper.deleteById(versionId);
+        log.info("deleteVersion: doc={} version={} (id={}) 物理删除，docs.version 不回退",
+                docId, v.getVersion(), versionId);
+        return v;
+    }
+
     public long countAll() {
         return docMapper.selectCount(null);
     }

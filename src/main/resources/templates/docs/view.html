@@ -79,6 +79,18 @@
             </div>
         </div>
 
+        <!-- 版本删除结果（2026-11-16）：成功带 vDeleted=版本号，失败带 vError=原文 -->
+        <div class="alert alert-success alert-dismissible fade show" th:if="${param.vDeleted != null}">
+            <i class="fas fa-check-circle mr-1"></i>
+            已物理删除 v<span th:text="${param.vDeleted[0]}">1</span> 的正文快照。当前版本 v<span th:text="${doc.version}">1</span> 未受影响。
+            <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+        </div>
+        <div class="alert alert-danger alert-dismissible fade show" th:if="${param.vError != null}">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            删除失败：<span th:text="${param.vError[0]}">-</span>
+            <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+        </div>
+
         <div class="row">
             <div class="col-md-8">
                 <div class="card">
@@ -146,17 +158,38 @@
                                 </div>
                                 <small class="text-muted" th:text="${#temporals.format(doc.updatedAt, 'yyyy-MM-dd HH:mm')}"></small>
                             </a>
-                            <a href="javascript:void(0)" class="list-group-item list-group-item-action version-link"
-                               th:each="v : ${versions}"
-                               th:attr="data-version=${v.version},data-content=${v.content}">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <strong>v<span th:text="${v.version}">1</span></strong>
-                                </div>
-                                <small class="text-muted">
-                                    <span th:text="${v.updatedName}">-</span>
-                                    <span th:text="${#temporals.format(v.createdAt, 'yyyy-MM-dd HH:mm')}">-</span>
-                                </small>
-                            </a>
+                            <!-- 历史版本：左侧点开预览，右侧物理删除（2026-11-16）。
+                                 用 form + onsubmit 而不是 JS 事件绑定：页面上这些行可能被
+                                 th:if 整块藏起来，#1704 就是脚本对隐藏元素绑事件抛 TypeError，
+                                 把后面所有委托一起废掉。 -->
+                            <div class="list-group-item d-flex justify-content-between align-items-center"
+                                 th:each="v : ${versions}">
+                                <a href="javascript:void(0)" class="version-link text-decoration-none flex-grow-1"
+                                   th:attr="data-version=${v.version},data-content=${v.content}">
+                                    <div class="d-flex align-items-center">
+                                        <strong>v<span th:text="${v.version}">1</span></strong>
+                                        <span class="badge badge-secondary ml-2" style="font-size:0.65rem;"
+                                              th:if="${v.changeType == 'META'}"
+                                              title="这一版只改了标签/摘要等元数据，没有存正文副本">仅元数据</span>
+                                    </div>
+                                    <small class="text-muted">
+                                        <span th:text="${v.updatedName}">-</span>
+                                        <span th:text="${#temporals.format(v.createdAt, 'yyyy-MM-dd HH:mm')}">-</span>
+                                    </small>
+                                </a>
+                                <form th:action="@{'/docs/' + ${doc.id} + '/versions/' + ${v.id} + '/delete'}"
+                                      method="post"
+                                      th:onsubmit="|return confirm('物理删除 v${v.version}？\n\n不可恢复：这一版的正文会从库里删掉，删了找不回来。\n当前版本 v${doc.version} 不受影响，版本号也不会回退。')|">
+                                    <!-- 原生 form 提交不会被 static/js/csrf.js 照顾（它只拦 fetch 与 $.ajax），
+                                         不显式带 token 会被 Spring Security 直接 403。 -->
+                                    <input type="hidden" th:if="${_csrf != null}"
+                                           th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger ml-2"
+                                            title="物理删除这一版（不可恢复）">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>

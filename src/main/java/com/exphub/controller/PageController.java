@@ -4,6 +4,7 @@ import com.exphub.entity.User;
 import com.exphub.entity.Doc;
 import com.exphub.entity.ReviewCandidate;
 import com.exphub.entity.AiAssistant;
+import com.exphub.entity.DocVersion;
 import com.exphub.mapper.DocMapper;
 import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
@@ -24,6 +25,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -527,6 +530,30 @@ public class PageController extends BaseController {
         return redirectToDocs(
                 (status == null || status.isEmpty()) ? DocService.PENDING_DELETE : status,
                 flag, keyword, templateType, problem, true);
+    }
+
+    /**
+     * 物理删除单个历史版本（2026-11-16 越哥要求）。
+     *
+     * <p>和 {@code /docs/{id}/delete} 的区别：那个删整篇文档（连同全部版本快照），
+     * 这个只删版本历史里的某一行，主表当前正文与版本号都不动。
+     *
+     * <p>结果用 query 参数带回详情页（不引 flash）：成功带 {@code vDeleted=版本号}，
+     * 失败带 {@code vError=原文}。失败文案由 Service 给，原样回显，不在控制器里改写。
+     */
+    @PostMapping("/docs/{id}/versions/{versionId}/delete")
+    public String deleteDocVersion(HttpSession session, @PathVariable Long id,
+                                   @PathVariable Long versionId) {
+        User user = (User) session.getAttribute("user");
+        if (user == null) return "redirect:/login";
+
+        try {
+            DocVersion deleted = docService.deleteVersion(id, versionId);
+            return "redirect:/docs/" + id + "?vDeleted=" + deleted.getVersion();
+        } catch (IllegalArgumentException e) {
+            return "redirect:/docs/" + id + "?vError="
+                    + URLEncoder.encode(e.getMessage(), StandardCharsets.UTF_8);
+        }
     }
 
     /**
