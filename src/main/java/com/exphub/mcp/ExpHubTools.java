@@ -6234,6 +6234,14 @@ public class ExpHubTools {
                             sb.append("：").append(abbreviate(it.getConclusion(), 80));
                         }
                         sb.append("\n");
+                        // 2026-11-16：原来只输出结论，正文整段吞掉 —— 而「请求确认」的提问和
+                        // 建议方案恰恰存在正文里（结论只有「需要确认」四个字），
+                        // 结果对方查详情根本看不到在问什么。正文与结论不同才补一行。
+                        String itContent = it.getContent();
+                        if (itContent != null && !itContent.isBlank()
+                                && !itContent.equals(it.getConclusion())) {
+                            sb.append("　　正文：").append(abbreviate(itContent, 300)).append("\n");
+                        }
                     }
                 }
                 return sb.toString();
