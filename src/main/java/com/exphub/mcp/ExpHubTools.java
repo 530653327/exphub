@@ -92,6 +92,9 @@ public class ExpHubTools {
     private VersionArchiveService versionArchiveService;
 
     @Autowired
+    private com.exphub.service.DispatchService dispatchService;
+
+    @Autowired
     private SimilarityService similarityService;
 
     /**
@@ -6047,6 +6050,273 @@ public class ExpHubTools {
             log.error("ExpHubTools.listArchivedVersions: FAILED", e);
             callLogService.incrementFailCalls();
             return "查询失败: " + e.getClass().getName() + " - " + e.getMessage();
+        }
+    }
+
+    // ================================================================
+    // 派单系统（2026-11-16 上线；设计基线见经验 #3308，替代已删除的协作信箱）
+    //
+    // 与旧信箱的根本区别：
+    //   1. **查询零副作用** —— dispatch_list 调一百次也不写任何账本。
+    //      旧信箱的 mail_start 一查就记一笔去重账，父进程查完子进程就被吞（#3255）。
+    //   2. **状态写在字段里** —— 没有「未读」「水位」「封存」这些需要推断的概念。
+    //   3. **唤醒判据是「球到你了」** —— 不是「有新消息」。只留言不改状态，不唤醒任何人。
+    //
+    // 谁能推什么（不在表里的转移一律拒）：
+    //   审核/验收/取消 → 只越哥，且走后台网页，**不是 MCP 工具**
+    //   认领/请求确认/提交验收/终止 → 被指派的那个哨兵
+    //   回复继续 → AI 单的创建人（人工单必须越哥在后台回，AI 不能代回）
+    // ================================================================
+
+    /**
+     * 当前角色：优先客户端配置注入的 {@code x-exphub-role}（要求汉字正名），其次 API Key 绑定名。
+     *
+     * <p>为什么不在这里做拼音归一：归一的权威在账号体系，工具层再搞一套映射只会两边不一致。
+     * 客户端把角色头配成汉字即可（#1250 已定正名是汉字）。
+     */
+    private String dispatchRole() {
+        String r = MailIdentity.role();
+        if (r != null && !r.isBlank()) return r.trim();
+        AiAssistant a = getCaller();
+        return a == null ? null : a.getAssistantName();
+    }
+
+    /** 把 header 渲染成一行，列表与回执共用，避免两处文案不一致。 */
+    private String renderDispatchHeader(com.exphub.entity.DispatchHeader h) {
+        String last = "";
+        com.exphub.entity.DispatchItem it = dispatchService.lastItem(h.getId());
+        if (it != null) {
+            last = "｜末轮 " + it.getItemNo() + " " + it.getStatus();
+            if (it.getConclusion() != null && !it.getConclusion().isBlank()) {
+                last += "：" + abbreviate(it.getConclusion(), 60);
+            }
+        }
+        return "【" + h.getOrderNo() + "】" + h.getTitle()
+                + "\n   状态 " + com.exphub.service.DispatchService.statusLabel(h.getStatus())
+                + "｜来源 " + (com.exphub.entity.DispatchHeader.ORIGIN_HUMAN.equals(h.getOrigin()) ? "人工" : "AI")
+                + "｜指派 " + h.getAssignee()
+                + (h.getAccepter() == null ? "" : "｜接单 " + h.getAccepter())
+                + "｜优先级 " + h.getPriority()
+                + last;
+    }
+
+    @Tool(name = "dispatch_create",
+          description = "【派单】建一张新单并指派给某个哨兵。"
+                      + "**AI 建的单只能落「待审核」**，必须等越哥在后台审过、状态变「待接单」后才能被认领 —— 这是硬约束，绕不过去。"
+                      + "**授权位建单后锁死、任何路径都不能改**：没勾的能力就是没有，不要指望之后补；真需要就等这单做完再开一单。"
+                      + "确认指令只给只读权限，执行指令才按授权位放行。")
+    public String dispatchCreate(
+            @ToolParam(description = "标题，一句话说清要干什么") String title,
+            @ToolParam(description = "内容描述：背景 + 要做什么 + 验收标准。越哥审核看的就是这一段") String description,
+            @ToolParam(description = "指派给哪个哨兵（角色正名，如 穷奇 / 白泽 / 烛龙）") String assignee,
+            @ToolParam(description = "可选。优先级 1=高 3=中 5=低，默认 3", required = false) Integer priority,
+            @ToolParam(description = "可选。项目ID（用 list_projects 查）", required = false) Long projectId,
+            @ToolParam(description = "授权：修改代码", required = false) Boolean allowModifyCode,
+            @ToolParam(description = "授权：commit", required = false) Boolean allowCommit,
+            @ToolParam(description = "授权：push", required = false) Boolean allowPush,
+            @ToolParam(description = "授权：发版", required = false) Boolean allowRelease,
+            @ToolParam(description = "授权：数据写入", required = false) Boolean allowDataWrite,
+            @ToolParam(description = "授权：数据库迁移", required = false) Boolean allowMigration,
+            @ToolParam(description = "授权：生成凭证/密钥", required = false) Boolean allowCredential,
+            @ToolParam(description = "授权：改生产配置", required = false) Boolean allowProdConfig,
+            @ToolParam(description = "授权：改安全组", required = false) Boolean allowSecurityGroup,
+            @ToolParam(description = "授权：改防火墙", required = false) Boolean allowFirewall,
+            @ToolParam(description = "授权：花钱", required = false) Boolean allowSpend) {
+        try {
+            String me = dispatchRole();
+            if (me == null || me.isBlank()) {
+                return "❌ 无法确定你是谁：客户端配置里没有 x-exphub-role 头，也没有可用的助手名。";
+            }
+            java.util.Map<String, Boolean> auths = new java.util.LinkedHashMap<>();
+            auths.put("modifyCode", allowModifyCode);
+            auths.put("commit", allowCommit);
+            auths.put("push", allowPush);
+            auths.put("release", allowRelease);
+            auths.put("dataWrite", allowDataWrite);
+            auths.put("migration", allowMigration);
+            auths.put("credential", allowCredential);
+            auths.put("prodConfig", allowProdConfig);
+            auths.put("securityGroup", allowSecurityGroup);
+            auths.put("firewall", allowFirewall);
+            auths.put("spend", allowSpend);
+
+            com.exphub.service.DispatchService.Outcome out = dispatchService.create(
+                    me, com.exphub.entity.DispatchHeader.ORIGIN_AI, assignee, title, description,
+                    priority, projectId, auths);
+            if (!out.ok()) return "❌ " + out.message();
+
+            com.exphub.entity.DispatchHeader h = out.header();
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ ").append(out.message()).append("\n\n");
+            sb.append("**单号**: ").append(h.getOrderNo()).append("\n");
+            sb.append("**标题**: ").append(h.getTitle()).append("\n");
+            sb.append("**指派**: ").append(h.getAssignee()).append("\n");
+            sb.append("**授权位**: ").append(grantedAuths(h)).append("\n\n");
+            sb.append("⚠️ 现在是「待审核」，越哥在后台通过后才会变「待接单」、哨兵才能接。")
+              .append("审核时如果动了授权位，本单会退回重审。\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.dispatchCreate: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "建单失败: " + e.getClass().getSimpleName() + " - " + e.getMessage();
+        }
+    }
+
+    /** 把授权位渲染成逗号串，没有就是「无」。审核和认领都能一眼看清能干什么。 */
+    private static String grantedAuths(com.exphub.entity.DispatchHeader h) {
+        java.util.List<String> on = new java.util.ArrayList<>();
+        if (Boolean.TRUE.equals(h.getAuthModifyCode())) on.add("改代码");
+        if (Boolean.TRUE.equals(h.getAuthCommit())) on.add("commit");
+        if (Boolean.TRUE.equals(h.getAuthPush())) on.add("push");
+        if (Boolean.TRUE.equals(h.getAuthRelease())) on.add("发版");
+        if (Boolean.TRUE.equals(h.getAuthDataWrite())) on.add("数据写入");
+        if (Boolean.TRUE.equals(h.getAuthMigration())) on.add("迁移");
+        if (Boolean.TRUE.equals(h.getAuthCredential())) on.add("凭证生成");
+        if (Boolean.TRUE.equals(h.getAuthProdConfig())) on.add("生产配置");
+        if (Boolean.TRUE.equals(h.getAuthSecurityGroup())) on.add("安全组");
+        if (Boolean.TRUE.equals(h.getAuthFirewall())) on.add("防火墙");
+        if (Boolean.TRUE.equals(h.getAuthSpend())) on.add("花钱");
+        return on.isEmpty() ? "无（只能读）" : String.join(" / ", on);
+    }
+
+    @Tool(name = "dispatch_list",
+          description = "【派单】列单。**纯只读、零副作用** —— 调一百次也不会改任何状态、不写任何账本，"
+                      + "这是与旧信箱最本质的区别（旧的查一次就记一次账，复查就丢信）。"
+                      + "开工先调这个：不传 orderNo 时按 role 查「指派给我的 / 我创建的」，按 id 倒序。")
+    public String dispatchList(
+            @ToolParam(description = "可选。只看某个单号的详情（含最近几轮 item）", required = false) String orderNo,
+            @ToolParam(description = "可选。状态过滤：DRAFT/REVIEWING/READY/RUNNING/CONFIRMING/VERIFYING/DONE/CANCELLED；不传=全部", required = false) String status,
+            @ToolParam(description = "可选。按角色过滤：指派给我或我创建的。不传=用当前角色的身份头", required = false) String role,
+            @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit) {
+        try {
+            int lim = limit == null ? 20 : Math.max(1, Math.min(limit, 50));
+
+            if (orderNo != null && !orderNo.isBlank()) {
+                com.exphub.entity.DispatchHeader h = dispatchService.get(orderNo);
+                if (h == null) return "未找到单号 " + orderNo;
+                StringBuilder sb = new StringBuilder();
+                sb.append("📋 ").append(h.getOrderNo()).append("　").append(h.getTitle()).append("\n\n");
+                sb.append("**状态**: ").append(com.exphub.service.DispatchService.statusLabel(h.getStatus())).append("\n");
+                sb.append("**来源**: ").append(com.exphub.entity.DispatchHeader.ORIGIN_HUMAN.equals(h.getOrigin()) ? "人工创建" : "AI 创建").append("\n");
+                sb.append("**创建人**: ").append(h.getCreator()).append("\n");
+                sb.append("**指派**: ").append(h.getAssignee());
+                if (h.getAccepter() != null) sb.append("（已接单：").append(h.getAccepter()).append("）");
+                sb.append("\n");
+                sb.append("**优先级**: ").append(h.getPriority()).append("\n");
+                sb.append("**授权位**: ").append(grantedAuths(h)).append("\n");
+                if (h.getVerifyNote() != null && !h.getVerifyNote().isBlank()) {
+                    sb.append("**验收意见**: ").append(h.getVerifyNote()).append("\n");
+                }
+                sb.append("\n**内容**：\n").append(h.getDescription()).append("\n");
+
+                java.util.List<com.exphub.entity.DispatchItem> its = dispatchService.items(h.getId());
+                if (its.isEmpty()) {
+                    sb.append("\n（还没有任何 item —— 哨兵认领时会建第一条）\n");
+                } else {
+                    sb.append("\n**执行记录（共 ").append(its.size()).append(" 轮）**：\n");
+                    int from = Math.max(0, its.size() - 10);
+                    if (from > 0) sb.append("…前 ").append(from).append(" 轮省略…\n");
+                    for (int i = from; i < its.size(); i++) {
+                        com.exphub.entity.DispatchItem it = its.get(i);
+                        sb.append("　[").append(it.getItemNo()).append("] ")
+                          .append(it.getCreator()).append(" → ")
+                          .append(it.getCommand()).append(" / ").append(it.getStatus());
+                        if (it.getConclusion() != null && !it.getConclusion().isBlank()) {
+                            sb.append("：").append(abbreviate(it.getConclusion(), 80));
+                        }
+                        sb.append("\n");
+                    }
+                }
+                return sb.toString();
+            }
+
+            String r = (role == null || role.isBlank()) ? dispatchRole() : role.trim();
+            java.util.List<com.exphub.entity.DispatchHeader> list = dispatchService.list(r, status, null, lim);
+            if (list.isEmpty()) {
+                return "📋 没有符合条件的单（角色=" + r + "，状态="
+                        + (status == null || status.isBlank() ? "全部" : status) + "）。";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("📋 ").append(list.size()).append(" 张单（角色 ").append(r).append("）\n\n");
+            for (com.exphub.entity.DispatchHeader h : list) {
+                sb.append(renderDispatchHeader(h)).append("\n\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.dispatchList: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "查单失败: " + e.getClass().getSimpleName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "dispatch_claim",
+          description = "【派单】认领一张「待接单」的单。只有被指派的那个哨兵能接，靠数据库条件更新抢锁（先到先得，不靠应用层判先后）。"
+                      + "认领成功会同时建第一条 item（回合 1，状态进行中）—— 一开工就建，不是干完才建。")
+    public String dispatchClaim(
+            @ToolParam(description = "单号，如 W-20261116-000001") String orderNo) {
+        try {
+            String me = dispatchRole();
+            com.exphub.service.DispatchService.Outcome out = dispatchService.claim(orderNo, me);
+            if (!out.ok()) return "❌ " + out.message();
+            com.exphub.entity.DispatchHeader h = out.header();
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ ").append(out.message()).append("\n\n");
+            sb.append("**单号**: ").append(h.getOrderNo()).append("\n");
+            sb.append("**标题**: ").append(h.getTitle()).append("\n");
+            sb.append("**授权位**: ").append(grantedAuths(h)).append("\n\n");
+            sb.append("**内容**：\n").append(h.getDescription()).append("\n\n");
+            sb.append("⚠️ 超出授权位的事一步都别做 —— 授权位建单后锁死，做不了就只能等这单结束再开新单。\n");
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.dispatchClaim: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "认领失败: " + e.getClass().getSimpleName() + " - " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "dispatch_act",
+          description = "【派单】推进一张单的动作。**不在下列枚举里的转移一律拒**："
+                      + "need_confirm（哨兵请求确认，进行中→待确认，必须带提问和建议方案）、"
+                      + "submit_accept（哨兵提交验收，进行中→待验收，必须带结论）、"
+                      + "terminate（终止本轮，item 结束 + 单子进待确认等通知，**不等于取消整单**）、"
+                      + "reply（只有 AI 单的创建人能回，待确认→进行中；人工单必须越哥在后台回，AI 不能代回）。"
+                      + "注意：审核、验收通过/驳回、取消整单都只能越哥在后台做，这里没有这些动作。")
+    public String dispatchAct(
+            @ToolParam(description = "单号") String orderNo,
+            @ToolParam(description = "动作：need_confirm / submit_accept / terminate / reply") String action,
+            @ToolParam(description = "need_confirm 时必填：你要问什么") String question,
+            @ToolParam(description = "need_confirm 时必填：**你自己的建议方案**（只抛问题不许过）", required = false) String proposal,
+            @ToolParam(description = "submit_accept 时必填：结论（越哥照它判断通过还是驳回）", required = false) String conclusion,
+            @ToolParam(description = "terminate 时填原因；reply 时填回复正文", required = false) String text) {
+        try {
+            String me = dispatchRole();
+            if (me == null || me.isBlank()) return "❌ 无法确定你是谁（角色头未配置）。";
+            String act = action == null ? "" : action.trim().toLowerCase(java.util.Locale.ROOT);
+            com.exphub.service.DispatchService.Outcome out = switch (act) {
+                case "need_confirm" -> dispatchService.needConfirm(orderNo, me, question, proposal);
+                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion);
+                case "terminate" -> dispatchService.terminate(orderNo, me, text);
+                case "reply" -> dispatchService.reply(orderNo, me, text);
+                default -> null;
+            };
+            if (out == null) {
+                return "❌ 不支持的动作「" + action + "」。可用：need_confirm / submit_accept / terminate / reply。\n"
+                     + "审核、验收、取消整单请走后台网页 —— 那不是 MCP 能做的事。";
+            }
+            if (!out.ok()) return "❌ " + out.message();
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ ").append(out.message()).append("\n");
+            if (out.header() != null) {
+                sb.append("**单号状态**: ").append(com.exphub.service.DispatchService.statusLabel(out.header().getStatus())).append("\n");
+            }
+            if (out.item() != null) {
+                sb.append("**item**: ").append(out.item().getItemNo()).append(" / ").append(out.item().getStatus()).append("\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.error("ExpHubTools.dispatchAct: FAILED", e);
+            callLogService.incrementFailCalls();
+            return "推进失败: " + e.getClass().getSimpleName() + " - " + e.getMessage();
         }
     }
 }

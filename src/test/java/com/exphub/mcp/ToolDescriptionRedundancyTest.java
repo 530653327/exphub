@@ -359,8 +359,12 @@ class ToolDescriptionRedundancyTest {
         //            参数 217 → 186（三个信箱工具共 31 个 @ToolParam 一并消失）。
         // 2026-11-16 合并 update_experience_status → update_experience（越哥砍一个工具名额）：
         //            工具数 47 → 46，参数 186 → 184（去掉它的 3 个参数、update_experience 加 status 1 个）。
-        assertEquals(46, toolCount, "工具数变了（46 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(184, paramCount, "参数数变了（184 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-11-16 派单系统上线（替代已删的信箱，越哥批 4 个名额）：工具数 46 → 50，**正好卡红线**。
+        //            dispatch_create / dispatch_list / dispatch_claim / dispatch_act。
+        //            授权位 11 个只能做成独立布尔参数，所以一次占掉 16 个参数名额 —— 这是有意的：
+        //            审核时人要逐项看得见，塞成一个 JSON 就等于没审。
+        assertEquals(50, toolCount, "工具数变了（50 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(211, paramCount, "参数数变了（211 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════
