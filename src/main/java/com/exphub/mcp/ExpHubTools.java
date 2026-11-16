@@ -6075,10 +6075,12 @@ public class ExpHubTools {
      * 客户端把角色头配成汉字即可（#1250 已定正名是汉字）。
      */
     private String dispatchRole() {
+        // 2026-11-16 越哥定：**身份只能来自角色名，不许拿 Key 推**。
+        // 13 个助手共用同一把 Key（近 2 天 7.1 万次调用全在一把 Key 上），
+        // 用 Key 反推身份根本推不出来，之前兜底到 Key 绑定名会变成「白虎」这种废名。
+        // 没配角色就明确失败，不要用一个猜出来的名字干活。
         String r = MailIdentity.role();
-        if (r != null && !r.isBlank()) return r.trim();
-        AiAssistant a = getCaller();
-        return a == null ? null : a.getAssistantName();
+        return (r == null || r.isBlank()) ? null : r.trim();
     }
 
     /** 当前调用者的 API Key —— 派单的隔离依据（同一 Key 下的助手共享派单）。 */
@@ -6131,7 +6133,8 @@ public class ExpHubTools {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) {
-                return "❌ 无法确定你是谁：客户端配置里没有 x-exphub-role 头，也没有可用的助手名。";
+                return "❌ 无法确定你是谁：客户端必须配 x-exphub-role（汉字正名或拼音，如 zhulong）。"
+                     + "本系统不拿 API Key 反推身份 —— 13 个助手共用一把 Key，推不出来。";
             }
             java.util.Map<String, Boolean> auths = new java.util.LinkedHashMap<>();
             auths.put("modifyCode", allowModifyCode);
@@ -6239,6 +6242,10 @@ public class ExpHubTools {
             String r = (role == null || role.isBlank()) ? dispatchRole() : role.trim();
             // 归一：客户端只能传拼音（中文 header 会被 HTTP 层 400），库里存的是汉字
             r = com.exphub.service.DispatchService.canonicalRole(r);
+            if (r == null || r.isBlank()) {
+                return "❌ 查单必须知道你是谁：传 role，或在客户端配 x-exphub-role。"
+                     + "不传就会退化成「同一把 Key 下的全部单」，那等于没有隔离。";
+            }
             java.util.List<com.exphub.entity.DispatchHeader> list = dispatchService.list(r, status, null, lim, callerApiKey());
             if (list.isEmpty()) {
                 return "📋 没有符合条件的单（角色=" + r + "，状态="
