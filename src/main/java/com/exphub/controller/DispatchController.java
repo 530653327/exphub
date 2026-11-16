@@ -60,6 +60,64 @@ public class DispatchController extends BaseController {
         return "dispatch/detail";
     }
 
+    // ==================== 人工建单 ====================
+
+    /** 建单页：越哥亲自下单。建完是「待审核」，还要自己点一次通过（防误操作的两步）。 */
+    @GetMapping("/new")
+    public String newForm(Model model) {
+        model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
+        model.addAttribute("active", "dispatch");
+        return "dispatch/new";
+    }
+
+    @PostMapping("/create")
+    public String create(@RequestParam String title,
+                         @RequestParam String description,
+                         @RequestParam String assignee,
+                         @RequestParam(required = false) Integer priority,
+                         @RequestParam(required = false) String remark,
+                         @RequestParam(required = false) Boolean modifyCode,
+                         @RequestParam(required = false) Boolean commit,
+                         @RequestParam(required = false) Boolean push,
+                         @RequestParam(required = false) Boolean release,
+                         @RequestParam(required = false) Boolean dataWrite,
+                         @RequestParam(required = false) Boolean migration,
+                         @RequestParam(required = false) Boolean credential,
+                         @RequestParam(required = false) Boolean prodConfig,
+                         @RequestParam(required = false) Boolean securityGroup,
+                         @RequestParam(required = false) Boolean firewall,
+                         @RequestParam(required = false) Boolean spend,
+                         RedirectAttributes ra) {
+        Map<String, Boolean> auths = new LinkedHashMap<>();
+        auths.put("modifyCode", modifyCode);
+        auths.put("commit", commit);
+        auths.put("push", push);
+        auths.put("release", release);
+        auths.put("dataWrite", dataWrite);
+        auths.put("migration", migration);
+        auths.put("credential", credential);
+        auths.put("prodConfig", prodConfig);
+        auths.put("securityGroup", securityGroup);
+        auths.put("firewall", firewall);
+        auths.put("spend", spend);
+
+        DispatchService.Outcome out = dispatchService.create(
+                DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
+                assignee, title, description, priority, null, auths);
+        if (!out.ok() || out.header() == null) {
+            ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
+            return "redirect:/dispatch/new";
+        }
+        if (remark != null && !remark.isBlank()) {
+            DispatchHeader h = out.header();
+            h.setRemark(remark.trim());
+            // 备注不进 create 的签名（AI 建单不需要），这里补一次
+            dispatchService.updateRemark(h.getOrderNo(), remark);
+        }
+        ra.addFlashAttribute("success", "已建单 " + out.header().getOrderNo() + "，状态待审核。确认无误后点「审核通过」才会派出去。");
+        return "redirect:/dispatch/" + out.header().getOrderNo();
+    }
+
     // ==================== 审核 ====================
 
     @PostMapping("/approve")

@@ -485,6 +485,16 @@ public class DispatchService {
     public static final String HUMAN_OPERATOR = "越哥";
 
     /**
+     * 后台建单时可选的被指派对象（哨兵）。
+     *
+     * <p>不含「阁主」：阁主是 AI 单的创建方/答复方，不是干活的哨兵。
+     * 新增角色要同时改 {@link #ROLE_ALIASES} 和这里，否则要么建不了单、要么认领匹配不上。
+     */
+    public static final List<String> ASSIGNABLE_ROLES = List.of(
+            "白泽", "烛龙", "貔貅", "睚眦", "麒麟", "凤凰",
+            "重明鸟", "九尾狐", "帝江", "穷奇", "陆吾", "饕餮");
+
+    /**
      * 审核通过：REVIEWING → READY。
      *
      * <p><b>这是 AI 建单唯一的出口</b>，只由后台网页调用 —— MCP 里没有这个动作，
@@ -633,6 +643,21 @@ public class DispatchService {
                 text == null ? "" : text, DispatchItem.ST_RUNNING);
         return Outcome.success("已回复并继续执行，球回到「" + h.getAssignee() + "」。item " + it.getItemNo(),
                 get(orderNo), it);
+    }
+
+    /**
+     * 补写备注（只给人看，不进任何业务判断）。
+     *
+     * <p>备注不放进 {@link #create} 的签名：AI 建单不需要它，多一个参数就多一个
+     * 让 AI 往单子里塞话的口子。人要写就后台写。
+     */
+    @Transactional
+    public void updateRemark(String orderNo, String remark) {
+        if (orderNo == null || orderNo.isBlank()) return;
+        headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", orderNo.trim())
+                .set("remark", remark)
+                .set("updated_at", LocalDateTime.now()));
     }
 
     /** 后台列表用：按状态统计各多少张，给页面顶部做角标。 */

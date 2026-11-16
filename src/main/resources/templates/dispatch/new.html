@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新建派单 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 15px 22px; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .auth-box { border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; }
+        .auth-box label { margin-right: 18px; margin-bottom: 6px; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/projects}"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <a th:href="@{/dispatch}" class="active"><i class="fas fa-paper-plane mr-2"></i> 派单</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/tool-stats}"><i class="fas fa-tools mr-2"></i> 工具统计</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+    </div>
+
+    <div class="main-content">
+        <div class="mb-3">
+            <a th:href="@{/dispatch}" class="text-muted" style="font-size:0.9rem"><i class="fas fa-arrow-left mr-1"></i> 返回列表</a>
+        </div>
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <form th:action="@{/dispatch/create}" method="post">
+            <div class="card">
+                <div class="card-header"><b>新建派单</b>
+                    <span class="text-muted ml-2" style="font-size:0.85rem">建完是「待审核」，还要你再点一次通过才会派出去</span>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>标题 <span class="text-danger">*</span></label>
+                        <input type="text" name="title" class="form-control" required maxlength="200"
+                               placeholder="一句话说清要干什么">
+                    </div>
+
+                    <div class="form-group">
+                        <label>内容描述 <span class="text-danger">*</span></label>
+                        <textarea name="description" class="form-control" rows="7" required
+                                  placeholder="背景 / 要做什么 / 验收标准 —— 哨兵只能看到这段，写清楚它才不会跑偏"></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label>指派给 <span class="text-danger">*</span></label>
+                            <select name="assignee" class="form-control" required>
+                                <option value="">— 选一个哨兵 —</option>
+                                <option th:each="r : ${roles}" th:value="${r}" th:text="${r}"></option>
+                            </select>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label>优先级</label>
+                            <select name="priority" class="form-control">
+                                <option value="1">1 · 高</option>
+                                <option value="3" selected>3 · 中</option>
+                                <option value="5">5 · 低</option>
+                            </select>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label>备注</label>
+                            <input type="text" name="remark" class="form-control" placeholder="只给你自己看，不进业务判断">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><b>授权位</b>
+                    <span class="text-muted ml-2" style="font-size:0.85rem">
+                        建单后锁死，任何路径都不能改。没勾的就是没有 —— 真需要就等这单做完再开一单
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="auth-box">
+                        <label><input type="checkbox" name="modifyCode"> 修改代码</label>
+                        <label><input type="checkbox" name="commit"> commit</label>
+                        <label><input type="checkbox" name="push"> push</label>
+                        <label><input type="checkbox" name="release"> 发版</label>
+                        <label><input type="checkbox" name="dataWrite"> 数据写入</label>
+                        <label><input type="checkbox" name="migration"> 数据库迁移</label>
+                        <label><input type="checkbox" name="credential"> 生成凭证/密钥</label>
+                        <label><input type="checkbox" name="prodConfig"> 改生产配置</label>
+                        <label><input type="checkbox" name="securityGroup"> 改安全组</label>
+                        <label><input type="checkbox" name="firewall"> 改防火墙</label>
+                        <label><input type="checkbox" name="spend"> 花钱</label>
+                    </div>
+                    <div class="text-muted mt-2" style="font-size:0.82rem">
+                        一个都不勾 = 这单只能读，哨兵只能给你出方案、不能动手。
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-right mb-5">
+                <a th:href="@{/dispatch}" class="btn btn-outline-secondary">取消</a>
+                <button type="submit" class="btn btn-primary">建单（进待审核）</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
