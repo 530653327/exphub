@@ -444,7 +444,13 @@ public class DispatchService {
         if (open == null) return null;
         open.setStatus(finalStatus);
         open.setFinishedAt(LocalDateTime.now());
-        if (conclusion != null && !conclusion.isBlank()) open.setConclusion(conclusion);
+        // 2026-11-16 修：只在**原本没有结论**时补一句，不覆盖已有结论。
+        // 之前无条件覆盖，导致「回复继续」建的那条 item（结论=继续执行）
+        // 被下一轮 closeOpenItem 改写成「请求确认，本轮结束」—— 审计流水被篡改。
+        boolean noConclusion = open.getConclusion() == null || open.getConclusion().isBlank();
+        if (noConclusion && conclusion != null && !conclusion.isBlank()) {
+            open.setConclusion(conclusion);
+        }
         itemMapper.updateById(open);
         return open;
     }
