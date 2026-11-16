@@ -6208,7 +6208,10 @@ public class ExpHubTools {
             @ToolParam(description = "可选。只看某个单号的详情（含最近几轮 item）", required = false) String orderNo,
             @ToolParam(description = "可选。状态过滤：DRAFT/REVIEWING/READY/RUNNING/CONFIRMING/VERIFYING/DONE/CANCELLED；不传=全部", required = false) String status,
             @ToolParam(description = "可选。按角色过滤：指派给我或我创建的。不传=用当前角色的身份头", required = false) String role,
-            @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit) {
+            @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
+            @ToolParam(description = "可选。详情里带回多少轮 item，**默认 3**。"
+                    + "哨兵同一张单在同一条会话里推进时，之前干了什么模型自己记得，不需要全量；"
+                    + "**接手/会话重启/换人才需要历史，这时传大一点（上限 50）**。", required = false) Integer itemLimit) {
         try {
             int lim = limit == null ? 20 : Math.max(1, Math.min(limit, 50));
 
@@ -6234,9 +6237,18 @@ public class ExpHubTools {
                 if (its.isEmpty()) {
                     sb.append("\n（还没有任何 item —— 哨兵认领时会建第一条）\n");
                 } else {
-                    sb.append("\n**执行记录（共 ").append(its.size()).append(" 轮）**：\n");
-                    int from = Math.max(0, its.size() - 10);
-                    if (from > 0) sb.append("…前 ").append(from).append(" 轮省略…\n");
+                    // 2026-11-16 越哥：哨兵阁已实现「同一张单的多次唤醒都在同一会话里」，
+                    // 模型自己记得之前干了什么，所以默认只带最近 3 轮。
+                    // 但会话会断（进程挂了、上下文截断、换机器、换接单人），那时只有 item 能还原，
+                    // 所以留 itemLimit：接手或重启时传大一点，别把历史能力删掉。
+                    int keep = (itemLimit == null || itemLimit <= 0) ? 3 : Math.min(itemLimit, 50);
+                    sb.append("\n**执行记录（共 ").append(its.size()).append(" 轮）。\n");
+                    int from = Math.max(0, its.size() - keep);
+                    if (from > 0) {
+                        sb.append("…前 ").append(from).append(" 轮省略。")
+                          .append("同一条会话里你自己记得就不用管；接手或会话重启要全部历史，传 itemLimit=")
+                          .append(its.size()).append("。…\n");
+                    }
                     for (int i = from; i < its.size(); i++) {
                         com.exphub.entity.DispatchItem it = its.get(i);
                         sb.append("　[").append(it.getItemNo()).append("] ")
