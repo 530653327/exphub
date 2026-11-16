@@ -6083,6 +6083,18 @@ public class ExpHubTools {
         return (r == null || r.isBlank()) ? null : r.trim();
     }
 
+    /**
+     * 派单正文用的截断：**保留换行**。
+     *
+     * <p>不能复用 {@code abbreviate} —— 那个会把换行转成字面 {@code \n}（它是给 patch 报错回显用的），
+     * 正文里显示成 "第一句\n\n**我的建议方案**" 读起来像乱码。
+     */
+    private static String clipText(String s, int max) {
+        if (s == null) return "";
+        String t = s.trim();
+        return t.length() <= max ? t : t.substring(0, max) + "…";
+    }
+
     /** 当前调用者的 API Key —— 派单的隔离依据（同一 Key 下的助手共享派单）。 */
     private String callerApiKey() {
         AiAssistant a = getCaller();
@@ -6240,7 +6252,7 @@ public class ExpHubTools {
                         String itContent = it.getContent();
                         if (itContent != null && !itContent.isBlank()
                                 && !itContent.equals(it.getConclusion())) {
-                            sb.append("　　正文：").append(abbreviate(itContent, 300)).append("\n");
+                            sb.append("　　正文：").append(clipText(itContent, 300)).append("\n");
                         }
                     }
                 }
