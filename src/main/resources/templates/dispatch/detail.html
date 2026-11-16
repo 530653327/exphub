@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${order.orderNo} + ' - 派单'">派单详情 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 15px 22px; }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .st { padding: 4px 14px; border-radius: 20px; font-size: 0.9rem; }
+        .st-REVIEWING { background: #fff3cd; color: #856404; }
+        .st-READY { background: #d1ecf1; color: #0c5460; }
+        .st-RUNNING { background: #d4edda; color: #155724; }
+        .st-CONFIRMING { background: #f8d7da; color: #721c24; }
+        .st-VERIFYING { background: #e2d9f3; color: #432874; }
+        .st-DONE { background: #e9ecef; color: #383d41; }
+        .st-CANCELLED { background: #f1f3f5; color: #adb5bd; }
+        .chip { display: inline-block; padding: 4px 12px; margin: 0 6px 6px 0; border-radius: 15px; background: #f1f3f5; font-size: 0.85rem; }
+        .chip.on { background: #e94560; color: #fff; }
+        .kv { font-size: 0.92rem; margin-bottom: 6px; }
+        .kv b { display: inline-block; width: 76px; color: #6c757d; font-weight: 500; }
+        .desc { background: #fafafa; border-radius: 8px; padding: 14px 16px; white-space: pre-wrap; font-size: 0.92rem; }
+        .item-row td { vertical-align: middle !important; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/projects}"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <a th:href="@{/dispatch}" class="active"><i class="fas fa-paper-plane mr-2"></i> 派单</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/tool-stats}"><i class="fas fa-tools mr-2"></i> 工具统计</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="margin-top: 20px; padding: 0 20px;">
+            <a th:href="@{/profile/password}"><i class="fas fa-lock mr-2"></i> 修改密码</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="mb-3">
+            <a th:href="@{/dispatch}" class="text-muted" style="font-size:0.9rem"><i class="fas fa-arrow-left mr-1"></i> 返回列表</a>
+        </div>
+
+        <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <!-- 单子信息 -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <span style="font-family:monospace;font-size:1.05rem" th:text="${order.orderNo}"></span>
+                    <b class="ml-3" th:text="${order.title}"></b>
+                </div>
+                <span class="st" th:classappend="'st-' + ${order.status}" th:text="${labels[order.status]}"></span>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="kv"><b>来源</b>
+                            <span th:if="${order.origin == 'HUMAN'}" class="text-primary">人工创建</span>
+                            <span th:if="${order.origin == 'AI'}" class="text-secondary">AI 创建</span>
+                        </div>
+                        <div class="kv"><b>创建人</b><span th:text="${order.creator}"></span></div>
+                        <div class="kv"><b>指派给</b><span th:text="${order.assignee}"></span></div>
+                        <div class="kv"><b>接单人</b><span th:text="${order.accepter != null ? order.accepter : '还没人接'}"></span></div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="kv"><b>优先级</b><span th:text="${order.priority}"></span></div>
+                        <div class="kv"><b>创建时间</b><span th:text="${order.createdAt != null ? #temporals.format(order.createdAt,'MM-dd HH:mm') : ''}"></span></div>
+                        <div class="kv"><b>接单时间</b><span th:text="${order.acceptedAt != null ? #temporals.format(order.acceptedAt,'MM-dd HH:mm') : '—'}"></span></div>
+                        <div class="kv"><b>备注</b><span th:text="${order.remark != null ? order.remark : '—'}"></span></div>
+                    </div>
+                </div>
+
+                <hr>
+                <div class="mb-1" style="font-size:0.88rem;color:#6c757d">
+                    <b>授权位</b>（建单后锁死，任何路径都不能改。没勾的就是没有）
+                </div>
+                <div>
+                    <span th:each="a : ${granted}" class="chip on" th:text="${a}"></span>
+                    <span th:if="${granted.isEmpty()}" class="chip">无（只能读）</span>
+                </div>
+
+                <hr>
+                <div class="mb-1" style="font-size:0.88rem;color:#6c757d"><b>内容描述</b>（审核看的就是这一段）</div>
+                <div class="desc" th:text="${order.description}"></div>
+
+                <div th:if="${order.verifyNote != null}" class="mt-3 alert alert-warning mb-0 py-2" style="font-size:0.9rem">
+                    <b>验收意见</b>：<span th:text="${order.verifyNote}"></span>
+                </div>
+                <div th:if="${order.cancelReason != null}" class="mt-3 alert alert-secondary mb-0 py-2" style="font-size:0.9rem">
+                    <b>取消原因</b>：<span th:text="${order.cancelReason}"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作区：按状态显示 -->
+        <div class="card">
+            <div class="card-header"><b>我要做什么</b></div>
+            <div class="card-body">
+
+                <!-- 待审核 -->
+                <div th:if="${order.status == 'REVIEWING'}">
+                    <p class="text-muted" style="font-size:0.9rem">
+                        审核通过后单子进「待接单」，<b th:text="${order.assignee}"></b> 才能接。
+                        驳回等于作废整单，要重提请让它新建一张。
+                    </p>
+                    <form th:action="@{/dispatch/approve}" method="post" class="mb-3">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <div class="form-group mb-2">
+                            <input type="text" name="note" class="form-control" placeholder="审核备注（可选）">
+                        </div>
+                        <button type="submit" class="btn btn-primary">审核通过</button>
+                    </form>
+                    <form th:action="@{/dispatch/reject-review}" method="post"
+                          onsubmit="return confirm('驳回后这张单直接作废，要重提得新建。确定？')">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <div class="form-group mb-2">
+                            <input type="text" name="reason" class="form-control" placeholder="驳回原因（AI 会看到）">
+                        </div>
+                        <button type="submit" class="btn btn-outline-danger">驳回作废</button>
+                    </form>
+                </div>
+
+                <!-- 待确认 -->
+                <div th:if="${order.status == 'CONFIRMING'}">
+                    <p class="text-muted" style="font-size:0.9rem">
+                        哨兵在等你确认（问题见下面 item 流水最后一条）。回复完点「继续执行」，单子回到「进行中」。
+                    </p>
+                    <form th:action="@{/dispatch/reply}" method="post">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <div class="form-group mb-2">
+                            <textarea name="text" class="form-control" rows="3" placeholder="回复内容：做什么、怎么做、不要做什么"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">回复并继续执行</button>
+                    </form>
+                </div>
+
+                <!-- 待验收 -->
+                <div th:if="${order.status == 'VERIFYING'}">
+                    <p class="text-muted" style="font-size:0.9rem">
+                        验收意见见下面最后一条 item 的结论。通过就是终态；驳回必须写理由，单子回「进行中」重做。
+                    </p>
+                    <form th:action="@{/dispatch/verify-pass}" method="post" class="mb-3">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <div class="form-group mb-2">
+                            <input type="text" name="note" class="form-control" placeholder="验收备注（可选）">
+                        </div>
+                        <button type="submit" class="btn btn-primary">验收通过</button>
+                    </form>
+                    <form th:action="@{/dispatch/verify-reject}" method="post">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <div class="form-group mb-2">
+                            <input type="text" name="reason" class="form-control" placeholder="驳回理由（必填，哨兵照它改）" required>
+                        </div>
+                        <button type="submit" class="btn btn-outline-danger">驳回重做</button>
+                    </form>
+                </div>
+
+                <!-- 其它状态提示 -->
+                <div th:if="${order.status == 'READY'}">
+                    <p class="text-muted mb-0" style="font-size:0.9rem">已审核通过，等 <b th:text="${order.assignee}"></b> 认领。这里没有你要做的事。</p>
+                </div>
+                <div th:if="${order.status == 'RUNNING'}">
+                    <p class="text-muted mb-0" style="font-size:0.9rem">
+                        哨兵正在干。它要确认会自己把状态推到「待确认」；干完会推到「待验收」。
+                    </p>
+                </div>
+                <div th:if="${order.status == 'DONE'}">
+                    <p class="text-muted mb-0" style="font-size:0.9rem">已完成，这是终态。</p>
+                </div>
+                <div th:if="${order.status == 'CANCELLED'}">
+                    <p class="text-muted mb-0" style="font-size:0.9rem">已取消，这是终态。</p>
+                </div>
+
+                <!-- 取消：任何非终态都能做 -->
+                <div th:if="${order.status != 'DONE' and order.status != 'CANCELLED'}" class="mt-4 pt-3" style="border-top:1px dashed #e0e0e0">
+                    <form th:action="@{/dispatch/cancel}" method="post"
+                          onsubmit="return confirm('取消是整单结束，不能恢复。确定？')">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <div class="input-group">
+                            <input type="text" name="reason" class="form-control form-control-sm" placeholder="取消原因（可选）">
+                            <div class="input-group-append">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">取消整单</button>
+                            </div>
+                        </div>
+                    </form>
+                    <div class="text-muted mt-1" style="font-size:0.8rem">
+                        注意：取消 = 整单结束。「终止本轮」是哨兵的动作，只废掉当轮，不是取消整单。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- item 流水 -->
+        <div class="card">
+            <div class="card-header">
+                <b>执行记录</b>
+                <span class="text-muted ml-2" style="font-size:0.85rem">共 <span th:text="${items.size()}">0</span> 轮（每轮 = 一次模型唤醒）</span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table mb-0">
+                    <thead class="thead-light">
+                        <tr>
+                            <th style="width:180px">item</th>
+                            <th style="width:90px">发起</th>
+                            <th style="width:90px">指令</th>
+                            <th style="width:90px">状态</th>
+                            <th>结论 / 内容</th>
+                            <th style="width:130px">时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="it : ${items}" class="item-row">
+                            <td style="font-family:monospace;font-size:0.82rem" th:text="${it.itemNo}"></td>
+                            <td th:text="${it.creator}"></td>
+                            <td>
+                                <span th:if="${it.command == 'EXEC'}" class="badge badge-success">执行</span>
+                                <span th:if="${it.command == 'CONFIRM'}" class="badge badge-warning">确认</span>
+                                <span th:if="${it.command == 'TERMINATE'}" class="badge badge-secondary">终止</span>
+                            </td>
+                            <td>
+                                <span th:if="${it.status == 'RUNNING'}" class="text-success">进行中</span>
+                                <span th:if="${it.status == 'DONE'}" class="text-muted">已完成</span>
+                                <span th:if="${it.status == 'ERROR'}" class="text-danger">异常</span>
+                            </td>
+                            <td style="white-space:pre-wrap">
+                                <div th:if="${it.conclusion != null}" th:text="${it.conclusion}"></div>
+                                <div th:if="${it.content != null}" class="text-muted" style="font-size:0.85rem" th:text="${it.content}"></div>
+                            </td>
+                            <td style="font-size:0.82rem;color:#888"
+                                th:text="${it.createdAt != null ? #temporals.format(it.createdAt,'MM-dd HH:mm') : ''}"></td>
+                        </tr>
+                        <tr th:if="${items.isEmpty()}">
+                            <td colspan="6" class="text-center text-muted py-4">
+                                还没有任何 item。哨兵认领时才会建第一条（一开工就建，不是干完才建）。
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

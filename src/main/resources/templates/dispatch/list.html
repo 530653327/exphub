@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
+    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>派单 - 经验阁 ExpHub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f5f6fa; }
+        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
+        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+        .sidebar .brand span { color: #e94560; }
+        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
+        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
+        .main-content { margin-left: 220px; padding: 25px; }
+        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        .btn-primary { background: #e94560; border-color: #e94560; }
+        .st { padding: 3px 10px; border-radius: 20px; font-size: 0.8rem; white-space: nowrap; }
+        .st-REVIEWING { background: #fff3cd; color: #856404; }
+        .st-READY { background: #d1ecf1; color: #0c5460; }
+        .st-RUNNING { background: #d4edda; color: #155724; }
+        .st-CONFIRMING { background: #f8d7da; color: #721c24; }
+        .st-VERIFYING { background: #e2d9f3; color: #432874; }
+        .st-DONE { background: #e9ecef; color: #383d41; }
+        .st-CANCELLED { background: #f1f3f5; color: #adb5bd; }
+        .st-DRAFT { background: #f1f3f5; color: #6c757d; }
+        .chip { display: inline-block; padding: 3px 10px; margin: 0 6px 6px 0; border-radius: 15px; background: #f1f3f5; font-size: 0.82rem; }
+        .chip.on { background: #e94560; color: #fff; }
+        table td { vertical-align: middle !important; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">经验<span>阁</span> ExpHub</div>
+        <a th:href="@{/dashboard}"><i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <a th:href="@{/docs}"><i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <a th:href="@{/projects}"><i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <a th:href="@{/dispatch}" class="active"><i class="fas fa-paper-plane mr-2"></i> 派单</a>
+        <a th:href="@{/assistants}"><i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <a th:href="@{/logs}"><i class="fas fa-history mr-2"></i> 调用日志</a>
+        <a th:href="@{/tool-stats}"><i class="fas fa-tools mr-2"></i> 工具统计</a>
+        <a th:href="@{/templates}"><i class="fas fa-file-alt mr-2"></i> 模板管理</a>
+        <div style="margin-top: 20px; padding: 0 20px;">
+            <a th:href="@{/profile/password}"><i class="fas fa-lock mr-2"></i> 修改密码</a>
+        </div>
+        <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
+            <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;"><i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="topbar">
+            <h4 class="mb-0"><i class="fas fa-paper-plane mr-2" style="color:#e94560"></i>派单</h4>
+            <div>
+                <a th:href="@{/dispatch}" class="btn btn-sm btn-outline-secondary">全部</a>
+                <a th:href="@{/dispatch(status='REVIEWING')}" class="btn btn-sm btn-outline-warning">待审核</a>
+                <a th:href="@{/dispatch(status='READY')}" class="btn btn-sm btn-outline-info">待接单</a>
+                <a th:href="@{/dispatch(status='RUNNING')}" class="btn btn-sm btn-outline-success">进行中</a>
+                <a th:href="@{/dispatch(status='CONFIRMING')}" class="btn btn-sm btn-outline-danger">待确认</a>
+                <a th:href="@{/dispatch(status='VERIFYING')}" class="btn btn-sm btn-outline-primary">待验收</a>
+            </div>
+        </div>
+
+        <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <div class="card">
+            <div class="card-header bg-white">
+                <b>共 <span th:text="${orders.size()}">0</span> 张单</b>
+                <span class="text-muted ml-3" style="font-size:0.85rem">
+                    待审核 <b th:text="${counts['REVIEWING']}">0</b> ·
+                    待接单 <b th:text="${counts['READY']}">0</b> ·
+                    进行中 <b th:text="${counts['RUNNING']}">0</b> ·
+                    待确认 <b th:text="${counts['CONFIRMING']}">0</b> ·
+                    待验收 <b th:text="${counts['VERIFYING']}">0</b>
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead class="thead-light">
+                        <tr>
+                            <th style="width:190px">单号</th>
+                            <th>标题</th>
+                            <th style="width:90px">状态</th>
+                            <th style="width:70px">来源</th>
+                            <th style="width:90px">指派</th>
+                            <th style="width:90px">接单</th>
+                            <th style="width:70px">优先级</th>
+                            <th style="width:150px">更新时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="o : ${orders}">
+                            <td><a th:href="@{'/dispatch/' + ${o.orderNo}}" th:text="${o.orderNo}" style="font-family:monospace"></a></td>
+                            <td th:text="${o.title}"></td>
+                            <td><span class="st" th:classappend="'st-' + ${o.status}" th:text="${labels[o.status]}"></span></td>
+                            <td>
+                                <span th:if="${o.origin == 'HUMAN'}" class="text-primary">人工</span>
+                                <span th:if="${o.origin == 'AI'}" class="text-secondary">AI</span>
+                            </td>
+                            <td th:text="${o.assignee}"></td>
+                            <td th:text="${o.accepter != null ? o.accepter : '—'}"></td>
+                            <td th:text="${o.priority}"></td>
+                            <td th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt, 'MM-dd HH:mm') : ''}" style="font-size:0.85rem;color:#888"></td>
+                        </tr>
+                        <tr th:if="${orders.isEmpty()}">
+                            <td colspan="8" class="text-center text-muted py-5">
+                                还没有任何单。AI 通过 dispatch_create 建单后会出现在这里，等你审核。
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="mt-3 text-muted" style="font-size:0.85rem">
+            ⚠️ 审核、验收、取消都只能在这里做，MCP 工具里没有这些动作 —— 闸门必须在人手里。
+        </div>
+    </div>
+</body>
+</html>

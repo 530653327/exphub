@@ -473,4 +473,177 @@ public class DispatchService {
             default -> code;
         };
     }
+
+    // ==================== 后台动作（只有越哥，只走网页，不做 MCP 入口）====================
+
+    /**
+     * 后台操作人固定记为「越哥」。
+     *
+     * <p>系统里只有一个人用后台（越哥 2026-11-16 明确：「这个系统中使用的人类只有我一个」）。
+     * 不取 Spring Security 的登录名，那个是 admin，写进业务表反而对不上。
+     */
+    public static final String HUMAN_OPERATOR = "越哥";
+
+    /**
+     * 审核通过：REVIEWING → READY。
+     *
+     * <p><b>这是 AI 建单唯一的出口</b>，只由后台网页调用 —— MCP 里没有这个动作，
+     * 所以 AI 物理上没法自己批自己。
+     */
+    @Transactional
+    public Outcome approve(String orderNo, String note) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (!DispatchHeader.ST_REVIEWING.equals(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus()) + "」，只有「待审核」能审。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_REVIEWING)
+                .set("status", DispatchHeader.ST_READY)
+                .set("reviewer", HUMAN_OPERATOR)
+                .set("reviewed_at", now)
+                .set("updated_at", now)
+                .set("remark", note == null || note.isBlank() ? h.getRemark() : note));
+        if (rows == 0) return Outcome.fail("状态已变化，审核未生效，请刷新重试。");
+        log.info("DispatchService.approve: order={} 已审核通过 → READY", orderNo);
+        return Outcome.success("已审核通过，单子进入「待接单」，哨兵可以接了。", get(orderNo), null);
+    }
+
+    /** 审核驳回：REVIEWING → CANCELLED。要重提就新建一张，不要在旧单上改 —— 审核绑的是当时那份内容。 */
+    @Transactional
+    public Outcome rejectReview(String orderNo, String reason) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (!DispatchHeader.ST_REVIEWING.equals(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus()) + "」，只有「待审核」能驳回。");
+        }
+        String why = (reason == null || reason.isBlank()) ? "审核未通过（未填原因）" : reason;
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_REVIEWING)
+                .set("status", DispatchHeader.ST_CANCELLED)
+                .set("reviewer", HUMAN_OPERATOR)
+                .set("reviewed_at", now)
+                .set("cancel_reason", "审核驳回：" + why)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化，驳回未生效，请刷新重试。");
+        return Outcome.success("已驳回，单子已取消。要重提请新建一张。", get(orderNo), null);
+    }
+
+    /** 验收通过：VERIFYING → DONE。终态，后面没有动作了。 */
+    @Transactional
+    public Outcome verifyPass(String orderNo, String note) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (!DispatchHeader.ST_VERIFYING.equals(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus()) + "」，只有「待验收」能验。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_VERIFYING)
+                .set("status", DispatchHeader.ST_DONE)
+                .set("verifier", HUMAN_OPERATOR)
+                .set("verified_at", now)
+                .set("verify_note", note == null || note.isBlank() ? "验收通过" : note)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化，验收未生效，请刷新重试。");
+        closeOpenItem(h, HUMAN_OPERATOR, "验收通过", DispatchItem.ST_DONE);
+        log.info("DispatchService.verifyPass: order={} 验收通过 → DONE", orderNo);
+        return Outcome.success("验收通过，单子已完成。", get(orderNo), null);
+    }
+
+    /**
+     * 验收驳回：VERIFYING → RUNNING，**必须填理由**（哨兵照它改）。
+     *
+     * <p>驳回要建一条 item：这是一次传球，球回到哨兵手上，它得知道这一轮要干什么。
+     */
+    @Transactional
+    public Outcome verifyReject(String orderNo, String reason) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (reason == null || reason.isBlank()) {
+            return Outcome.fail("驳回必须写理由，否则哨兵不知道要改什么。");
+        }
+        if (!DispatchHeader.ST_VERIFYING.equals(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus()) + "」，只有「待验收」能驳回。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_VERIFYING)
+                .set("status", DispatchHeader.ST_RUNNING)
+                .set("verifier", HUMAN_OPERATOR)
+                .set("verified_at", now)
+                .set("verify_note", reason)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化，驳回未生效，请刷新重试。");
+
+        DispatchItem it = newItem(h, HUMAN_OPERATOR, DispatchItem.CMD_EXEC, false,
+                "验收驳回", reason, DispatchItem.ST_RUNNING);
+        return Outcome.success("已驳回，球回到「" + h.getAssignee() + "」。item " + it.getItemNo(), get(orderNo), it);
+    }
+
+    /** 取消整单：任意非终态 → CANCELLED。和 item 终止不是一回事，这里是整单结束。 */
+    @Transactional
+    public Outcome cancel(String orderNo, String reason) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (!LIVE_STATUSES.contains(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus()) + "」，已经是终态，不能再取消。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .in("status", LIVE_STATUSES)
+                .set("status", DispatchHeader.ST_CANCELLED)
+                .set("cancel_reason", (reason == null || reason.isBlank()) ? "人工取消" : reason)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化，取消失未生效，请刷新重试。");
+        closeOpenItem(h, HUMAN_OPERATOR, "整单取消", DispatchItem.ST_ERROR);
+        log.info("DispatchService.cancel: order={} 已取消", orderNo);
+        return Outcome.success("整单已取消，后面没有任何动作了。", get(orderNo), null);
+    }
+
+    /**
+     * 人工单在「待确认」时的回复（越哥本人在后台点）。
+     *
+     * <p>与 MCP 的 {@link #reply} 对称，但**不校验 actor** —— 这个入口只有后台能调，
+     * 而 MCP 那条对人工单是明确拒的。
+     */
+    @Transactional
+    public Outcome humanReply(String orderNo, String text) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (!DispatchHeader.ST_CONFIRMING.equals(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus()) + "」，只有「待确认」能回复。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_CONFIRMING)
+                .set("status", DispatchHeader.ST_RUNNING)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化，回复未生效，请刷新重试。");
+
+        DispatchItem it = newItem(h, HUMAN_OPERATOR, DispatchItem.CMD_EXEC, false, "继续执行",
+                text == null ? "" : text, DispatchItem.ST_RUNNING);
+        return Outcome.success("已回复并继续执行，球回到「" + h.getAssignee() + "」。item " + it.getItemNo(),
+                get(orderNo), it);
+    }
+
+    /** 后台列表用：按状态统计各多少张，给页面顶部做角标。 */
+    public java.util.Map<String, Long> countByStatus() {
+        java.util.Map<String, Long> m = new java.util.LinkedHashMap<>();
+        for (String st : List.of(DispatchHeader.ST_REVIEWING, DispatchHeader.ST_READY,
+                DispatchHeader.ST_RUNNING, DispatchHeader.ST_CONFIRMING,
+                DispatchHeader.ST_VERIFYING, DispatchHeader.ST_DONE, DispatchHeader.ST_CANCELLED)) {
+            Long c = headerMapper.selectCount(new QueryWrapper<DispatchHeader>().eq("status", st));
+            m.put(st, c == null ? 0L : c);
+        }
+        return m;
+    }
 }
