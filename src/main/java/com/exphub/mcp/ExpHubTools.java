@@ -110,7 +110,7 @@ public class ExpHubTools {
      * 🔔 检查待办事项 - 连接后优先调用
      * 重要提示：本MCP连接后，请优先调用 check_my_todos() 检查是否有待处理任务！
      */
-    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查本助手记录的待办（todo_list）。默认只看全局 ACTIVE；要看项目/已完成/归档传 projectId/status。⚠️ 完成后用 update_experience_status 标 COMPLETED。")
+    @Tool(name = "check_my_todos", description = "【连接后请优先调用】检查本助手记录的待办（todo_list）。默认只看全局 ACTIVE；要看项目/已完成/归档传 projectId/status。⚠️ 完成后用 update_experience(id, status='COMPLETED') 标完成。")
     public String checkMyTodos(
             @ToolParam(description = "可选。只看某个项目的待办，填项目ID（用 list_projects 查）。不传 或传 0 = 全局待办", required = false) Long projectId,
             @ToolParam(description = "可选。状态过滤，默认 ACTIVE（未完成）。可选 ACTIVE / COMPLETED / DEPRECATED / BROKEN，传 ALL 表示不限状态", required = false) String status) {
@@ -166,7 +166,7 @@ public class ExpHubTools {
             }
             
             sb.append("\n使用 get_experience_detail(id=?) 查看具体任务详情。\n");
-            sb.append("⚠️ 重要提醒：完成任何待办事项后，请立即调用 update_experience_status(id=?, status=\"COMPLETED\") 标记为已完成，否则任务会一直显示在待办列表中。");
+            sb.append("⚠️ 重要提醒：完成任何待办事项后，请立即调用 update_experience(id=?, status=\"COMPLETED\") 标记为已完成，否则任务会一直显示在待办列表中。");
             
             return sb.toString();
         } catch (Exception e) {
@@ -1664,70 +1664,6 @@ public class ExpHubTools {
     /**
      * 更新经验状态
      */
-    @Tool(name = "update_experience_status", description = "更新经验状态。")
-    public String updateExperienceStatus(
-            @ToolParam(description = "经验ID（必填）") Long id,
-            @ToolParam(description = "新状态，可选值：ACTIVE(正常)、COMPLETED(已完成)、BROKEN(已失效)、DEPRECATED(已过期)") String status,
-            @ToolParam(description = "可选。**谁改的**——仅写调用日志，不影响版本快照", required = false) String updatedName) {
-        
-        try {
-            AiAssistant assistant = getCaller();
-            // ⚠️ 2026-10-25 修：`updatedName` 原来声明了却零使用。
-            // 参数说明承诺「只写调用日志」，可日志里连签名都没有 —— 承诺了没兑现。
-            // 现在真的写进日志，并在回执里显示，让调用方能自证署名生效（红线：回执必须自证值）。
-            String operator = resolveAuthor(updatedName, assistant);
-            log.info("ExpHubTools.updateExperienceStatus: ENTRY - id={}, status={}, operator={}",
-                    id, status, operator);
-
-            // 权限验证
-            if (assistant != null && !Boolean.TRUE.equals(assistant.getCanUpdate())) {
-                return "❌ 权限不足：该API Key没有编辑经验的权限";
-            }
-            
-            // 校验状态值
-            String upperStatus = status != null ? status.toUpperCase() : "";
-            // M10：待删必须走专用工具（要带原因，且删不删由用户定），这里挡掉绕过路径
-            if (DocService.PENDING_DELETE.equals(upperStatus)) {
-                return "❌ 待删标记不能用状态接口设置。请改用 mark_for_deletion(id, reason)："
-                        + "它要求说明删除原因，且是否真删由用户在后台确认。";
-            }
-            if (!List.of("ACTIVE", "COMPLETED", "BROKEN", "DEPRECATED").contains(upperStatus)) {
-                return "❌ 无效的状态值: " + status + "，可选：ACTIVE、COMPLETED、BROKEN、DEPRECATED";
-            }
-            
-            // 检查经验是否存在
-            Doc existing = docService.getById(id);
-            if (existing == null) {
-                return "❌ 未找到ID为" + id + "的经验";
-            }
-
-            // ⚠️ 2026-10-26 16:5x 阁主实跑标记链路发现（反向路径）：
-            //    已标待删的文档能用这个接口把状态改成 ACTIVE —— 等于 AI 自行撤回了
-            //    「等用户确认」这道闸门，还顺手把 delete_reason / delete_marked_by 留在库里
-            //    （updateStatus 只改 status，不清待删字段）。
-            //    待删的进出必须走专用工具：进 = mark_for_deletion，出 = cancel_deletion。
-            if (DocService.PENDING_DELETE.equals(existing.getStatus())) {
-                return "❌ 该经验当前是「待删」状态，不能用状态接口改它。\n\n"
-                     + "**ID**: " + id + "\n**标题**: " + existing.getTitle()
-                     + "\n**当前状态**: " + getStatusLabel(existing.getStatus())
-                     + "\n\n待删标记的进与出必须走专用工具（闸门在用户手里，不在 AI 手里）：\n"
-                     + "· 撤销待删 → `cancel_deletion(id=" + id + ")`（它会同时清掉删除原因与标记人）\n"
-                     + "· 改成别的状态 → 先 `cancel_deletion(id=" + id + ")`，再调本工具改状态";
-            }
-
-            Doc updated = docService.updateStatus(id, upperStatus, operator);
-            String statusLabel = getStatusLabel(upperStatus);
-            
-            return "✅ 经验状态已更新！\n\n**ID**: " + id + "\n**标题**: " + updated.getTitle()
-                    + "\n**新状态**: " + statusLabel
-                    + "\n**操作人**: " + operator + "（只记日志，不改版本快照）"
-                    + "\n\n注意：非ACTIVE状态的经验默认不会被 search_experience 搜索到，其他AI助手将不会看到此经验。";
-        } catch (Exception e) {
-            log.error("ExpHubTools.updateExperienceStatus: FAILED", e);
-            callLogService.incrementFailCalls();
-            return "更新状态失败: " + e.getClass().getName() + " - " + e.getMessage();
-        }
-    }
 
     /**
      * M10：标记经验为待删（AI 侧唯一可用的「删除」动作）。
@@ -2050,7 +1986,10 @@ public class ExpHubTools {
                     + "**不传 = 正文有变更时记为一次验证（当前时间）；只改 tags/title/summary 等元数据则不刷新**"
                     + "（口径「内容变更即验证」，白名单只认 content）；"
                     + "只改错字/润色、结论没重新确认过时，传原来的验证时间（get_experience_detail 回执里有）表示不刷新。"
-                    + "格式不认识会直接报错，不会静默忽略。", required = false) String verifiedAt) {
+                    + "格式不认识会直接报错，不会静默忽略。", required = false) String verifiedAt,
+            @ToolParam(description = "可选。新状态：ACTIVE(正常)/COMPLETED(已完成)/BROKEN(已失效)/DEPRECATED(已过期)。"
+                    + "**只传 status、其他字段都不传 = 只改状态，不产生版本快照**（原 update_experience_status 已并入本工具）。"
+                    + "待删(PENDING_DELETE)的进与出必须走 mark_for_deletion / cancel_deletion，这里挡。", required = false) String status) {
         
         try {
             log.info("ExpHubTools.updateExperience: ENTRY - id={}, title={}, force={}", id, title, force);
@@ -2061,6 +2000,9 @@ public class ExpHubTools {
                 return "❌ 权限不足：该API Key没有编辑经验的权限";
             }
             
+            // 2026-11-16：状态变更并入本工具后，updateStatus 需要署名（与原 update_experience_status 一致）
+            String operator = resolveAuthor(updatedName, assistant);
+
             // 验证时间参数先解析：格式错要在任何写库动作之前拦下
             java.time.LocalDateTime verified;
             try {
@@ -2075,6 +2017,29 @@ public class ExpHubTools {
                 return "❌ 未找到ID为" + id + "的经验";
             }
             
+            // === 2026-11-16 合并 update_experience_status（越哥砍工具名额，47→46）===
+            // 语义与原工具一字不差：只改状态、不产生版本快照、待删的进出仍走专用工具。
+            // 校验必须在前 —— 状态非法时后面不能发生任何写库动作。
+            String upperStatus = null;
+            if (status != null && !status.trim().isEmpty()) {
+                upperStatus = status.trim().toUpperCase(java.util.Locale.ROOT);
+                if (DocService.PENDING_DELETE.equals(upperStatus)) {
+                    return "❌ 待删标记不能用状态参数设置。请改用 mark_for_deletion(id, reason)："
+                         + "它要求说明删除原因，且是否真删由用户在后台确认。";
+                }
+                if (!List.of("ACTIVE", "COMPLETED", "BROKEN", "DEPRECATED").contains(upperStatus)) {
+                    return "❌ 无效的状态值: " + status + "，可选：ACTIVE、COMPLETED、BROKEN、DEPRECATED";
+                }
+                if (DocService.PENDING_DELETE.equals(existing.getStatus())) {
+                    return "❌ 该经验当前是「待删」状态，不能用状态参数改它。\n\n"
+                         + "**ID**: " + id + "\n**标题**: " + existing.getTitle()
+                         + "\n**当前状态**: " + getStatusLabel(existing.getStatus()) + "\n\n"
+                         + "待删标记的进与出必须走专用工具（闸门在用户手里，不在 AI 手里）：\n"
+                         + "· 撤销待删 → `cancel_deletion(id=" + id + ")`（它会同时清掉删除原因与标记人）\n"
+                         + "· 改成别的状态 → 先 `cancel_deletion(id=" + id + ")`，再调本工具";
+                }
+            }
+
             // === A5 B 方案：整篇写回必须带 originalHash（2026-10-30）===
             // 取代原来的「新内容更短且以旧正文开头」字数启发式。旧判定的盲区：
             // 读到前 2 万字、随手加两句，总长比原文还长 → 字数看起来「没缩水」，中间那 1 万字照丢。
@@ -2144,6 +2109,17 @@ public class ExpHubTools {
                 changedFields.add("验证时间");
             }
 
+            // 2026-11-16：只改状态（无其他字段、不改归属、不改验证时间）→ 轻量路径。
+            // 必须跳过 docService.update，否则会生一个内容没变的版本快照 ——
+            // 旧 update_experience_status 承诺的就是「不改版本快照」，合并后这条不能变。
+            if (upperStatus != null && changedFields.isEmpty() && projectId == null && verified == null) {
+                Doc statusUpdated = docService.updateStatus(id, upperStatus, operator);
+                return "✅ 经验状态已更新！\n\n**ID**: " + id + "\n**标题**: " + statusUpdated.getTitle()
+                        + "\n**新状态**: " + getStatusLabel(upperStatus)
+                        + "\n**操作人**: " + operator + "（只记日志，不改版本快照）"
+                        + "\n\n注意：非ACTIVE状态的经验默认不会被 search_experience 搜索到，其他AI助手将不会看到此经验。";
+            }
+
             // 一个字段都没变 + 也没要求改归属 → 明确告知「什么都没改」，不要报假成功
             if (changedFields.isEmpty() && projectId == null) {
                 return "⚠️ 没有任何字段被修改：所有参数都是空值，或与传入值相同。\n\n"
@@ -2177,6 +2153,12 @@ public class ExpHubTools {
             docService.update(id, updateDoc, clearSet, updatedName, origin);
             if (changeScope) {
                 docService.updateProjectId(id, targetProjectId);
+            }
+
+            // 状态与其他字段一起改：上面走的是内容/元数据路径，状态列还没落库，这里补上
+            if (upperStatus != null) {
+                docService.updateStatus(id, upperStatus, operator);
+                changedFields.add("状态→" + getStatusLabel(upperStatus));
             }
 
             // E9：回显改动，让调用方当场就能核对，不必再读一次

@@ -357,8 +357,10 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-16 信箱功能整体移除（越哥要求）：mail_start / mail_send / mail_thread 三个工具一并删除，
         //            工具数 50 → 47。这是**唯一一次工具数下降**，红线 13（冻结 50）仍有效，只是上限更低。
         //            参数 217 → 186（三个信箱工具共 31 个 @ToolParam 一并消失）。
-        assertEquals(47, toolCount, "工具数变了（47 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(186, paramCount, "参数数变了（186 → " + paramCount + "），需要同步 README/门户/本断言");
+        // 2026-11-16 合并 update_experience_status → update_experience（越哥砍一个工具名额）：
+        //            工具数 47 → 46，参数 186 → 184（去掉它的 3 个参数、update_experience 加 status 1 个）。
+        assertEquals(46, toolCount, "工具数变了（46 → " + toolCount + "），需要同步 README/门户/本断言");
+        assertEquals(184, paramCount, "参数数变了（184 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

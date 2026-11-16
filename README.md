@@ -265,10 +265,9 @@ docker compose restart exphub  # 重启应用
 | `get_experience_history` | 查看经验的历史版本（平台每次更新自动留存快照） |
 | `get_template` | 获取创建经验的模板 |
 | `create_experience` | 创建新经验 |
-| `update_experience` | 更新已有经验的**指定字段**（不传=不改）；要清空字段用 `clearFields` 显式声明；可改 `templateType`、`projectId`（0=移回全局） |
+| `update_experience` | 更新已有经验的**指定字段**（不传=不改）；要清空字段用 `clearFields` 显式声明；可改 `templateType`、`projectId`（0=移回全局） / 状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED） |
 | `append_experience` | **在正文末尾追加一段**（服务端拼接，不读全文 → 不会因截断丢原文）。补充进展的首选 |
 | `patch_experience` | **局部替换**正文（find→replace，必须唯一命中）。改错字/更新一行结论的首选，别用整篇写回 |
-| `update_experience_status` | 更新经验生命周期状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED） |
 | `export_document` | 导出完整文档（无截断，适合长文档） |
 | `import_document` | 导入替换内容（与 export 配对，自动留存版本快照） |
 | `report_experience_result` | 反馈经验是否有帮助（成功/失败都建议反馈） |

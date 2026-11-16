@@ -49,8 +49,7 @@ public class InfoController {
             "get_experience_detail: 获取经验的详细内容",
             "get_template: 获取创建经验的模板格式（8种模板可选）",
             "create_experience: 创建新经验记录",
-            "update_experience: 更新已有经验内容",
-            "update_experience_status: 更新经验状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED）"
+            "update_experience: 更新已有经验的字段（含 status 状态：ACTIVE/COMPLETED/BROKEN/DEPRECATED）"
         });
 
         // 使用指南 - 让AI在连接后第一时间读取
@@ -60,7 +59,7 @@ public class InfoController {
             "3. **开始任务前**：用 search_experience 搜索是否已有相关经验可借鉴",
             "4. **创建经验前**：先调 get_template() 选择模板，再调 get_template(type=xxx) 获取格式",
             "5. **完成任务后**：用 create_experience 记录新学到的方法",
-            "6. **维护经验时**：用 update_experience 修正错误，用 update_experience_status 标记状态"
+            "6. **维护经验时**：用 update_experience 修正错误，传 status 参数可标记状态（ACTIVE/COMPLETED/BROKEN/DEPRECATED）"
         });
 
         // 快速开始 - 简明步骤
