@@ -52,6 +52,47 @@ public class DispatchService {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
 
+    /**
+     * 角色别名 → 汉字正名。
+     *
+     * <p><b>为什么必须有这张表</b>（2026-11-16 实测）：HTTP 头只能放 ASCII，
+     * 客户端配 {@code x-exphub-role: 穷奇} 会被 Netty 直接 400 拒掉；配拼音 {@code qiongqi}
+     * 能进来，但和单子上的「穷奇」永远匹配不上 —— 认领、回复全会被判「不是你」。
+     * 所以入口必须归一。
+     *
+     * <p><b>这是权宜</b>：正解是角色名落库（旧的 mail_roles 已随信箱删除）。
+     * 新增角色时**必须同步这里**，否则新角色一律匹配不上。
+     */
+    private static final java.util.Map<String, String> ROLE_ALIASES = java.util.Map.ofEntries(
+            java.util.Map.entry("zhulong", "烛龙"),
+            java.util.Map.entry("baize", "白泽"),
+            java.util.Map.entry("gezhu", "阁主"),
+            java.util.Map.entry("pixiu", "貔貅"),
+            java.util.Map.entry("yazi", "睚眦"),
+            java.util.Map.entry("qilin", "麒麟"),
+            java.util.Map.entry("fenghuang", "凤凰"),
+            java.util.Map.entry("chongmingniao", "重明鸟"),
+            java.util.Map.entry("jiuweihu", "九尾狐"),
+            java.util.Map.entry("dijiang", "帝江"),
+            java.util.Map.entry("qiongqi", "穷奇"),
+            java.util.Map.entry("luwu", "陆吾"),
+            java.util.Map.entry("taotie", "饕餮"),
+            java.util.Map.entry("yuege", "越哥"),
+            java.util.Map.entry("human", "越哥"));
+
+    /**
+     * 把客户端传来的角色（拼音或汉字）归一成汉字正名。认不出就原样返回。
+     *
+     * <p>所有入口（建单 / 认领 / 动作 / 回复）都必须过这一层，否则会出现
+     * 「库里存 qiongqi、单子上写穷奇」这种半套数据，之后谁都对不上。
+     */
+    public static String canonicalRole(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim();
+        if (t.isEmpty()) return t;
+        return ROLE_ALIASES.getOrDefault(t.toLowerCase(java.util.Locale.ROOT), t);
+    }
+
     @Autowired
     private DispatchHeaderMapper headerMapper;
 
@@ -76,6 +117,8 @@ public class DispatchService {
     @Transactional
     public Outcome create(String creator, String origin, String assignee, String title, String description,
                           Integer priority, Long projectId, java.util.Map<String, Boolean> auths) {
+        creator = canonicalRole(creator);
+        assignee = canonicalRole(assignee);
         if (creator == null || creator.isBlank()) return Outcome.fail("创建人不能为空");
         if (assignee == null || assignee.isBlank()) return Outcome.fail("必须指派一个哨兵（assignee）");
         if (title == null || title.isBlank()) return Outcome.fail("标题不能为空");
@@ -204,6 +247,7 @@ public class DispatchService {
      */
     @Transactional
     public Outcome claim(String orderNo, String role) {
+        role = canonicalRole(role);
         if (role == null || role.isBlank()) return Outcome.fail("认领必须先确定你是谁（角色头未配置？）");
         DispatchHeader h = get(orderNo);
         if (h == null) return Outcome.fail("未找到单号 " + orderNo);
@@ -268,6 +312,7 @@ public class DispatchService {
      */
     @Transactional
     public Outcome reply(String orderNo, String actor, String text) {
+        actor = canonicalRole(actor);
         DispatchHeader h = get(orderNo);
         if (h == null) return Outcome.fail("未找到单号 " + orderNo);
         if (DispatchHeader.ORIGIN_HUMAN.equals(h.getOrigin())) {
@@ -348,7 +393,8 @@ public class DispatchService {
     // ==================== 内部工具 ====================
 
     /** 认领类动作的统一前置校验：单存在、是指派给你、状态对。返回 null 表示通过。 */
-    private Outcome guardAssigneeAndStatus(DispatchHeader h, String role, String expectStatus, String action) {
+    private Outcome guardAssigneeAndStatus(DispatchHeader h, String roleIn, String expectStatus, String action) {
+        String role = canonicalRole(roleIn);
         if (h == null) return Outcome.fail("未找到该单号");
         if (role == null || role.isBlank()) return Outcome.fail("无法确定你是谁（角色头未配置？）");
         if (!role.trim().equals(h.getAssignee())) {

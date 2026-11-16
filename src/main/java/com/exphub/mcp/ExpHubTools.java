@@ -6231,6 +6231,8 @@ public class ExpHubTools {
             }
 
             String r = (role == null || role.isBlank()) ? dispatchRole() : role.trim();
+            // 归一：客户端只能传拼音（中文 header 会被 HTTP 层 400），库里存的是汉字
+            r = com.exphub.service.DispatchService.canonicalRole(r);
             java.util.List<com.exphub.entity.DispatchHeader> list = dispatchService.list(r, status, null, lim);
             if (list.isEmpty()) {
                 return "📋 没有符合条件的单（角色=" + r + "，状态="
