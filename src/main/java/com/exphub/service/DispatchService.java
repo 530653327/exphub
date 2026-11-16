@@ -270,7 +270,8 @@ public class DispatchService {
             return Outcome.fail("认领失败：这张单刚被别人接走或状态已变，请重新查一次。");
         }
 
-        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, false, null, "认领开工");
+        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, false, null, "认领开工",
+                DispatchItem.ST_RUNNING);
         return Outcome.success("已认领 " + h.getOrderNo() + "，状态 → 进行中。item " + it.getItemNo() + " 已开工。",
                 get(h.getOrderNo()), it);
     }
@@ -284,6 +285,7 @@ public class DispatchService {
         if (proposal == null || proposal.isBlank()) {
             return Outcome.fail("提问必须自带建议方案：只抛问题不许过（防 ping-pong 的硬规矩）。");
         }
+        role = canonicalRole(role);
         DispatchHeader h = get(orderNo);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "请求确认");
         if (guard != null) return guard;
@@ -300,7 +302,8 @@ public class DispatchService {
 
         String body = (question == null ? "" : question)
                 + "\n\n**我的建议方案**：" + proposal;
-        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_CONFIRM, true, "需要确认", body);
+        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_CONFIRM, true, "需要确认", body,
+                DispatchItem.ST_DONE);
         return Outcome.success("已把球传给「" + ballOwnerLabel(h) + "」，等待确认。item " + it.getItemNo(), get(orderNo), it);
     }
 
@@ -333,7 +336,8 @@ public class DispatchService {
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，回复未生效，请重新查一次。");
 
-        DispatchItem it = newItem(h, actor.trim(), DispatchItem.CMD_EXEC, false, "继续执行", text);
+        DispatchItem it = newItem(h, actor.trim(), DispatchItem.CMD_EXEC, false, "继续执行", text,
+                DispatchItem.ST_RUNNING);
         return Outcome.success("已回复并继续执行，球回到「" + h.getAssignee() + "」。item " + it.getItemNo(), get(orderNo), it);
     }
 
@@ -342,6 +346,7 @@ public class DispatchService {
      */
     @Transactional
     public Outcome submitAccept(String orderNo, String role, String conclusion) {
+        role = canonicalRole(role);
         DispatchHeader h = get(orderNo);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "提交验收");
         if (guard != null) return guard;
@@ -358,7 +363,8 @@ public class DispatchService {
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，提交验收未生效，请重新查一次。");
 
-        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, conclusion, conclusion);
+        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, conclusion, conclusion,
+                DispatchItem.ST_DONE);
         return Outcome.success("已提交验收，等越哥判断。item " + it.getItemNo(), get(orderNo), it);
     }
 
@@ -370,6 +376,7 @@ public class DispatchService {
      */
     @Transactional
     public Outcome terminate(String orderNo, String role, String reason) {
+        role = canonicalRole(role);
         DispatchHeader h = get(orderNo);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "终止本轮");
         if (guard != null) return guard;
@@ -385,7 +392,7 @@ public class DispatchService {
         if (rows == 0) return Outcome.fail("状态已变化，终止未生效，请重新查一次。");
 
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_TERMINATE, true,
-                "已终止本轮", reason == null ? "" : reason);
+                "已终止本轮", reason == null ? "" : reason, DispatchItem.ST_DONE);
         return Outcome.success("本轮已终止，header 已进「待确认」等通知（单子没有结束）。item " + it.getItemNo(),
                 get(orderNo), it);
     }
@@ -426,7 +433,8 @@ public class DispatchService {
 
     /** 为一单开新一轮 item，轮次 = 当前最大 seq + 1。 */
     private DispatchItem newItem(DispatchHeader h, String creator, String command,
-                                 boolean replyRequired, String conclusion, String content) {
+                                 boolean replyRequired, String conclusion, String content,
+                                 String initialStatus) {
         DispatchItem last = lastItem(h.getId());
         int seq = last == null || last.getSeq() == null ? 1 : last.getSeq() + 1;
         DispatchItem it = new DispatchItem();
@@ -437,7 +445,7 @@ public class DispatchService {
         it.setCreator(creator);
         it.setCreatedAt(LocalDateTime.now());
         it.setCommand(command);
-        it.setStatus(DispatchItem.ST_RUNNING);
+        it.setStatus(initialStatus);
         it.setReplyRequired(replyRequired);
         it.setConclusion(conclusion);
         it.setContent(content);
