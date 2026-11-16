@@ -6209,9 +6209,10 @@ public class ExpHubTools {
             @ToolParam(description = "可选。状态过滤：DRAFT/REVIEWING/READY/RUNNING/CONFIRMING/VERIFYING/DONE/CANCELLED；不传=全部", required = false) String status,
             @ToolParam(description = "可选。按角色过滤：指派给我或我创建的。不传=用当前角色的身份头", required = false) String role,
             @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
-            @ToolParam(description = "可选。详情里带回多少轮 item，**默认 3**。"
-                    + "哨兵同一张单在同一条会话里推进时，之前干了什么模型自己记得，不需要全量；"
-                    + "**接手/会话重启/换人才需要历史，这时传大一点（上限 50）**。", required = false) Integer itemLimit) {
+            @ToolParam(description = "可选。详情里带回多少轮 item。"
+                    + "不传 = 3（同一条会话里模型自己记得之前干了什么，不用全塞）；"
+                    + "传 **-1 = 全部**（接手、会话重启、要全量复盘时用）；"
+                    + "传正数 = 指定轮次，上限 200。", required = false) Integer itemLimit) {
         try {
             int lim = limit == null ? 20 : Math.max(1, Math.min(limit, 50));
 
@@ -6241,13 +6242,22 @@ public class ExpHubTools {
                     // 模型自己记得之前干了什么，所以默认只带最近 3 轮。
                     // 但会话会断（进程挂了、上下文截断、换机器、换接单人），那时只有 item 能还原，
                     // 所以留 itemLimit：接手或重启时传大一点，别把历史能力删掉。
-                    int keep = (itemLimit == null || itemLimit <= 0) ? 3 : Math.min(itemLimit, 50);
+                    // itemLimit：不传=3（同会话够用）；-1=全部；正数=指定轮次（硬上限 200，防一次输出撑爆）。
+                    int keep;
+                    if (itemLimit == null) {
+                        keep = 3;
+                    } else if (itemLimit < 0) {
+                        keep = 200;   // -1 = 全部，但仍留 200 轮的硬天花板
+                    } else {
+                        keep = Math.min(itemLimit, 200);
+                    }
                     sb.append("\n**执行记录（共 ").append(its.size()).append(" 轮）。\n");
                     int from = Math.max(0, its.size() - keep);
                     if (from > 0) {
-                        sb.append("…前 ").append(from).append(" 轮省略。")
-                          .append("同一条会话里你自己记得就不用管；接手或会话重启要全部历史，传 itemLimit=")
-                          .append(its.size()).append("。…\n");
+                        sb.append("…前 ").append(from).append(" 轮省略（列的是最近 ")
+                          .append(Math.min(keep, its.size())).append(" 轮）。")
+                          .append("同一条会话里你自己记得就不用管；")
+                          .append("接手、会话重启、要全量复盘时传 itemLimit=-1 看全部。…\n");
                     }
                     for (int i = from; i < its.size(); i++) {
                         com.exphub.entity.DispatchItem it = its.get(i);
