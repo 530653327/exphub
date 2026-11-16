@@ -6081,6 +6081,12 @@ public class ExpHubTools {
         return a == null ? null : a.getAssistantName();
     }
 
+    /** 当前调用者的 API Key —— 派单的隔离依据（同一 Key 下的助手共享派单）。 */
+    private String callerApiKey() {
+        AiAssistant a = getCaller();
+        return a == null ? null : a.getApiKey();
+    }
+
     /** 把 header 渲染成一行，列表与回执共用，避免两处文案不一致。 */
     private String renderDispatchHeader(com.exphub.entity.DispatchHeader h) {
         String last = "";
@@ -6142,7 +6148,7 @@ public class ExpHubTools {
 
             com.exphub.service.DispatchService.Outcome out = dispatchService.create(
                     me, com.exphub.entity.DispatchHeader.ORIGIN_AI, assignee, title, description,
-                    priority, projectId, auths);
+                    priority, projectId, auths, callerApiKey());
             if (!out.ok()) return "❌ " + out.message();
 
             com.exphub.entity.DispatchHeader h = out.header();
@@ -6192,7 +6198,7 @@ public class ExpHubTools {
             int lim = limit == null ? 20 : Math.max(1, Math.min(limit, 50));
 
             if (orderNo != null && !orderNo.isBlank()) {
-                com.exphub.entity.DispatchHeader h = dispatchService.get(orderNo);
+                com.exphub.entity.DispatchHeader h = dispatchService.getForApi(orderNo, callerApiKey());
                 if (h == null) return "未找到单号 " + orderNo;
                 StringBuilder sb = new StringBuilder();
                 sb.append("📋 ").append(h.getOrderNo()).append("　").append(h.getTitle()).append("\n\n");
@@ -6233,7 +6239,7 @@ public class ExpHubTools {
             String r = (role == null || role.isBlank()) ? dispatchRole() : role.trim();
             // 归一：客户端只能传拼音（中文 header 会被 HTTP 层 400），库里存的是汉字
             r = com.exphub.service.DispatchService.canonicalRole(r);
-            java.util.List<com.exphub.entity.DispatchHeader> list = dispatchService.list(r, status, null, lim);
+            java.util.List<com.exphub.entity.DispatchHeader> list = dispatchService.list(r, status, null, lim, callerApiKey());
             if (list.isEmpty()) {
                 return "📋 没有符合条件的单（角色=" + r + "，状态="
                         + (status == null || status.isBlank() ? "全部" : status) + "）。";
@@ -6258,7 +6264,7 @@ public class ExpHubTools {
             @ToolParam(description = "单号，如 W-20261116-000001") String orderNo) {
         try {
             String me = dispatchRole();
-            com.exphub.service.DispatchService.Outcome out = dispatchService.claim(orderNo, me);
+            com.exphub.service.DispatchService.Outcome out = dispatchService.claim(orderNo, me, callerApiKey());
             if (!out.ok()) return "❌ " + out.message();
             com.exphub.entity.DispatchHeader h = out.header();
             StringBuilder sb = new StringBuilder();
@@ -6295,10 +6301,10 @@ public class ExpHubTools {
             if (me == null || me.isBlank()) return "❌ 无法确定你是谁（角色头未配置）。";
             String act = action == null ? "" : action.trim().toLowerCase(java.util.Locale.ROOT);
             com.exphub.service.DispatchService.Outcome out = switch (act) {
-                case "need_confirm" -> dispatchService.needConfirm(orderNo, me, question, proposal);
-                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion);
-                case "terminate" -> dispatchService.terminate(orderNo, me, text);
-                case "reply" -> dispatchService.reply(orderNo, me, text);
+                case "need_confirm" -> dispatchService.needConfirm(orderNo, me, question, proposal, callerApiKey());
+                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion, callerApiKey());
+                case "terminate" -> dispatchService.terminate(orderNo, me, text, callerApiKey());
+                case "reply" -> dispatchService.reply(orderNo, me, text, callerApiKey());
                 default -> null;
             };
             if (out == null) {

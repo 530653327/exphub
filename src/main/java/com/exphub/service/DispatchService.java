@@ -116,7 +116,8 @@ public class DispatchService {
      */
     @Transactional
     public Outcome create(String creator, String origin, String assignee, String title, String description,
-                          Integer priority, Long projectId, java.util.Map<String, Boolean> auths) {
+                          Integer priority, Long projectId, java.util.Map<String, Boolean> auths,
+                          String apiKey) {
         creator = canonicalRole(creator);
         assignee = canonicalRole(assignee);
         if (creator == null || creator.isBlank()) return Outcome.fail("创建人不能为空");
@@ -129,6 +130,7 @@ public class DispatchService {
         }
 
         DispatchHeader h = new DispatchHeader();
+        h.setApiKey(apiKey == null ? "" : apiKey.trim());
         h.setOrderNo(nextOrderNo());
         h.setOrigin(human ? DispatchHeader.ORIGIN_HUMAN : DispatchHeader.ORIGIN_AI);
         h.setCreator(creator.trim());
@@ -201,8 +203,10 @@ public class DispatchService {
      *
      * @param role 只看与我有关的：我指派的（assignee）或我创建的（creator）；null=不限
      */
-    public List<DispatchHeader> list(String role, String status, String orderNo, int limit) {
+    public List<DispatchHeader> list(String role, String status, String orderNo, int limit, String apiKey) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<>();
+        // Key 隔离：null = 后台视角（看全部）；非 null = 只看这个 Key 的
+        if (apiKey != null) q.eq("api_key", apiKey);
         if (orderNo != null && !orderNo.isBlank()) {
             q.eq("order_no", orderNo.trim());
         }
@@ -218,9 +222,23 @@ public class DispatchService {
         return headerMapper.selectList(q);
     }
 
+    /** 内部取单，不做 Key 校验。只有后台与「已确定归属」的内部逻辑可以调。 */
     public DispatchHeader get(String orderNo) {
         if (orderNo == null || orderNo.isBlank()) return null;
         return headerMapper.selectOne(new QueryWrapper<DispatchHeader>().eq("order_no", orderNo.trim()));
+    }
+
+    /**
+     * 带 Key 校验取单。归属不符时返回 null —— **对外表现成「不存在」，不泄露单子存在性**。
+     *
+     * <p>MCP 路径一律走这个，不要直接调 {@link #get}。
+     */
+    public DispatchHeader getForApi(String orderNo, String apiKey) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return null;
+        String owner = h.getApiKey() == null ? "" : h.getApiKey();
+        String caller = apiKey == null ? "" : apiKey.trim();
+        return owner.equals(caller) ? h : null;
     }
 
     /** 一单的全部 item（按轮次升序）。零副作用。 */
@@ -246,11 +264,11 @@ public class DispatchService {
      * 「一开工就建 item」是 2026-11-16 定的，否则 ERROR 状态永远无处落地。
      */
     @Transactional
-    public Outcome claim(String orderNo, String role) {
+    public Outcome claim(String orderNo, String role, String apiKey) {
         role = canonicalRole(role);
         if (role == null || role.isBlank()) return Outcome.fail("认领必须先确定你是谁（角色头未配置？）");
-        DispatchHeader h = get(orderNo);
-        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        DispatchHeader h = getForApi(orderNo, apiKey);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo + "（或不属于你）。");
         if (!role.trim().equals(h.getAssignee())) {
             return Outcome.fail("这张单指派给「" + h.getAssignee() + "」，不是你（" + role + "），不能接。");
         }
@@ -281,12 +299,12 @@ public class DispatchService {
      * （人工单=越哥走后台，AI 单=阁主走 MCP）。
      */
     @Transactional
-    public Outcome needConfirm(String orderNo, String role, String question, String proposal) {
+    public Outcome needConfirm(String orderNo, String role, String question, String proposal, String apiKey) {
         if (proposal == null || proposal.isBlank()) {
             return Outcome.fail("提问必须自带建议方案：只抛问题不许过（防 ping-pong 的硬规矩）。");
         }
         role = canonicalRole(role);
-        DispatchHeader h = get(orderNo);
+        DispatchHeader h = getForApi(orderNo, apiKey);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "请求确认");
         if (guard != null) return guard;
 
@@ -314,9 +332,9 @@ public class DispatchService {
      * 不能由 AI 代回 —— 越哥 2026-11-16 明确「人工单中间那段是我和他确认」。
      */
     @Transactional
-    public Outcome reply(String orderNo, String actor, String text) {
+    public Outcome reply(String orderNo, String actor, String text, String apiKey) {
         actor = canonicalRole(actor);
-        DispatchHeader h = get(orderNo);
+        DispatchHeader h = getForApi(orderNo, apiKey);
         if (h == null) return Outcome.fail("未找到单号 " + orderNo);
         if (DispatchHeader.ORIGIN_HUMAN.equals(h.getOrigin())) {
             return Outcome.fail("这是人工创建的单，「待确认」必须由越哥本人在后台回复，AI 不能代回。");
@@ -345,9 +363,9 @@ public class DispatchService {
      * 提交验收：RUNNING → VERIFYING。之后只有越哥能在后台点通过/驳回。
      */
     @Transactional
-    public Outcome submitAccept(String orderNo, String role, String conclusion) {
+    public Outcome submitAccept(String orderNo, String role, String conclusion, String apiKey) {
         role = canonicalRole(role);
-        DispatchHeader h = get(orderNo);
+        DispatchHeader h = getForApi(orderNo, apiKey);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "提交验收");
         if (guard != null) return guard;
         if (conclusion == null || conclusion.isBlank()) {
@@ -375,9 +393,9 @@ public class DispatchService {
      * 所以终止之后 header 必须离开 RUNNING，否则球在哨兵手里却禁止动作，单子悬死。
      */
     @Transactional
-    public Outcome terminate(String orderNo, String role, String reason) {
+    public Outcome terminate(String orderNo, String role, String reason, String apiKey) {
         role = canonicalRole(role);
-        DispatchHeader h = get(orderNo);
+        DispatchHeader h = getForApi(orderNo, apiKey);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "终止本轮");
         if (guard != null) return guard;
 

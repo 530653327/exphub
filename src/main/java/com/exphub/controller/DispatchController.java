@@ -33,7 +33,8 @@ public class DispatchController extends BaseController {
     /** 列表：按状态筛选，顶部显示各状态张数。 */
     @GetMapping
     public String list(@RequestParam(required = false) String status, Model model) {
-        List<DispatchHeader> orders = dispatchService.list(null, status, null, 100);
+        // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用）
+        List<DispatchHeader> orders = dispatchService.list(null, status, null, 100, null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("counts", dispatchService.countByStatus());
@@ -103,7 +104,7 @@ public class DispatchController extends BaseController {
 
         DispatchService.Outcome out = dispatchService.create(
                 DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
-                assignee, title, description, priority, null, auths);
+                assignee, title, description, priority, null, auths, null);
         if (!out.ok() || out.header() == null) {
             ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
             return "redirect:/dispatch/new";

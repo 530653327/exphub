@@ -259,6 +259,7 @@ INSERT IGNORE INTO doc_templates (type, name, description, instruction, template
 
 CREATE TABLE IF NOT EXISTS dispatch_header (
   id                  BIGINT        NOT NULL AUTO_INCREMENT,
+  api_key             VARCHAR(64)   NOT NULL DEFAULT '' COMMENT '归属 API Key，数据隔离（同 Key 下助手共享）',
   order_no            VARCHAR(32)   NOT NULL COMMENT '单号 W-YYYYMMDD-NNNNNN，序号留 6 位（旧的 3 位限制会截断封错单）',
   origin              VARCHAR(8)    NOT NULL COMMENT 'HUMAN / AI —— 决定 CONFIRMING 时球给谁（人工单给越哥，AI 单给阁主）',
   creator             VARCHAR(32)   NOT NULL COMMENT '创建人：越哥 或 角色正名',
@@ -293,7 +294,9 @@ CREATE TABLE IF NOT EXISTS dispatch_header (
   PRIMARY KEY (id),
   UNIQUE KEY uk_dispatch_order_no (order_no),
   KEY idx_dispatch_status (status, id),
-  KEY idx_dispatch_assignee (assignee, status)
+  KEY idx_dispatch_assignee (assignee, status),
+  KEY idx_dispatch_owner (api_key, id),
+  KEY idx_dispatch_owner_status (api_key, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='派单表头：一单一行';
 
 CREATE TABLE IF NOT EXISTS dispatch_item (

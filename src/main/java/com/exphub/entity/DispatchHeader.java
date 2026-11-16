@@ -37,6 +37,16 @@ public class DispatchHeader {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    /**
+     * 归属 API Key —— 数据隔离的唯一依据。
+     *
+     * <p>同一 Key 下的助手共享派单，不同 Key 互相看不见（与 docs / projects 惯例一致）。
+     * 空串 = 后台人工建的单，MCP 侧看不到（人下的单由人在后台管）。
+     *
+     * <p>2026-11-16 补：第一版漏了这个字段，等于任何持有有效 Key 的调用方都能看到全库派单。
+     */
+    private String apiKey;
+
     /** 单号 W-YYYYMMDD-NNNNNN，序号留 6 位 */
     private String orderNo;
     /** HUMAN / AI —— 决定「待确认」时球给谁 */
