@@ -56,6 +56,7 @@ public class DispatchController extends BaseController {
         model.addAttribute("items", items);
         model.addAttribute("labels", statusLabels());
         model.addAttribute("granted", grantedAuths(h));
+        model.addAttribute("suggestedVersion", dispatchService.suggestVersion(h.getProjectId()));
         model.addAttribute("ballOwner", DispatchService.statusLabel(h.getStatus()));
         model.addAttribute("active", "dispatch");
         return "dispatch/detail";
@@ -67,6 +68,8 @@ public class DispatchController extends BaseController {
     @GetMapping("/new")
     public String newForm(Model model) {
         model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
+        // 建单页还没选项目，用全局最近一张带版本的单推算，当 placeholder 提示
+        model.addAttribute("suggestedVersion", dispatchService.suggestVersion(null));
         model.addAttribute("active", "dispatch");
         return "dispatch/new";
     }
@@ -88,6 +91,7 @@ public class DispatchController extends BaseController {
                          @RequestParam(required = false) Boolean securityGroup,
                          @RequestParam(required = false) Boolean firewall,
                          @RequestParam(required = false) Boolean spend,
+                         @RequestParam(required = false) String version,
                          RedirectAttributes ra) {
         Map<String, Boolean> auths = new LinkedHashMap<>();
         auths.put("modifyCode", modifyCode);
@@ -104,7 +108,7 @@ public class DispatchController extends BaseController {
 
         DispatchService.Outcome out = dispatchService.create(
                 DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
-                assignee, title, description, priority, null, auths, null);
+                assignee, title, description, priority, null, auths, null, version);
         if (!out.ok() || out.header() == null) {
             ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
             return "redirect:/dispatch/new";
@@ -117,6 +121,42 @@ public class DispatchController extends BaseController {
         }
         ra.addFlashAttribute("success", "已建单 " + out.header().getOrderNo() + "，状态待审核。确认无误后点「审核通过」才会派出去。");
         return "redirect:/dispatch/" + out.header().getOrderNo();
+    }
+
+    /**
+     * 待审核时改授权位 / 版本号（越哥 2026-11-16 明确要求在审核阶段能改）。
+     *
+     * <p>只允许 REVIEWING。审核通过（READY）之后这里会拒绝 —— 授权位重新锁死。
+     */
+    @PostMapping("/auths")
+    public String updateAuths(@RequestParam String orderNo,
+                              @RequestParam(required = false) Boolean modifyCode,
+                              @RequestParam(required = false) Boolean commit,
+                              @RequestParam(required = false) Boolean push,
+                              @RequestParam(required = false) Boolean release,
+                              @RequestParam(required = false) Boolean dataWrite,
+                              @RequestParam(required = false) Boolean migration,
+                              @RequestParam(required = false) Boolean credential,
+                              @RequestParam(required = false) Boolean prodConfig,
+                              @RequestParam(required = false) Boolean securityGroup,
+                              @RequestParam(required = false) Boolean firewall,
+                              @RequestParam(required = false) Boolean spend,
+                              @RequestParam(required = false) String version,
+                              RedirectAttributes ra) {
+        Map<String, Boolean> auths = new LinkedHashMap<>();
+        auths.put("modifyCode", modifyCode);
+        auths.put("commit", commit);
+        auths.put("push", push);
+        auths.put("release", release);
+        auths.put("dataWrite", dataWrite);
+        auths.put("migration", migration);
+        auths.put("credential", credential);
+        auths.put("prodConfig", prodConfig);
+        auths.put("securityGroup", securityGroup);
+        auths.put("firewall", firewall);
+        auths.put("spend", spend);
+        flash(ra, dispatchService.updateAuths(orderNo, auths, version));
+        return "redirect:/dispatch/" + orderNo;
     }
 
     // ==================== 审核 ====================

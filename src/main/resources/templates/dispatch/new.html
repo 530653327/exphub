@@ -85,7 +85,7 @@
                         <label><input type="checkbox" name="modifyCode"> 修改代码</label>
                         <label><input type="checkbox" name="commit"> commit</label>
                         <label><input type="checkbox" name="push"> push</label>
-                        <label><input type="checkbox" name="release"> 发版</label>
+                        <label><input type="checkbox" name="release" id="authRelease" onchange="toggleVersion()"> 发版</label>
                         <label><input type="checkbox" name="dataWrite"> 数据写入</label>
                         <label><input type="checkbox" name="migration"> 数据库迁移</label>
                         <label><input type="checkbox" name="credential"> 生成凭证/密钥</label>
@@ -94,8 +94,17 @@
                         <label><input type="checkbox" name="firewall"> 改防火墙</label>
                         <label><input type="checkbox" name="spend"> 花钱</label>
                     </div>
+                    <div id="versionBox" class="mt-3" style="display:none">
+                        <label class="mb-1" style="font-size:0.9rem">发版版本号</label>
+                        <input type="text" name="version" class="form-control" style="max-width:220px"
+                               th:attr="placeholder='不填默认 ' + ${suggestedVersion}">
+                        <div class="text-muted mt-1" style="font-size:0.8rem">
+                            不填就按同项目上一张带版本的单 +1，当前推算为 <b th:text="${suggestedVersion}"></b>。
+                        </div>
+                    </div>
                     <div class="text-muted mt-2" style="font-size:0.82rem">
                         一个都不勾 = 这单只能读，哨兵只能给你出方案、不能动手。
+                        <br>授权位建单后锁死，但**待审核阶段你还能改**——审核通过就定了。
                     </div>
                 </div>
             </div>
@@ -106,5 +115,11 @@
             </div>
         </form>
     </div>
+<script>
+function toggleVersion() {
+    var on = document.getElementById('authRelease').checked;
+    document.getElementById('versionBox').style.display = on ? 'block' : 'none';
+}
+</script>
 </body>
 </html>

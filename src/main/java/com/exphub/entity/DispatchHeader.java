@@ -74,6 +74,13 @@ public class DispatchHeader {
     private String cancelReason;
     /** 1=高 3=中 5=低 */
     private Integer priority;
+
+    /**
+     * 发版版本号。只有 {@code authRelease=1} 时有意义。
+     *
+     * <p>建单时没填就自动 +1（末尾数字加一，前面的原样保留）；基准是同项目最近一张带版本的单。
+     */
+    private String version;
     private Long projectId;
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;

@@ -364,7 +364,7 @@ class ToolDescriptionRedundancyTest {
         //            授权位 11 个只能做成独立布尔参数，所以一次占掉 16 个参数名额 —— 这是有意的：
         //            审核时人要逐项看得见，塞成一个 JSON 就等于没审。
         assertEquals(50, toolCount, "工具数变了（50 → " + toolCount + "），需要同步 README/门户/本断言");
-        assertEquals(212, paramCount, "参数数变了（212 → " + paramCount + "），需要同步 README/门户/本断言");
+        assertEquals(213, paramCount, "参数数变了（213 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

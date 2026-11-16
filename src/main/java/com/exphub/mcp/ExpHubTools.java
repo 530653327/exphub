@@ -6141,7 +6141,9 @@ public class ExpHubTools {
             @ToolParam(description = "授权：改生产配置", required = false) Boolean allowProdConfig,
             @ToolParam(description = "授权：改安全组", required = false) Boolean allowSecurityGroup,
             @ToolParam(description = "授权：改防火墙", required = false) Boolean allowFirewall,
-            @ToolParam(description = "授权：花钱", required = false) Boolean allowSpend) {
+            @ToolParam(description = "授权：花钱", required = false) Boolean allowSpend,
+            @ToolParam(description = "可选。发版版本号。**只有勾了发版（allowRelease）才有意义**；"
+                    + "不填会自动 +1（末尾数字加一，基准是同项目最近一张带版本的单）。", required = false) String version) {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) {
@@ -6163,7 +6165,7 @@ public class ExpHubTools {
 
             com.exphub.service.DispatchService.Outcome out = dispatchService.create(
                     me, com.exphub.entity.DispatchHeader.ORIGIN_AI, assignee, title, description,
-                    priority, projectId, auths, callerApiKey());
+                    priority, projectId, auths, callerApiKey(), version);
             if (!out.ok()) return "❌ " + out.message();
 
             com.exphub.entity.DispatchHeader h = out.header();
@@ -6172,7 +6174,11 @@ public class ExpHubTools {
             sb.append("**单号**: ").append(h.getOrderNo()).append("\n");
             sb.append("**标题**: ").append(h.getTitle()).append("\n");
             sb.append("**指派**: ").append(h.getAssignee()).append("\n");
-            sb.append("**授权位**: ").append(grantedAuths(h)).append("\n\n");
+            sb.append("**授权位**: ").append(grantedAuths(h));
+            if (h.getVersion() != null && !h.getVersion().isBlank()) {
+                sb.append("\n**发版版本号**: ").append(h.getVersion());
+            }
+            sb.append("\n\n");
             sb.append("⚠️ 现在是「待审核」，越哥在后台通过后才会变「待接单」、哨兵才能接。")
               .append("审核时如果动了授权位，本单会退回重审。\n");
             return sb.toString();

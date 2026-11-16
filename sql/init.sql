@@ -278,6 +278,7 @@ CREATE TABLE IF NOT EXISTS dispatch_header (
   remark              VARCHAR(1000) NULL     COMMENT '备注',
   cancel_reason       VARCHAR(500)  NULL,
   priority            TINYINT       NOT NULL DEFAULT 3 COMMENT '1=高 3=中 5=低',
+  version             VARCHAR(32)   NULL     COMMENT '发版版本号；仅 auth_release=1 时有意义',
   project_id          BIGINT        NULL     COMMENT '项目归属，可空',
   updated_at          DATETIME      NOT NULL,
   auth_modify_code    TINYINT(1)    NOT NULL DEFAULT 0 COMMENT '授权：修改代码',

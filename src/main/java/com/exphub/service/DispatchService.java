@@ -117,7 +117,7 @@ public class DispatchService {
     @Transactional
     public Outcome create(String creator, String origin, String assignee, String title, String description,
                           Integer priority, Long projectId, java.util.Map<String, Boolean> auths,
-                          String apiKey) {
+                          String apiKey, String version) {
         creator = canonicalRole(creator);
         assignee = canonicalRole(assignee);
         if (creator == null || creator.isBlank()) return Outcome.fail("创建人不能为空");
@@ -142,6 +142,12 @@ public class DispatchService {
         h.setAssignee(assignee.trim());
         h.setPriority(priority == null ? 3 : priority);
         h.setProjectId(projectId);
+        // 版本号：只有勾了「发版」才有意义。没填就自动 +1（末尾数字加一）。
+        boolean willRelease = auths != null && Boolean.TRUE.equals(auths.get("release"));
+        if (willRelease) {
+            String v = (version == null || version.isBlank()) ? suggestVersion(projectId) : version.trim();
+            h.setVersion(v);
+        }
         h.setUpdatedAt(LocalDateTime.now());
 
         java.util.Map<String, Boolean> a = auths == null ? java.util.Map.of() : auths;
@@ -667,6 +673,93 @@ public class DispatchService {
                 text == null ? "" : text, DispatchItem.ST_RUNNING);
         return Outcome.success("已回复并继续执行，球回到「" + h.getAssignee() + "」。item " + it.getItemNo(),
                 get(orderNo), it);
+    }
+
+    /**
+     * 猜一个版本号：同项目最近一张带版本的单，末尾数字 +1。
+     *
+     * <p>项目为空时退到全局最近一张 —— 宁可给一个有出处的建议值，也不要报错让人手填。
+     * 一张历史都没有就返回 {@code 1.0.0}。
+     */
+    public String suggestVersion(Long projectId) {
+        QueryWrapper<DispatchHeader> q = new QueryWrapper<DispatchHeader>()
+                .isNotNull("version").ne("version", "")
+                .orderByDesc("id").last("LIMIT 1");
+        if (projectId != null) q.eq("project_id", projectId);
+        DispatchHeader last = headerMapper.selectOne(q);
+        if (last == null && projectId != null) {
+            last = headerMapper.selectOne(new QueryWrapper<DispatchHeader>()
+                    .isNotNull("version").ne("version", "")
+                    .orderByDesc("id").last("LIMIT 1"));
+        }
+        if (last == null || last.getVersion() == null || last.getVersion().isBlank()) return "1.0.0";
+        return bumpTail(last.getVersion());
+    }
+
+    /**
+     * 把版本号末尾那段连续数字 +1，前面原样保留。
+     *
+     * <p>2.5.6 → 2.5.7、3.4.51 → 3.4.52、v1 → v2；末尾不是数字就补一个 {@code .1}。
+     * 前导零保留位数（01 → 02），避免把 01 变成 2 这种跳格式。
+     */
+    public static String bumpTail(String v) {
+        if (v == null || v.isBlank()) return "1.0.0";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*?)(\\d+)$").matcher(v.trim());
+        if (m.matches()) {
+            String head = m.group(1);
+            String num = m.group(2);
+            java.math.BigInteger n = new java.math.BigInteger(num).add(java.math.BigInteger.ONE);
+            String out = n.toString();
+            if (num.startsWith("0") && out.length() < num.length()) {
+                out = "0".repeat(num.length() - out.length()) + out;
+            }
+            return head + out;
+        }
+        return v.trim() + ".1";
+    }
+
+    /**
+     * 待审核时改授权位 / 版本号（越哥 2026-11-16：「授权位在待审核的时候我可以修改，这一点很重要」）。
+     *
+     * <p><b>只有 REVIEWING 能改</b>。一旦审核通过进了 READY，授权位重新锁死 ——
+     * 否则 AI 可以在执行途中想办法让人「顺手改一下」，那就等于授权位可动态扩权。
+     *
+     * <p>改动本身就是审核动作的一部分，不额外触发退回：这一步本来就发生在审核之前。
+     */
+    @Transactional
+    public Outcome updateAuths(String orderNo, java.util.Map<String, Boolean> auths, String version) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo);
+        if (!DispatchHeader.ST_REVIEWING.equals(h.getStatus())) {
+            return Outcome.fail("只有「待审核」能改授权位。当前状态是「" + statusLabel(h.getStatus())
+                    + "」—— 审核通过后就锁死了，真要加权限得取消重开。");
+        }
+        java.util.Map<String, Boolean> a = auths == null ? java.util.Map.of() : auths;
+        boolean willRelease = Boolean.TRUE.equals(a.get("release"));
+        String v = willRelease
+                ? ((version == null || version.isBlank()) ? suggestVersion(h.getProjectId()) : version.trim())
+                : null;
+
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_REVIEWING)
+                .set("auth_modify_code", flag(a, "modifyCode"))
+                .set("auth_commit", flag(a, "commit"))
+                .set("auth_push", flag(a, "push"))
+                .set("auth_release", flag(a, "release"))
+                .set("auth_data_write", flag(a, "dataWrite"))
+                .set("auth_migration", flag(a, "migration"))
+                .set("auth_credential", flag(a, "credential"))
+                .set("auth_prod_config", flag(a, "prodConfig"))
+                .set("auth_security_group", flag(a, "securityGroup"))
+                .set("auth_firewall", flag(a, "firewall"))
+                .set("auth_spend", flag(a, "spend"))
+                .set("version", willRelease ? v : null)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化（可能刚被审过），授权位没改成，请刷新看看。");
+        log.info("DispatchService.updateAuths: order={} 授权位已改，release={}, version={}", orderNo, willRelease, v);
+        return Outcome.success("授权位已更新" + (willRelease ? "，版本号 " + v : "") + "。", get(orderNo), null);
     }
 
     /**
