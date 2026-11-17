@@ -267,7 +267,14 @@ public class PageController extends BaseController {
         addContextPath(model, request);
         model.addAttribute("active", "docs");
         model.addAttribute("pageTitle", "经验详情");
-        model.addAttribute("doc", docMapper.selectById(id));
+        var doc = docMapper.selectById(id);
+        if (doc == null) {
+            // 不存在的 id 回列表。原来直接把 null 塞进 model，模板里 ${doc.title}
+            // 抛 SpEL「property or field 'title' cannot be found on null」→ 整页 500。
+            // 2026-11-17 实测 docs/1、docs/2、docs/100 全是 500（都是已删除的旧 id）。
+            return "redirect:/docs";
+        }
+        model.addAttribute("doc", doc);
         model.addAttribute("versions", docService.getVersions(id));
         return "docs/view";
     }

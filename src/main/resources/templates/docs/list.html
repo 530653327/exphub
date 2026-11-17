@@ -68,7 +68,7 @@
 
         <!-- 第三层：视图 Tab（全部 / 待复核 / 候选 / 待删） -->
         <div class="card list-card">
-            <div class="card-header px-3 py-0 d-flex" style="gap:2px;border-bottom:1px solid var(--line);">
+            <div class="card-header px-3 py-0 d-flex justify-content-start" style="gap:2px;">
                 <a th:href="@{/docs(keyword=${keyword}, templateType=${templateType})}"
                    th:classappend="${status != 'PENDING_DELETE' and flag != 'needs_review' and view != 'candidates' and (problem == null or problem == '')} ? 'active'"
                    class="nav-tab">全部</a>

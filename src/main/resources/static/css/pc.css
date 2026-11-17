@@ -857,6 +857,31 @@ textarea.form-control {
 .bg-gradient-danger { border-left-color: var(--bad); }
 .bg-gradient-danger .icon { background: var(--bad-bg); color: var(--bad); }
 
+/* 指标卡里的多项数值（看板的「问题构成」）：原来一个 span 里用 · 串起来，
+   数字混在文字里，扫不出哪个是哪个 */
+.breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 4px;
+}
+
+.breakdown span {
+    color: var(--text-mute);
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.breakdown b {
+    color: var(--text);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+
+.min-w-0 {
+    min-width: 0;
+}
+
 /* ── 分页 ─────────────────────────────────────────────────────────────── */
 
 .pagination {
@@ -1436,7 +1461,7 @@ textarea.form-control {
 .bar-bg {
     position: relative;
     min-width: 90px;
-    height: 8px;
+    height: 14px;              /* 8px 装不下里面的百分比文字，会被 overflow 裁掉 */
     border-radius: var(--radius-pill);
     background: var(--neutral-bg);
     overflow: hidden;
@@ -1449,8 +1474,12 @@ textarea.form-control {
 }
 
 .bar-text {
-    font-size: 11.5px;
+    position: absolute;
+    top: 0;
+    right: 7px;
     color: var(--text-mute);
+    font-size: 10.5px;
+    line-height: 14px;
     font-variant-numeric: tabular-nums;
 }
 

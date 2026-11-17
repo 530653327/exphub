@@ -82,9 +82,15 @@
             <div class="col-md-4" th:if="${problemDocs > 0}">
                 <div class="stat-card">
                     <i class="fas fa-clipboard-list icon"></i>
-                    <div>
-                        <span class="d-block small"
-                              th:text="'超期未验证 ' + ${problemDocsByType['STALE']} + ' · 被取代 ' + ${problemDocsByType['SUPERSEDED']} + ' · flag ' + ${problemDocsByType['FLAGGED']} + ' · 待删 ' + ${problemDocsByType['PENDING_DELETE']} + ' · BROKEN ' + ${problemDocsByType['BROKEN']}">-</span>
+                    <div class="min-w-0">
+                        <div class="label">问题构成（同一篇可能命中多类）</div>
+                        <div class="breakdown">
+                            <span>超期 <b th:text="${problemDocsByType['STALE']}">0</b></span>
+                            <span>被取代 <b th:text="${problemDocsByType['SUPERSEDED']}">0</b></span>
+                            <span>flag <b th:text="${problemDocsByType['FLAGGED']}">0</b></span>
+                            <span>待删 <b th:text="${problemDocsByType['PENDING_DELETE']}">0</b></span>
+                            <span>BROKEN <b th:text="${problemDocsByType['BROKEN']}">0</b></span>
+                        </div>
                     </div>
                 </div>
             </div>
