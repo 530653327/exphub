@@ -230,7 +230,7 @@
                             <th style="width:90px">发起</th>
                             <th style="width:90px">指令</th>
                             <th style="width:90px">状态</th>
-                            <th>结论 / 内容</th>
+                            <th>结论（总结）／ 内容（详细）</th>
                             <th style="width:130px">时间</th>
                         </tr>
                     </thead>
@@ -248,9 +248,29 @@
                                 <span th:if="${it.status == 'DONE'}" class="text-muted">已完成</span>
                                 <span th:if="${it.status == 'ERROR'}" class="text-danger">异常</span>
                             </td>
-                            <td style="white-space:pre-wrap">
-                                <div th:if="${it.conclusion != null}" th:text="${it.conclusion}"></div>
-                                <div th:if="${it.content != null}" class="text-muted" style="font-size:0.85rem" th:text="${it.content}"></div>
+                            <td>
+                                <!-- 结论（总结）在上，内容（详细正文）在下，两者分开标注。2026-11-17 越哥要求。 -->
+                                <div th:if="${it.conclusion != null and !it.conclusion.isEmpty()}" class="d-flex">
+                                    <span class="badge badge-light border mr-1 flex-shrink-0" style="height:fit-content">结论</span>
+                                    <span style="white-space:pre-wrap" th:text="${it.conclusion}"></span>
+                                </div>
+                                <div th:if="${it.content != null and !it.content.isEmpty()}" class="d-flex mt-2">
+                                    <span class="badge badge-light border mr-1 flex-shrink-0" style="height:fit-content">内容</span>
+                                    <!-- 短内容直出；超过 300 字折叠，展开后限高滚动，免得把表格撑爆 -->
+                                    <div th:if="${#strings.length(it.content) gt 300}">
+                                        <details>
+                                            <summary style="cursor:pointer;color:#0d6efd;font-size:0.85rem">
+                                                展开（<span th:text="${#strings.length(it.content)}"></span> 字）
+                                            </summary>
+                                            <div class="text-muted" style="font-size:0.85rem;white-space:pre-wrap;max-height:420px;overflow:auto;border-left:3px solid #dee2e6;padding-left:10px;margin-top:4px"
+                                                 th:text="${it.content}"></div>
+                                        </details>
+                                    </div>
+                                    <div th:if="${#strings.length(it.content) le 300}" class="text-muted"
+                                         style="font-size:0.85rem;white-space:pre-wrap" th:text="${it.content}"></div>
+                                </div>
+                                <div th:if="${(it.conclusion == null or it.conclusion.isEmpty()) and (it.content == null or it.content.isEmpty())}"
+                                     class="text-muted" style="font-size:0.85rem">（还没写）</div>
                             </td>
                             <td style="font-size:0.82rem;color:#888"
                                 th:text="${it.createdAt != null ? #temporals.format(it.createdAt,'MM-dd HH:mm') : ''}"></td>

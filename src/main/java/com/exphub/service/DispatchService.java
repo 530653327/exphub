@@ -367,9 +367,14 @@ public class DispatchService {
 
     /**
      * 提交验收：RUNNING → VERIFYING。之后只有越哥能在后台点通过/驳回。
+     *
+     * <p><b>结论 ≠ 内容（2026-11-17 越哥定）：</b>结论是**对内容的总结**，一两句话，
+     * 越哥照它判断通过还是驳回；内容是**详细正文**，做过什么/改了哪些文件/怎么验证的，可以很长。
+     * 改之前这里两个参数传的是同一个 {@code conclusion}，导致 item 的结论和内容一字不差 ——
+     * 不是 AI 抄，是程序把同一个值写了两栏。
      */
     @Transactional
-    public Outcome submitAccept(String orderNo, String role, String conclusion, String apiKey) {
+    public Outcome submitAccept(String orderNo, String role, String conclusion, String content, String apiKey) {
         role = canonicalRole(role);
         DispatchHeader h = getForApi(orderNo, apiKey);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "提交验收");
@@ -377,8 +382,15 @@ public class DispatchService {
         if (conclusion == null || conclusion.isBlank()) {
             return Outcome.fail("提交验收必须写结论：越哥要照它判断通过还是驳回。");
         }
+        String concl = clampConclusion(conclusion);
+        String body = (content == null || content.isBlank()) ? null : content.trim();
+        // 结论写成了正文的复制品 → 拒。结论就是总结，一字不差说明没总结。
+        if (body != null && body.equals(concl)) {
+            return Outcome.fail("结论和内容不能一样：结论写一两句总结（越哥只看这一行），"
+                    + "内容写详细过程（改了什么、怎么验证的），长一点没问题。请分开写再提交。");
+        }
 
-        closeOpenItem(h, role, conclusion, DispatchItem.ST_DONE);
+        closeOpenItem(h, role, concl, DispatchItem.ST_DONE);
         LocalDateTime now = LocalDateTime.now();
         int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
                 .eq("order_no", h.getOrderNo())
@@ -387,7 +399,7 @@ public class DispatchService {
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，提交验收未生效，请重新查一次。");
 
-        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, conclusion, conclusion,
+        DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, concl, body,
                 DispatchItem.ST_DONE);
         return Outcome.success("已提交验收，等越哥判断。item " + it.getItemNo(), get(orderNo), it);
     }
@@ -459,6 +471,14 @@ public class DispatchService {
         }
         itemMapper.updateById(open);
         return open;
+    }
+
+    /** conclusion 列是 varchar(2000)，写超了 MySQL 直接报错；结论本来就该短，超长截断并留痕。 */
+    private String clampConclusion(String conclusion) {
+        String c = conclusion.trim();
+        if (c.length() <= 1900) return c;
+        log.warn("DispatchService: 结论 {} 字超过列宽，已截断到 1900 字（正文请放 content）", c.length());
+        return c.substring(0, 1900) + "…（结论超长已截断，详细的请放内容）";
     }
 
     /** 为一单开新一轮 item，轮次 = 当前最大 seq + 1。 */

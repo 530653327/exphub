@@ -6277,10 +6277,14 @@ public class ExpHubTools {
                         // 2026-11-16：原来只输出结论，正文整段吞掉 —— 而「请求确认」的提问和
                         // 建议方案恰恰存在正文里（结论只有「需要确认」四个字），
                         // 结果对方查详情根本看不到在问什么。正文与结论不同才补一行。
+                        // 2026-11-17：原来这里判断「正文与结论不同才输出」，但提交验收那轮
+                        // content 就是 conclusion 的复制品，所以正文从来没显示过。
+                        // 现在两者分开了（结论=总结、内容=详细），正文上限从 300 放到 1500，
+                        // 详情是接手/复盘场景，看不全就等于没记。
                         String itContent = it.getContent();
                         if (itContent != null && !itContent.isBlank()
                                 && !itContent.equals(it.getConclusion())) {
-                            sb.append("　　正文：").append(clipText(itContent, 300)).append("\n");
+                            sb.append("　　内容：").append(clipText(itContent, 1500)).append("\n");
                         }
                     }
                 }
@@ -6349,15 +6353,17 @@ public class ExpHubTools {
             @ToolParam(description = "动作：need_confirm / submit_accept / terminate / reply") String action,
             @ToolParam(description = "need_confirm 时必填：你要问什么") String question,
             @ToolParam(description = "need_confirm 时必填：**你自己的建议方案**（只抛问题不许过）", required = false) String proposal,
-            @ToolParam(description = "submit_accept 时必填：结论（越哥照它判断通过还是驳回）", required = false) String conclusion,
-            @ToolParam(description = "terminate 时填原因；reply 时填回复正文", required = false) String text) {
+            @ToolParam(description = "submit_accept 时必填：**结论＝对内容的总结**，一两句话说清做成没做成、关键数字，"
+                    + "越哥只看这一行就判断通过还是驳回。**不要和 text 写一样**", required = false) String conclusion,
+            @ToolParam(description = "submit_accept 时填**详细内容**（干了什么、改了哪些文件、怎么验证的，可以很长，"
+                    + "详细过程放这里）；terminate 时填原因；reply 时填回复正文", required = false) String text) {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) return "❌ 无法确定你是谁（角色头未配置）。";
             String act = action == null ? "" : action.trim().toLowerCase(java.util.Locale.ROOT);
             com.exphub.service.DispatchService.Outcome out = switch (act) {
                 case "need_confirm" -> dispatchService.needConfirm(orderNo, me, question, proposal, callerApiKey());
-                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion, callerApiKey());
+                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion, text, callerApiKey());
                 case "terminate" -> dispatchService.terminate(orderNo, me, text, callerApiKey());
                 case "reply" -> dispatchService.reply(orderNo, me, text, callerApiKey());
                 default -> null;
