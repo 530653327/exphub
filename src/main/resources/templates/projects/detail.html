@@ -10,14 +10,9 @@
     <title th:text="'项目 - ' + ${project.name}">项目详情</title>
     <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
     <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
+    <link rel="stylesheet" th:href="@{/css/admin.css}">
     <style>
-        body { background-color: #f5f6fa; }
-        .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px 0; z-index: 100; }
-        .sidebar .brand { font-size: 1.4rem; font-weight: bold; padding: 0 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
-        .sidebar .brand span { color: #e94560; }
         .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; }
-        .sidebar a:hover, .sidebar a.active { background: rgba(233,69,96,0.2); color: #fff; border-left: 3px solid #e94560; }
-        .main-content { margin-left: 220px; padding: 25px; }
         .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
         .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 15px 25px; font-weight: 500; }

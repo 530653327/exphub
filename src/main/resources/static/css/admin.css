@@ -1,0 +1,72 @@
+/* ============================================================================
+ * 经验阁 ExpHub 管理后台（PC）公共外壳样式
+ *
+ * 由来（2026-11-17）：17 个 PC 模板各自在 <head> 里贴了一份几乎一模一样的
+ * <style>，「深色侧边栏 + 主内容区偏移」这套外壳就占十几行，改一次配色要动
+ * 十几个文件。
+ *
+ * 收录口径（刻意保守，只搬运不改观感）：只收「凡是页面上有该元素，各页就都
+ * 这么写」的规则，共 7 条。判定方法：逐页比对「页面用了该 class」与
+ * 「页面写了该规则」两个集合，只要存在「有元素却没写规则」的页面
+ * （外提等于凭空给它加样式）就不收。
+ *
+ * 所以这些故意没收，仍留在各页内联：.topbar / .card-header / .sidebar a /
+ * .btn-primary(含 :hover) / .badge-* / .stat-card —— 各页写法不一致。
+ * 某页若写的是另一种变体（如 .card 带 overflow:hidden），内联在 <link> 之后，
+ * 同名规则会覆盖本文件，表现与改造前完全一致。
+ *
+ * 使用约定：
+ *   1. 页面在 bootstrap / fontawesome 之后引一次：<link th:href="@{/css/admin.css}">
+ *   2. 新页面只写自己独有的样式，外壳这些不要再抄一遍；
+ *   3. 改全站观感（底色 / 主色 #e94560 / 侧边栏渐变）只改这里。
+ *
+ * 不引本文件的页面：login.html（深色登录页）、share.html（对外分享页）、
+ * docs/diff.html（全屏对比页，自带 .wrap/.topbar/.card）。
+ * ========================================================================== */
+
+/* ---------- 页面底色 ---------- */
+
+body { background-color: #f5f6fa; }
+
+/* ---------- 左侧固定导航（配合 fragments/sidebar.html） ---------- */
+
+.sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 220px;
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    color: #fff;
+    padding: 20px 0;
+    z-index: 100;
+}
+
+.sidebar .brand {
+    font-size: 1.4rem;
+    font-weight: bold;
+    padding: 0 20px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    margin-bottom: 20px;
+}
+
+.sidebar .brand span { color: #e94560; }
+
+.sidebar a:hover,
+.sidebar a.active {
+    background: rgba(233,69,96,0.2);
+    color: #fff;
+    border-left: 3px solid #e94560;
+}
+
+/* ---------- 主体布局 ---------- */
+
+.main-content { margin-left: 220px; padding: 25px; }
+
+/* ---------- 卡片 ---------- */
+
+.card {
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+}
