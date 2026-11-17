@@ -1167,8 +1167,10 @@ textarea.form-control {
 /* 单列表单页（新建秘钥 / 创建成功）：原来写死 max-width:600px 且靠左，
    1440 的屏上右边空掉一大片，像页面没加载完。改成居中、上限 720。 */
 .form-card {
-    max-width: 720px;
-    margin-left: auto;
+    max-width: 760px;
+    /* 左对齐而不是居中：标题和面包屑都在左边，卡片居中的话会和标题错开
+       两条基线，一屏两个视觉重心，反而不整齐。 */
+    margin-left: 0;
     margin-right: auto;
 }
 
