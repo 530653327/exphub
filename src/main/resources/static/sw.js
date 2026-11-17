@@ -12,9 +12,10 @@
 // v5（2026-11-17）：manifest 的 shortcut「工具埋点」换成「派单」，底栏第三项同步换。
 // v6（2026-11-17）：移动端整体换 daisyUI 皮肤，外壳 CSS 从内联改成 /lib/ui/app.css。
 // v7（2026-11-17）：底栏图标从被撑满的 38px 钉成 22px，mobile.css 变了必须让旧缓存失效。
+// v8（2026-11-17）：状态徽章加左侧色点（mobile.css 又变了）。
 // 每次都必须 bump 版本号 —— manifest 与图标都在下面 SHELL 里是**缓存优先**，
 // 不 bump 的话已安装的客户端会一直读到旧壳资源，改了等于没改。
-const VERSION = 'exphub-shell-v7';
+const VERSION = 'exphub-shell-v8';
 const SCOPE = self.registration.scope;   // 形如 https://cloudim.club/exphub/
 
 const SHELL = [

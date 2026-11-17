@@ -12,12 +12,14 @@
             <h1>派单详情</h1>
             <div class="text-xs opacity-50 mt-0.5 tnum truncate" th:text="${order.orderNo}"></div>
         </div>
-        <span class="badge badge-sm badge-soft shrink-0"
+        <span class="badge badge-sm badge-soft badge-dot shrink-0"
               th:classappend="${
                   order.status == 'REVIEWING' ? 'badge-warning' :
-                  order.status == 'CONFIRMING' ? 'badge-error' :
-                  order.status == 'RUNNING' ? 'badge-success' :
-                  order.status == 'VERIFYING' ? 'badge-success' : 'badge-ghost'}"
+                  order.status == 'READY' ? 'badge-info' :
+                  order.status == 'RUNNING' ? 'badge-secondary' :
+                  order.status == 'CONFIRMING' ? 'badge-accent' :
+                  order.status == 'VERIFYING' ? 'badge-error' :
+                  order.status == 'DONE' ? 'badge-success' : 'badge-ghost'}"
               th:text="${labels[order.status]}">状态</span>
     </header>
 

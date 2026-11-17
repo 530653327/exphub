@@ -1304,14 +1304,31 @@ textarea.form-control {
     white-space: nowrap;
 }
 
-.st-REVIEWING { background: var(--warn-bg); color: var(--warn); }
-.st-READY { background: var(--info-bg); color: var(--info); }
-.st-RUNNING { background: var(--ok-bg); color: var(--ok); }
-.st-CONFIRMING { background: var(--bad-bg); color: var(--bad); }
-.st-VERIFYING { background: var(--brand-soft); color: var(--brand-press); }
-.st-DONE { background: var(--neutral-bg); color: var(--neutral-fg); }
-.st-CANCELLED { background: var(--surface-2); color: var(--text-faint); }
-.st-DRAFT { background: var(--surface-2); color: var(--text-mute); }
+/* 派单状态色表（PC 与手机端同一套色相，改一处要两端一起改）：
+     待审核 琥珀 · 待接单 蓝 · 进行中 青 · 待确认 紫 · 待验收 红 · 完成 绿 · 取消 灰
+   原来 7 个状态都是「淡底 + 深字」，色相差得小，一屏二十行扫过去像一片灰绿；
+   现在加左侧小圆点（currentColor），远看先认色点，近看再读字。 */
+.st::before {
+    content: "";
+    flex: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.st {
+    gap: 5px;
+}
+
+.st-REVIEWING { background: #fef3c7; color: #b45309; }
+.st-READY     { background: #dbeafe; color: #1d4ed8; }
+.st-RUNNING   { background: #cffafe; color: #0e7490; }
+.st-CONFIRMING{ background: #ede9fe; color: #6d28d9; }
+.st-VERIFYING { background: #fee2e2; color: #b91c1c; }
+.st-DONE      { background: #d1fae5; color: #047857; }
+.st-CANCELLED { background: #f1f5f9; color: #64748b; }
+.st-DRAFT     { background: #f1f5f9; color: #64748b; }
 
 .chip {
     display: inline-block;

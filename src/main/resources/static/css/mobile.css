@@ -169,3 +169,14 @@ details[open] > summary::after {
 .theme-swatch[aria-pressed="true"] {
     border-color: var(--color-primary);
 }
+
+/* 状态徽章左侧色点：5px，跟文字同色。手机上列表密集，色点比读文字快一步。 */
+.badge-dot::before {
+    content: "";
+    flex: none;
+    width: 5px;
+    height: 5px;
+    margin-right: 4px;
+    border-radius: 50%;
+    background: currentColor;
+}
