@@ -390,7 +390,10 @@ public class DispatchService {
                     + "内容写详细过程（改了什么、怎么验证的），长一点没问题。请分开写再提交。");
         }
 
-        closeOpenItem(h, role, concl, DispatchItem.ST_DONE);
+        // 关闭当前工作轮时不回填结论（传 null）：那一刻的结论属于下面新建的「提交验收」item，
+        // 工作轮自己只有「认领开工」这一条流水。不回填，页面上两条 item 才不会顶着一模一样的结论。
+        // 注意：needConfirm / terminate 那两处照旧回填 —— 那两轮是真的结束了，得有结论。
+        closeOpenItem(h, role, null, DispatchItem.ST_DONE);
         LocalDateTime now = LocalDateTime.now();
         int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
                 .eq("order_no", h.getOrderNo())
