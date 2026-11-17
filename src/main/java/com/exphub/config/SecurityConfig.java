@@ -36,7 +36,9 @@ public class SecurityConfig {
                 // 移动壳登录页 + PWA 三件套：manifest/sw/offline 必须免登录，
                 // 否则浏览器拉 manifest 被 302 到登录页，安装条件不成立（PWA 直接装不上）
                 .requestMatchers("/m/login", "/manifest.json", "/sw.js", "/offline.html").permitAll()
-                .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
+                // /lib/**：前端库本地化（bootstrap / jquery / fontawesome / marked / chart.js）。
+                // 必须放行 —— 登录页也用 bootstrap，被 302 到登录页就拿不到 CSS。
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/lib/**").permitAll()
                 // MCP 用 authorization-key 请求头鉴权（ApiKeyInterceptor），不依赖 session
                 .requestMatchers("/mcp/**").permitAll()
                 // 公开 API：登录注册、版本信息、分享、模板列表（与 WebMvcConfig 的
