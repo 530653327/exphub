@@ -1,5 +1,7 @@
 package com.exphub.m;
 
+import com.exphub.entity.DispatchHeader;
+import com.exphub.service.DispatchService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -15,8 +17,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,9 +46,11 @@ class MobileTemplateRenderTest {
 
     private static final String CTX_PATH = "/exphub";
 
-    /** 五个移动页 + 各自需要的模型变量。新增移动页必须加进来，否则它永远没人渲染过。 */
+    /** 移动页 + 各自需要的模型变量。新增移动页必须加进来，否则它永远没人渲染过。 */
     private static final List<String> TEMPLATES = List.of(
-            "m/login", "m/dashboard", "m/pending", "m/tools", "m/users", "m/problems", "m/me"
+            "m/login", "m/dashboard", "m/pending", "m/users", "m/problems", "m/me",
+            // 2026-11-17：底栏第三项「埋点」下线，换成派单三页
+            "m/dispatch", "m/dispatch-new", "m/dispatch-detail"
     );
 
     private static SpringTemplateEngine engine() {
@@ -78,6 +84,35 @@ class MobileTemplateRenderTest {
         ctx.setVariable("activeTab", "dashboard");
         // _csrf 在测试里没有 Security 上下文，模板按 null 分支走（这正是要覆盖的分支之一）
         ctx.setVariable("_csrf", null);
+
+        // ---- 派单三页的模型（2026-11-17）----
+        // 全塞进来不会影响别的页面；少一个的话 Thymeleaf 取属性会直接炸，
+        // 而炸在线上就是「200 + 半截灰页」，只是这次不是白屏而是断在卡片中间。
+        DispatchHeader o = new DispatchHeader();
+        o.setOrderNo("W-20261117-000001");
+        o.setOrigin(DispatchHeader.ORIGIN_HUMAN);
+        o.setCreator("越哥");
+        o.setAssignee("白泽");
+        o.setTitle("派单页渲染冒烟");
+        o.setDescription("模板能不能渲染完整");
+        o.setStatus(DispatchHeader.ST_REVIEWING);
+        o.setPriority(3);
+        o.setVersion("1.0.1");
+        o.setCreatedAt(LocalDateTime.of(2026, 11, 17, 10, 0));
+        o.setUpdatedAt(LocalDateTime.of(2026, 11, 17, 10, 0));
+        o.setAuthModifyCode(true);
+        o.setAuthCommit(true);
+        o.setAuthPush(false);
+        o.setAuthRelease(true);
+        ctx.setVariable("order", o);
+        ctx.setVariable("orders", List.of(o));
+        ctx.setVariable("items", List.of());
+        ctx.setVariable("labels", Map.of(DispatchHeader.ST_REVIEWING, "待审核"));
+        ctx.setVariable("counts", Map.of(DispatchHeader.ST_REVIEWING, 1L));
+        ctx.setVariable("granted", List.of("修改代码", "commit"));
+        ctx.setVariable("suggestedVersion", "1.0.1");
+        ctx.setVariable("roles", DispatchService.ASSIGNABLE_ROLES);
+        ctx.setVariable("ballOwner", "越哥");
         return ctx;
     }
 
@@ -134,18 +169,97 @@ class MobileTemplateRenderTest {
     }
 
     @Test
-    @DisplayName("tools 页渲染后要带统计与日志两个接口，不能只剩标题")
-    void toolsHasWorkingScript() {
-        String html = engine().process("m/tools", context());
+    @DisplayName("派单列表页必须带状态筛选与新建入口，不能只剩一个空壳")
+    void dispatchListHasWorkingLinks() {
+        String html = engine().process("m/dispatch", context());
 
-        assertTrue(html.contains("/api/tool-stats/summary"), "埋点页没有调用工具统计接口");
-        assertTrue(html.contains("/api/logs"), "埋点页没有调用调用日志接口");
-        // 三个数据区必须各有容器，否则 JS 拿到数据也没地方放
-        assertTrue(html.contains("id=\"ranking\""), "工具使用榜容器不存在");
-        assertTrue(html.contains("id=\"zeroList\""), "零调用工具容器不存在");
-        assertTrue(html.contains("id=\"logs\""), "调用日志容器不存在");
-        assertTrue(html.contains("id=\"trend\""), "趋势图容器不存在");
-        assertTrue(html.contains("id=\"failOnlyBtn\""), "缺少「只看失败」开关");
+        // 三个状态筛选 + 全部，至少要有这几个状态码，否则筛不出来
+        for (String st : List.of("REVIEWING", "READY", "RUNNING", "CONFIRMING", "VERIFYING")) {
+            assertTrue(html.contains("status=" + st), "派单列表缺状态筛选：" + st);
+        }
+        assertTrue(html.contains("/m/dispatch/new"), "派单列表没有新建入口");
+        // 列表项必须能进详情，否则手机上只能看不能审
+        assertTrue(html.contains("/m/dispatch/W-20261117-000001"), "列表项没有链接到详情页");
+        // 状态中文必须来自后端 labels，不是模板里硬编码的映射
+        assertTrue(html.contains("待审核"), "状态中文没渲染出来（labels 没传或键名不一致）");
+    }
+
+    @Test
+    @DisplayName("派单详情页的动作表单按状态出现，不该出现的绝不出现")
+    void dispatchDetailHasActionForms() {
+        // 动作走统一的 /m/dispatch/act，靠 action 参数分派
+        assertTrue(engine().process("m/dispatch-detail", context()).contains("/m/dispatch/act"),
+                "详情页没有动作表单提交地址");
+        // 授权位保存是独立端点
+        assertTrue(engine().process("m/dispatch-detail", context()).contains("/m/dispatch/auths"),
+                "详情页缺授权位保存表单");
+
+        // 11 个授权位在「待审核」时一个都不能少 —— 少一个就等于那项权限在小屏上根本给不了
+        String reviewing = engine().process("m/dispatch-detail",
+                withStatus(DispatchHeader.ST_REVIEWING, DispatchHeader.ORIGIN_HUMAN));
+        for (String f : List.of("modifyCode", "commit", "push", "release", "dataWrite", "migration",
+                "credential", "prodConfig", "securityGroup", "firewall", "spend")) {
+            assertTrue(reviewing.contains("name=\"" + f + "\""), "待审核详情页缺授权位复选框：" + f);
+        }
+
+        // 每个状态下该有的动作 / 不该有的动作。写死成表，比逐个 if 更难糊过去。
+        record Case(String status, String origin, List<String> must, List<String> mustNot) {}
+        List<Case> cases = List.of(
+                new Case(DispatchHeader.ST_REVIEWING, DispatchHeader.ORIGIN_AI,
+                        List.of("approve", "reject-review", "cancel"),
+                        // 待审核还没开始干，谈不上验收和回复
+                        List.of("verify-pass", "verify-reject", "reply")),
+                new Case(DispatchHeader.ST_CONFIRMING, DispatchHeader.ORIGIN_HUMAN,
+                        List.of("reply", "cancel"),
+                        // 人工单在待确认时还没到验收环节
+                        List.of("approve", "verify-pass", "verify-reject")),
+                // AI 单的「待确认」球在创建人手里，人在这页不该看到回复框 —— 回复走对话
+                new Case(DispatchHeader.ST_CONFIRMING, DispatchHeader.ORIGIN_AI,
+                        List.of("cancel"),
+                        List.of("reply", "approve", "verify-pass")),
+                new Case(DispatchHeader.ST_VERIFYING, DispatchHeader.ORIGIN_AI,
+                        List.of("verify-pass", "verify-reject", "cancel"),
+                        List.of("approve", "reject-review", "reply")),
+                new Case(DispatchHeader.ST_READY, DispatchHeader.ORIGIN_AI,
+                        List.of("cancel"),
+                        List.of("approve", "verify-pass", "verify-reject", "reply")),
+                // 终态：一个写操作都不该有，包括取消
+                new Case(DispatchHeader.ST_DONE, DispatchHeader.ORIGIN_AI,
+                        List.of(),
+                        List.of("approve", "reject-review", "reply", "verify-pass", "verify-reject", "cancel")),
+                new Case(DispatchHeader.ST_CANCELLED, DispatchHeader.ORIGIN_AI,
+                        List.of(),
+                        List.of("approve", "reject-review", "reply", "verify-pass", "verify-reject", "cancel")));
+
+        for (Case c : cases) {
+            String html = engine().process("m/dispatch-detail", withStatus(c.status(), c.origin()));
+            String tag = c.status() + "/" + c.origin();
+            for (String a : c.must()) {
+                assertTrue(html.contains("value=\"" + a + "\""),
+                        tag + " 状态下缺动作：" + a + " —— 界面上就没有这个按钮，人做不了这件事");
+            }
+            for (String a : c.mustNot()) {
+                assertFalse(html.contains("value=\"" + a + "\""),
+                        tag + " 状态下不该出现动作：" + a + " —— service 会拒，但按钮在就等于骗人点");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("新建派单页要有 11 个授权位，缺一个就等于那项权限手机上给不了")
+    void dispatchNewHasAllAuthCheckboxes() {
+        String html = engine().process("m/dispatch-new", context());
+
+        assertTrue(html.contains("/m/dispatch/create"), "新建页没有提交地址");
+        for (String f : List.of("modifyCode", "commit", "push", "release", "dataWrite", "migration",
+                "credential", "prodConfig", "securityGroup", "firewall", "spend")) {
+            assertTrue(html.contains("name=\"" + f + "\""), "新建页缺授权位复选框：" + f);
+        }
+        // 指派对象必须来自后端角色列表，不能自己写死几个人名
+        for (String r : DispatchService.ASSIGNABLE_ROLES) {
+            assertTrue(html.contains(">" + r + "</option>"), "指派下拉缺角色：" + r);
+        }
+        assertTrue(html.contains("1.0.1"), "建议版本号没渲染出来（不填时的默认值）");
     }
 
     @Test
@@ -175,7 +289,7 @@ class MobileTemplateRenderTest {
     void tabbarHasAllFiveTabs() {
         String html = engine().process("m/dashboard", context());
 
-        for (String href : List.of("/m/dashboard", "/m/pending", "/m/tools", "/m/users", "/m/me")) {
+        for (String href : List.of("/m/dashboard", "/m/pending", "/m/dispatch", "/m/users", "/m/me")) {
             assertTrue(html.contains(href), "底部导航缺入口：" + href);
         }
     }
@@ -213,6 +327,17 @@ class MobileTemplateRenderTest {
                 }
             }
         }
+    }
+
+    /** 每次都给一份**全新**的上下文 —— context() 里的对象是可变的，共用会让上一个用例改到下一个。 */
+    private static WebContext withStatus(String status, String origin) {
+        WebContext c = context();
+        DispatchHeader o = (DispatchHeader) c.getVariable("order");
+        o.setStatus(status);
+        o.setOrigin(origin);
+        // 球在谁手里：人工单球在越哥，AI 单球在创建人
+        c.setVariable("ballOwner", DispatchHeader.ORIGIN_HUMAN.equals(origin) ? "越哥" : "白泽");
+        return c;
     }
 
     private static String head(String s) {

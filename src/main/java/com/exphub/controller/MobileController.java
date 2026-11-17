@@ -1,17 +1,38 @@
 package com.exphub.controller;
 
+import com.exphub.entity.DispatchHeader;
+import com.exphub.entity.DispatchItem;
 import com.exphub.entity.User;
+import com.exphub.service.DispatchService;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 移动端后台（H5 + PWA）。
  *
- * <p><b>只做四件事</b>（越哥 2026-11-08 定范围）：看板 / 待删队列 / 工具埋点 / 用户。
- * 手机端**不提供**新增、编辑能力 —— 长文编辑在手机上体验差，而且整篇写回会踩 A5 的截断坑。
+ * <p><b>五件事</b>：看板 / 待删队列 / 派单 / 用户 / 我的。
+ * 手机端**不提供**文档新增与编辑能力 —— 长文编辑在手机上体验差，而且整篇写回会踩 A5 的截断坑。
+ *
+ * <p><b>2026-11-17 变更</b>：原「工具埋点」tab 整个下线（越哥要求），位置换成派单。
+ * 埋点的统计与日志仍在 PC 端 {@code /tool-stats}，移动端不再提供；{@code /m/tools} 路由已删除，
+ * 旧书签会 404 —— 这是有意的，比留一个半残页面干净。
+ *
+ * <p><b>派单为什么能在手机上做</b>：审核 / 验收 / 取消 / 人工单回复在 PC 上就只存在于网页，
+ * 手机端同样<b>只走网页表单</b>，没有任何对应的 MCP 工具 —— 手机端只是同一个后台的另一层皮，
+ * 不改变「闸门在人手里」这条。业务规则一律调 {@link DispatchService}，本类不自己判断状态。
  *
  * <p><b>数据一律走 {@code /api/stats/**}，不在本类里自己算。</b>
  * 理由：PC 仪表盘在 {@link PageController} 里现算，如果移动端再算一遍，
@@ -28,6 +49,9 @@ public class MobileController {
 
     /** 会话标记：本次是移动壳在用，登录成功后跳 /m/dashboard 而不是 /dashboard。 */
     public static final String UI_SESSION_KEY = "ui.mobile";
+
+    @Autowired
+    private DispatchService dispatchService;
 
     @GetMapping({"", "/"})
     public String index(HttpSession session) {
@@ -61,12 +85,145 @@ public class MobileController {
         return "m/pending";
     }
 
-    @GetMapping("/tools")
-    public String tools(HttpSession session, Model model) {
+    // ==================== 派单（2026-11-17 顶掉原「工具埋点」tab）====================
+
+    /** 列表：状态 chips + 卡片。默认全部，单子按更新时间倒序（service 里已排好）。 */
+    @GetMapping("/dispatch")
+    public String dispatchList(@RequestParam(required = false) String status,
+                               HttpSession session, Model model) {
         markMobile(session);
-        model.addAttribute("title", "工具埋点");
-        model.addAttribute("activeTab", "tools");
-        return "m/tools";
+        model.addAttribute("title", "派单");
+        model.addAttribute("activeTab", "dispatch");
+        // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用，与 PC 端一致）
+        model.addAttribute("orders", dispatchService.list(null, status, null, 100, null));
+        model.addAttribute("status", status);
+        model.addAttribute("counts", dispatchService.countByStatus());
+        model.addAttribute("labels", statusLabels());
+        return "m/dispatch";
+    }
+
+    /** 建单页：与 PC 同一套字段。建完是「待审核」，还要自己点一次通过。 */
+    @GetMapping("/dispatch/new")
+    public String dispatchNew(HttpSession session, Model model) {
+        markMobile(session);
+        model.addAttribute("title", "新建派单");
+        model.addAttribute("activeTab", "dispatch");
+        model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
+        model.addAttribute("suggestedVersion", dispatchService.suggestVersion(null));
+        return "m/dispatch-new";
+    }
+
+    @GetMapping("/dispatch/{orderNo}")
+    public String dispatchDetail(@PathVariable String orderNo, HttpSession session,
+                                 Model model, RedirectAttributes ra) {
+        markMobile(session);
+        DispatchHeader h = dispatchService.get(orderNo);
+        if (h == null) {
+            ra.addFlashAttribute("error", "单号 " + orderNo + " 不存在");
+            return "redirect:/m/dispatch";
+        }
+        List<DispatchItem> items = dispatchService.items(h.getId());
+        model.addAttribute("title", "派单 " + orderNo);
+        model.addAttribute("activeTab", "dispatch");
+        model.addAttribute("order", h);
+        model.addAttribute("items", items);
+        model.addAttribute("labels", statusLabels());
+        model.addAttribute("granted", grantedAuths(h));
+        model.addAttribute("suggestedVersion", dispatchService.suggestVersion(h.getProjectId()));
+        model.addAttribute("ballOwner", dispatchService.ballOwnerLabel(h));
+        return "m/dispatch-detail";
+    }
+
+    /**
+     * 所有「人按确认键」的动作集中到一个端点。
+     *
+     * <p>不拆成 6 个 URL 的理由：手机模板里每个按钮都是同一个表单，只改 action 取值，
+     * 拆开会让模板里出现 6 段几乎一样的 form。业务判断全在 {@link DispatchService}，
+     * 这里只是转发 —— 状态对不对、该不该拒，一律由 service 决。
+     *
+     * <p>参数：approve/verify-pass 用 text（备注），reject-review/verify-reject/cancel 用 reason，
+     * reply 用 text。
+     */
+    @PostMapping("/dispatch/act")
+    public String dispatchAct(@RequestParam String orderNo,
+                              @RequestParam String action,
+                              @RequestParam(required = false) String text,
+                              @RequestParam(required = false) String reason,
+                              RedirectAttributes ra) {
+        DispatchService.Outcome out = switch (action) {
+            case "approve" -> dispatchService.approve(orderNo, text);
+            case "reject-review" -> dispatchService.rejectReview(orderNo, reason);
+            case "verify-pass" -> dispatchService.verifyPass(orderNo, text);
+            case "verify-reject" -> dispatchService.verifyReject(orderNo, reason);
+            case "reply" -> dispatchService.humanReply(orderNo, text);
+            case "cancel" -> dispatchService.cancel(orderNo, reason);
+            default -> null;
+        };
+        if (out == null) {
+            ra.addFlashAttribute("error", "未知动作：" + action);
+        } else {
+            flash(ra, out);
+        }
+        return "redirect:/m/dispatch/" + orderNo;
+    }
+
+    @PostMapping("/dispatch/create")
+    public String dispatchCreate(@RequestParam String title,
+                                 @RequestParam String description,
+                                 @RequestParam String assignee,
+                                 @RequestParam(required = false) Integer priority,
+                                 @RequestParam(required = false) String remark,
+                                 @RequestParam(required = false) Boolean modifyCode,
+                                 @RequestParam(required = false) Boolean commit,
+                                 @RequestParam(required = false) Boolean push,
+                                 @RequestParam(required = false) Boolean release,
+                                 @RequestParam(required = false) Boolean dataWrite,
+                                 @RequestParam(required = false) Boolean migration,
+                                 @RequestParam(required = false) Boolean credential,
+                                 @RequestParam(required = false) Boolean prodConfig,
+                                 @RequestParam(required = false) Boolean securityGroup,
+                                 @RequestParam(required = false) Boolean firewall,
+                                 @RequestParam(required = false) Boolean spend,
+                                 @RequestParam(required = false) String version,
+                                 RedirectAttributes ra) {
+        Map<String, Boolean> auths = authsMap(modifyCode, commit, push, release, dataWrite,
+                migration, credential, prodConfig, securityGroup, firewall, spend);
+
+        DispatchService.Outcome out = dispatchService.create(
+                DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
+                assignee, title, description, priority, null, auths, null, version);
+        if (!out.ok() || out.header() == null) {
+            ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
+            return "redirect:/m/dispatch/new";
+        }
+        if (remark != null && !remark.isBlank()) {
+            dispatchService.updateRemark(out.header().getOrderNo(), remark);
+        }
+        ra.addFlashAttribute("success",
+                "已建单 " + out.header().getOrderNo() + "，状态待审核。确认无误后点「审核通过」才会派出去。");
+        return "redirect:/m/dispatch/" + out.header().getOrderNo();
+    }
+
+    /** 待审核阶段改授权位 / 版本号；审核通过后 service 会拒。 */
+    @PostMapping("/dispatch/auths")
+    public String dispatchAuths(@RequestParam String orderNo,
+                                @RequestParam(required = false) Boolean modifyCode,
+                                @RequestParam(required = false) Boolean commit,
+                                @RequestParam(required = false) Boolean push,
+                                @RequestParam(required = false) Boolean release,
+                                @RequestParam(required = false) Boolean dataWrite,
+                                @RequestParam(required = false) Boolean migration,
+                                @RequestParam(required = false) Boolean credential,
+                                @RequestParam(required = false) Boolean prodConfig,
+                                @RequestParam(required = false) Boolean securityGroup,
+                                @RequestParam(required = false) Boolean firewall,
+                                @RequestParam(required = false) Boolean spend,
+                                @RequestParam(required = false) String version,
+                                RedirectAttributes ra) {
+        Map<String, Boolean> auths = authsMap(modifyCode, commit, push, release, dataWrite,
+                migration, credential, prodConfig, securityGroup, firewall, spend);
+        flash(ra, dispatchService.updateAuths(orderNo, auths, version));
+        return "redirect:/m/dispatch/" + orderNo;
     }
 
     @GetMapping("/users")
@@ -107,5 +264,64 @@ public class MobileController {
         if (user == null) return "";
         return user.getDisplayName() != null && !user.getDisplayName().isEmpty()
                 ? user.getDisplayName() : user.getUsername();
+    }
+
+    // ==================== 派单页辅助（与 PC 端 DispatchController 对齐，改动请两边一起看）====================
+
+    /** 状态码 → 中文，模板里 ${labels[o.status]} 直接取。 */
+    private Map<String, String> statusLabels() {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (String st : List.of(DispatchHeader.ST_DRAFT, DispatchHeader.ST_REVIEWING,
+                DispatchHeader.ST_READY, DispatchHeader.ST_RUNNING, DispatchHeader.ST_CONFIRMING,
+                DispatchHeader.ST_VERIFYING, DispatchHeader.ST_DONE, DispatchHeader.ST_CANCELLED)) {
+            m.put(st, DispatchService.statusLabel(st));
+        }
+        return m;
+    }
+
+    /** 已授权的动作清单。手机上空间只够放「已授」的，未授的不占位。 */
+    private List<String> grantedAuths(DispatchHeader h) {
+        List<String> on = new ArrayList<>();
+        if (Boolean.TRUE.equals(h.getAuthModifyCode())) on.add("修改代码");
+        if (Boolean.TRUE.equals(h.getAuthCommit())) on.add("commit");
+        if (Boolean.TRUE.equals(h.getAuthPush())) on.add("push");
+        if (Boolean.TRUE.equals(h.getAuthRelease())) on.add("发版");
+        if (Boolean.TRUE.equals(h.getAuthDataWrite())) on.add("数据写入");
+        if (Boolean.TRUE.equals(h.getAuthMigration())) on.add("迁移");
+        if (Boolean.TRUE.equals(h.getAuthCredential())) on.add("凭证生成");
+        if (Boolean.TRUE.equals(h.getAuthProdConfig())) on.add("生产配置");
+        if (Boolean.TRUE.equals(h.getAuthSecurityGroup())) on.add("安全组");
+        if (Boolean.TRUE.equals(h.getAuthFirewall())) on.add("防火墙");
+        if (Boolean.TRUE.equals(h.getAuthSpend())) on.add("花钱");
+        return on;
+    }
+
+    /** 11 个授权位。键名必须与 DispatchService.updateAuths / create 认的一致。 */
+    private static Map<String, Boolean> authsMap(Boolean modifyCode, Boolean commit, Boolean push,
+                                                 Boolean release, Boolean dataWrite, Boolean migration,
+                                                 Boolean credential, Boolean prodConfig,
+                                                 Boolean securityGroup, Boolean firewall, Boolean spend) {
+        Map<String, Boolean> auths = new LinkedHashMap<>();
+        auths.put("modifyCode", modifyCode);
+        auths.put("commit", commit);
+        auths.put("push", push);
+        auths.put("release", release);
+        auths.put("dataWrite", dataWrite);
+        auths.put("migration", migration);
+        auths.put("credential", credential);
+        auths.put("prodConfig", prodConfig);
+        auths.put("securityGroup", securityGroup);
+        auths.put("firewall", firewall);
+        auths.put("spend", spend);
+        return auths;
+    }
+
+    private static void flash(RedirectAttributes ra, DispatchService.Outcome out) {
+        if (out == null) {
+            ra.addFlashAttribute("error", "操作未返回结果，请刷新确认状态");
+            return;
+        }
+        if (out.ok()) ra.addFlashAttribute("success", out.message());
+        else ra.addFlashAttribute("error", out.message());
     }
 }

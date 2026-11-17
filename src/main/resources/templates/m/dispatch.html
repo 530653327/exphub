@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{m/layout :: head('派单')}"></head>
+<body>
+<div class="page">
+    <div class="row-between" style="margin-bottom:12px">
+        <div class="grow">
+            <div class="h1" style="margin:0">派单</div>
+            <div class="muted">
+                待审核 <b th:text="${counts['REVIEWING']} ?: 0">0</b> ·
+                待接单 <b th:text="${counts['READY']} ?: 0">0</b> ·
+                进行中 <b th:text="${counts['RUNNING']} ?: 0">0</b> ·
+                待确认 <b th:text="${counts['CONFIRMING']} ?: 0">0</b> ·
+                待验收 <b th:text="${counts['VERIFYING']} ?: 0">0</b>
+            </div>
+        </div>
+        <a class="btn" style="width:auto;padding:8px 14px;font-size:13px" th:href="@{/m/dispatch/new}">新建</a>
+    </div>
+
+    <div th:if="${success}" class="card" style="border:1px solid var(--ok)">
+        <div style="color:var(--ok);white-space:pre-wrap" th:text="${success}"></div>
+    </div>
+    <div th:if="${error}" class="card" style="border:1px solid var(--danger)">
+        <div style="color:var(--danger);white-space:pre-wrap" th:text="${error}"></div>
+    </div>
+
+    <!-- 状态筛选：横向可滑。手机窄，六个按钮平铺会挤成两行小字 -->
+    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;margin-bottom:10px;-webkit-overflow-scrolling:touch">
+        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
+           th:classappend="${status == null or status == ''} ? 'active'" th:href="@{/m/dispatch}">全部</a>
+        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
+           th:classappend="${status == 'REVIEWING'} ? 'active'" th:href="@{/m/dispatch(status='REVIEWING')}">待审核</a>
+        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
+           th:classappend="${status == 'READY'} ? 'active'" th:href="@{/m/dispatch(status='READY')}">待接单</a>
+        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
+           th:classappend="${status == 'RUNNING'} ? 'active'" th:href="@{/m/dispatch(status='RUNNING')}">进行中</a>
+        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
+           th:classappend="${status == 'CONFIRMING'} ? 'active'" th:href="@{/m/dispatch(status='CONFIRMING')}">待确认</a>
+        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
+           th:classappend="${status == 'VERIFYING'} ? 'active'" th:href="@{/m/dispatch(status='VERIFYING')}">待验收</a>
+    </div>
+
+    <a th:each="o : ${orders}" class="card" style="display:block" th:href="@{'/m/dispatch/' + ${o.orderNo}}">
+        <div class="row-between" style="margin-bottom:6px">
+            <div class="grow" style="font-weight:500" th:text="${o.title}">标题</div>
+            <span class="tag" th:classappend="${
+                    o.status == 'REVIEWING' ? 'warn' :
+                    o.status == 'CONFIRMING' ? 'danger' :
+                    o.status == 'RUNNING' ? 'ok' :
+                    o.status == 'VERIFYING' ? 'ok' : ''}"
+                  th:text="${labels[o.status]}">状态</span>
+        </div>
+        <div class="row-between" style="margin-bottom:4px">
+            <span class="muted" style="font-family:monospace;font-size:12px" th:text="${o.orderNo}"></span>
+            <span class="muted" style="font-size:12px"
+                  th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt,'MM-dd HH:mm') : ''}"></span>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+            <span class="tag" th:text="${o.origin == 'HUMAN' ? '人工' : 'AI'}">来源</span>
+            <span class="tag" th:text="'→ ' + ${o.assignee}">指派</span>
+            <span class="tag" th:if="${o.accepter != null}" th:text="'接了 ' + ${o.accepter}">接单</span>
+            <span class="tag" th:if="${o.priority != null and o.priority == 1}" style="color:var(--danger)">高优</span>
+            <span class="tag" th:if="${o.version != null and !o.version.isEmpty()}" th:text="${o.version}">版本</span>
+        </div>
+    </a>
+
+    <div class="empty" th:if="${orders.isEmpty()}">
+        这个筛选下没有单。<br>
+        <span class="muted">AI 建的单会落在「待审核」，等你通过才会派出去。</span>
+    </div>
+
+    <div class="muted" style="text-align:center;margin:18px 0 8px;font-size:12px">
+        审核 / 验收 / 取消只能在这页（和 PC 后台）做，MCP 里没有这些动作 —— 闸门在人手里。
+    </div>
+</div>
+
+<nav th:replace="~{m/layout :: tabbar('dispatch')}"></nav>
+<th:block th:replace="~{m/layout :: pwa}"></th:block>
+</body>
+</html>

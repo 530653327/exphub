@@ -1,7 +1,7 @@
 {
   "name": "经验阁",
   "short_name": "经验阁",
-  "description": "ExpHub 后台移动端：看板、待删队列、工具埋点、用户",
+  "description": "ExpHub 后台移动端：看板、待删队列、派单、用户",
   "lang": "zh-CN",
   "dir": "ltr",
   "start_url": "./m/dashboard",
@@ -38,9 +38,9 @@
       "description": "确认删除标记待删的经验"
     },
     {
-      "name": "工具埋点",
-      "url": "./m/tools",
-      "description": "工具调用次数与成功率"
+      "name": "派单",
+      "url": "./m/dispatch",
+      "description": "审核、验收、取消派单"
     }
   ]
 }

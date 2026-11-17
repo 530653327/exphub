@@ -121,8 +121,10 @@
 </head>
 <body>
 
-<!-- 底部导航：五项固定。activeTab 传 dashboard / pending / tools / users / me
+<!-- 底部导航：五项固定。activeTab 传 dashboard / pending / dispatch / users / me
      2026-11-08 加了第 5 项「用户」（越哥要求能看到用户数与用户信息）。
+     2026-11-17 第三项「埋点」下线，换成「派单」—— 手机上要看单、要审单、要验收，
+     而工具埋点是看数用的，PC 端 /tool-stats 更合适。
      五个是手机底部栏的上限 —— 再加就要么改抽屉，要么把「我的」挪进头像入口，
      别直接塞第六个，360px 宽的手机上每个 Tab 只剩 60px，字会挤成一团。 -->
 <nav class="tabbar" th:fragment="tabbar(activeTab)">
@@ -134,9 +136,9 @@
         <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v5M14 11v5"/></svg>
         <span>待删</span>
     </a>
-    <a class="tab" th:classappend="${activeTab == 'tools'} ? 'active'" th:href="@{/m/tools}">
-        <svg viewBox="0 0 24 24"><path d="M4 19V9M9.5 19V5M15 19v-7M20.5 19v-4"/></svg>
-        <span>埋点</span>
+    <a class="tab" th:classappend="${activeTab == 'dispatch'} ? 'active'" th:href="@{/m/dispatch}">
+        <svg viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+        <span>派单</span>
     </a>
     <a class="tab" th:classappend="${activeTab == 'users'} ? 'active'" th:href="@{/m/users}">
         <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M2.8 19.5c1-3 3.3-4.6 6.2-4.6s5.2 1.6 6.2 4.6"/><path d="M16.5 5.6a3 3 0 0 1 0 5.8M17.6 14.4c2.1.5 3.5 2.2 4 4.4"/></svg>

@@ -9,9 +9,10 @@
 // v2（2026-11-08）：manifest 改名（去掉「· 后台」后缀）。
 // v3（2026-11-08）：图标中心字「阁」改「验」。
 // v4（2026-11-08）：图标改成 EXP（不放汉字）。
+// v5（2026-11-17）：manifest 的 shortcut「工具埋点」换成「派单」，底栏第三项同步换。
 // 每次都必须 bump 版本号 —— manifest 与图标都在下面 SHELL 里是**缓存优先**，
 // 不 bump 的话已安装的客户端会一直读到旧壳资源，改了等于没改。
-const VERSION = 'exphub-shell-v4';
+const VERSION = 'exphub-shell-v5';
 const SCOPE = self.registration.scope;   // 形如 https://cloudim.club/exphub/
 
 const SHELL = [
