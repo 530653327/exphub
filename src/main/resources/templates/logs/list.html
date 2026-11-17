@@ -12,32 +12,34 @@
     <div th:replace="~{fragments/sidebar :: nav('logs')}"></div>
 
     <div class="main-content">
-        <div class="topbar">
-            <h4 class="mb-0">调用日志</h4>
-            <div>
-                <button class="btn btn-danger btn-sm" id="batchDeleteBtn" style="display:none;" onclick="batchDelete()">
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-clipboard-list"></i>调用日志</h4>
+                <div class="page-sub">MCP 工具调用流水，按时间倒序</div>
+            </div>
+            <div class="page-actions">
+                <button class="btn btn-danger" id="batchDeleteBtn" style="display:none;" onclick="batchDelete()">
                     <i class="fas fa-trash-alt mr-1"></i>删除选中 (<span id="selectedCount">0</span>)
                 </button>
-                <button class="btn btn-outline-danger btn-sm ml-2" onclick="showCleanDialog()">
+                <button class="btn btn-outline-danger" onclick="showCleanDialog()">
                     <i class="fas fa-broom mr-1"></i>按时间清理
                 </button>
             </div>
         </div>
 
         <!-- 筛选区域 -->
-        <div class="card mb-3">
-            <div class="card-body py-2">
-                <div class="form-row align-items-end">
-                    <div class="col-auto">
-                        <label class="small text-muted mb-1">开始时间</label>
+        <div class="toolbar">
+            <div class="d-flex align-items-end flex-wrap w-100" style="gap:12px;">
+                    <div>
+                        <label class="d-block">开始时间</label>
                         <input type="datetime-local" class="form-control form-control-sm" id="filterStartTime" style="width:190px;">
                     </div>
-                    <div class="col-auto">
-                        <label class="small text-muted mb-1">结束时间</label>
+                    <div>
+                        <label class="d-block">结束时间</label>
                         <input type="datetime-local" class="form-control form-control-sm" id="filterEndTime" style="width:190px;">
                     </div>
-                    <div class="col-auto">
-                        <label class="small text-muted mb-1">操作类型</label>
+                    <div>
+                        <label class="d-block">操作类型</label>
                         <select class="form-control form-control-sm" id="filterAction" style="width:110px;">
                             <option value="">全部</option>
                             <option value="SEARCH">查询</option>
@@ -46,29 +48,28 @@
                             <option value="DELETE">删除</option>
                         </select>
                     </div>
-                    <div class="col-auto">
-                        <label class="small text-muted mb-1">调用者</label>
+                    <div>
+                        <label class="d-block">调用者</label>
                         <input type="text" class="form-control form-control-sm" id="filterCallerName" placeholder="调用者名称" style="width:130px;">
                     </div>
-                    <div class="col-auto">
-                        <label class="small text-muted mb-1">AppKey</label>
+                    <div>
+                        <label class="d-block">AppKey</label>
                         <input type="text" class="form-control form-control-sm" id="filterApiKey" placeholder="Key 模糊搜索" style="width:150px;">
                     </div>
-                    <div class="col-auto">
-                        <label class="small text-muted mb-1">关键字</label>
+                    <div>
+                        <label class="d-block">关键字</label>
                         <input type="text" class="form-control form-control-sm" id="filterKeyword" placeholder="检索关键字" style="width:130px;">
                     </div>
-                    <div class="col-auto">
-                        <button class="btn btn-primary btn-sm" onclick="searchLogs()"><i class="fas fa-search mr-1"></i>搜索</button>
-                        <button class="btn btn-outline-secondary btn-sm ml-1" onclick="resetFilters()"><i class="fas fa-redo mr-1"></i>重置</button>
+                    <div>
+                        <button class="btn btn-primary" onclick="searchLogs()"><i class="fas fa-search mr-1"></i>搜索</button>
+                        <button class="btn btn-outline-secondary ml-1" onclick="resetFilters()"><i class="fas fa-redo mr-1"></i>重置</button>
                     </div>
-                </div>
             </div>
         </div>
 
-        <div class="card">
+        <div class="card list-card">
             <div class="card-body p-0">
-                <table class="table mb-0">
+                <table class="table">
                     <thead>
                         <tr>
                             <th style="width:40px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
@@ -91,9 +92,9 @@
                     </tbody>
                 </table>
             </div>
-            <div class="card-footer bg-white" id="logPagination" style="display: none;">
+            <div class="list-card-foot" id="logPagination" style="display: none;">
                 <nav>
-                    <ul class="pagination justify-content-center mb-0" id="logPageNav"></ul>
+                    <ul class="pagination justify-content-center" id="logPageNav"></ul>
                 </nav>
             </div>
         </div>
@@ -294,7 +295,7 @@
                     document.getElementById('logTable').innerHTML = html;
                     renderPagination();
                 } else {
-                    document.getElementById('logTable').innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">暂无数据</td></tr>';
+                    document.getElementById('logTable').innerHTML = '<tr><td colspan="9" class="empty-state"><i class="fas fa-inbox"></i><p>暂无数据</p></td></tr>';
                     document.getElementById('logPagination').style.display = 'none';
                 }
             } catch (e) {

@@ -47,6 +47,12 @@
     --gap: 25px;
     --shadow-card: 0 2px 15px rgba(0, 0, 0, 0.05);
 
+    /* 列表页版式（第三批） */
+    --head-bg: #fafbfc;
+    --head-fg: #8a8f99;
+    --line-soft: #f4f5f7;
+    --title-fg: #2c3038;
+
     /* 状态语义色（第一批只登记，第二批按三种语义重排时用） */
     --ok-bg: #d4edda;
     --ok-fg: #155724;
@@ -223,3 +229,204 @@ body { background-color: var(--bg); }
 .bg-gradient-success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
 .bg-gradient-warning { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
 .bg-gradient-danger  { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+
+/* ============================================================================
+ * 第三批（2026-11-17）：页面级版式统一
+ *
+ * 前两批只搬不改，观感 0 变化；这一批是**第一次真的动样子**，所以只做一件事：
+ * 把「同一类页面本该长得一样、实际各写一套」的地方收敛成一套。
+ *
+ * 收敛前的实测差异（6 个列表页）：
+ *   · 页头按钮：docs / templates 用全尺寸 .btn-primary，其余用 .btn-sm
+ *   · 标题字号：全是 <h4>，但有的带图标有的不带，图标颜色一处内联 #e94560
+ *   · 筛选条：docs 是 card+card-body py-3，logs 是 card+py-2+form-row+label，
+ *            dispatch 干脆把 7 个状态按钮塞进页头右侧
+ *   · 表格表头：dispatch / projects 用 thead-light（灰），logs / tool-stats 裸表头
+ *   · 分页：docs / logs / templates 在卡底 card-footer，assistants 在卡外 nav.mt-4
+ *   · 空状态：5 种写法，py-4/py-5、图标各异
+ *
+ * 用法（列表页照这个骨架写，页面里不要再写这些属性）：
+ *   <div class="topbar page-head">
+ *     <div class="page-title-wrap"><h4 class="page-title">标题</h4><div class="page-sub">副标题</div></div>
+ *     <div class="page-actions">…按钮…</div>
+ *   </div>
+ *   <div class="toolbar">…筛选控件…</div>
+ *   <div class="card list-card">
+ *     <div class="list-card-head">…可选：Tab / 计数…</div>
+ *     <table class="table">…</table>          ← 或卡片流
+ *     <div class="list-card-foot">…分页…</div> ← 可选
+ *   </div>
+ *   <div class="empty-state"><i class="fas fa-inbox"></i><p>…</p></div>
+ *
+ * 只挂在这些类下的元素才受影响，详情页 / 表单页 / 弹窗一律不碰。
+ * ========================================================================== */
+
+/* ---------- 页头 ---------- */
+
+.page-head {
+    margin-bottom: 18px;          /* 比详情页的 .topbar 紧一点，列表页内容更密 */
+    padding: 16px 22px;
+}
+
+.page-title-wrap { min-width: 0; }
+
+.page-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--title-fg);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.page-title i {
+    font-size: 0.92rem;
+    color: var(--brand);
+    margin-right: 8px;
+}
+
+.page-sub {
+    font-size: 0.82rem;
+    color: var(--head-fg);
+    margin-top: 3px;
+}
+
+.page-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* 页头按钮不看页面写的是 .btn 还是 .btn-sm，一律同高 */
+.page-actions .btn {
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    border-radius: var(--radius-sm);
+    line-height: 1.5;
+}
+
+/* ---------- 筛选条 ---------- */
+
+.toolbar {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.toolbar .form-control,
+.toolbar .custom-select {
+    height: 34px;
+    font-size: 0.85rem;
+}
+
+.toolbar .btn {
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    border-radius: var(--radius-sm);
+}
+
+/* 带 label 的筛选（logs 那种上下结构），标签统一小号灰字 */
+.toolbar label {
+    font-size: 0.75rem;
+    color: var(--head-fg);
+    margin-bottom: 4px;
+}
+
+/* ---------- 列表卡 + 表格 ---------- */
+
+.list-card {
+    overflow: hidden;             /* 让圆角裁住表头首行和末行 */
+}
+
+.list-card-head {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.85rem;
+    color: var(--text-mute);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.list-card-foot {
+    padding: 10px 16px;
+    border-top: 1px solid var(--line-soft);
+    background: var(--surface);
+}
+
+.list-card-foot .pagination { margin-bottom: 0; }
+
+/* 表头：第一列左对齐、小号灰字、不再用 thead-light 的灰底 */
+.list-card .table {
+    margin-bottom: 0;
+    border-radius: 0;
+}
+
+.list-card .table thead th,
+.list-card .table thead.thead-light th {
+    background: var(--head-bg);
+    color: var(--head-fg);
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 10px 14px;
+    border-top: none;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.list-card .table tbody td {
+    padding: 12px 14px;
+    font-size: 0.87rem;
+    border-color: var(--line-soft);
+    vertical-align: middle;
+}
+
+.list-card .table tbody tr:last-child td { border-bottom: none; }
+
+.list-card .table tbody tr:hover { background: var(--head-bg); }
+
+/* 表格里的次要信息统一淡一档，避免每页自己挑 #888 / #999 / text-muted */
+.list-card .table .cell-mute {
+    color: var(--head-fg);
+    font-size: 0.85rem;
+}
+
+/* ---------- 空状态 ---------- */
+
+.empty-state {
+    text-align: center;
+    color: var(--head-fg);
+    padding: 56px 20px;
+}
+
+.empty-state i {
+    display: block;
+    font-size: 2.2rem;
+    margin-bottom: 14px;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    margin: 0;
+    font-size: 0.88rem;
+}
+
+.empty-state .empty-hint {
+    margin-top: 6px;
+    font-size: 0.8rem;
+    opacity: 0.85;
+}
+
+/* 表格内的空状态行（colspan 那行）不需要那么大上下留白 */
+.list-card .table td.empty-state {
+    padding: 40px 20px;
+    border-bottom: none;
+}

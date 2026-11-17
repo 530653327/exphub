@@ -30,10 +30,10 @@
 
     <div class="main-content">
         <!-- 第一层：标题 + 新建（新建独占右上角） -->
-        <div class="topbar" style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
-                <h4 class="mb-0">经验管理</h4>
-                <div th:if="${view != 'candidates'}" class="text-muted mt-1" style="font-size:0.82rem;">
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-book"></i>经验管理</h4>
+                <div class="page-sub" th:if="${view != 'candidates'}">
                     <span th:if="${keyword != null and keyword != ''}">搜索「<strong th:text="${keyword}"></strong>」</span>
                     <span th:if="${templateType != null and templateType != ''}">｜类型过滤</span>
                     <span th:if="${status == 'PENDING_DELETE'}">｜待删队列</span>
@@ -41,12 +41,12 @@
                     <span th:if="${keyword == null or keyword == ''} and ${templateType == null or templateType == ''} and ${status == null or status == ''} and ${flag == null or flag == ''}">全部经验</span>
                     · 共 <strong th:text="${totalRows}">0</strong> 条
                 </div>
-                <div th:if="${view == 'candidates'}" class="text-muted mt-1" style="font-size:0.82rem;">
+                <div class="page-sub" th:if="${view == 'candidates'}">
                     整理候选队列 · 待判断 <!--候选去掉右btn，这里是说明区-->
                 </div>
             </div>
-            <div class="d-flex align-items-center text-muted" style="font-size:0.82rem;">
-                <span th:if="${versionStats != null and versionStats.snapshots != null}" class="mr-3">
+            <div class="page-actions">
+                <span th:if="${versionStats != null and versionStats.snapshots != null}" class="page-sub mr-2">
                     <i class="fas fa-layer-group mr-1"></i>历史快照 <span th:text="${versionStats.snapshots}">0</span> 条 · <span th:text="${versionStats.kb}">0</span> KB
                 </span>
                 <a th:href="@{/docs/edit}" class="btn btn-primary">
@@ -58,8 +58,7 @@
         <!-- 第二层：过滤工具栏（搜索 + 类型 + 状态） -->
         <!-- 问题文档视图下隐藏这套筛选：它的判据（超期/被取代）用 status/flag 表达不出来，
              摆在这里只会让人以为是筛出来的，其实一改就把 problem 丢了 -->
-        <div class="card mb-3" th:if="${view != 'candidates' and (problem == null or problem == '')}">
-            <div class="card-body py-3 d-flex align-items-center" style="gap:10px;flex-wrap:wrap;">
+        <div class="toolbar" th:if="${view != 'candidates' and (problem == null or problem == '')}">
                 <div class="input-group" style="flex:1;min-width:240px;">
                     <input type="text" class="form-control" placeholder="搜索标题 / ID / 摘要 / 标签..." id="searchInput" th:value="${keyword}">
                     <div class="input-group-append">
@@ -88,12 +87,11 @@
                     <option value="BROKEN" th:selected="${status == 'BROKEN'}">已失效</option>
                     <option value="DEPRECATED" th:selected="${status == 'DEPRECATED'}">已过期</option>
                 </select>
-            </div>
         </div>
 
         <!-- 第三层：视图 Tab（全部 / 待复核 / 候选 / 待删） -->
-        <div class="card">
-            <div class="card-header px-3 py-0 d-flex" style="gap:2px;border-bottom:1px solid #f0f0f0;">
+        <div class="card list-card">
+            <div class="card-header px-3 py-0 d-flex" style="gap:2px;border-bottom:1px solid var(--line);">
                 <a th:href="@{/docs(keyword=${keyword}, templateType=${templateType})}"
                    th:classappend="${status != 'PENDING_DELETE' and flag != 'needs_review' and view != 'candidates' and (problem == null or problem == '')} ? 'active'"
                    class="nav-tab">全部</a>
@@ -151,10 +149,10 @@
                 判定为重复 = 两条都打标记（不合并正文）；判定为取代 = 旧条指向新条（原文保留）
             </div>
             <div class="card-body p-0">
-                <div th:if="${candidates == null or #lists.isEmpty(candidates)}" class="text-center text-muted py-5">
-                    <i class="fas fa-check-circle fa-3x mb-3"></i>
-                    <p class="mb-1">队列是空的，暂时没有待判断的重复候选。</p>
-                    <p class="mb-0" style="font-size:0.85rem;">
+                <div th:if="${candidates == null or #lists.isEmpty(candidates)}" class="empty-state">
+                    <i class="fas fa-check-circle"></i>
+                    <p>队列是空的，暂时没有待判断的重复候选。</p>
+                    <p class="empty-hint">
                         AI 整理记忆时发现两条高度重合，会用 add_review_candidate 入队，届时这里会出现。
                     </p>
                 </div>
@@ -295,13 +293,13 @@
                         </div>
                     </div>
                 </div>
-                <div th:if="${#lists.isEmpty(docs)}" class="text-center text-muted py-5">
-                    <i class="fas fa-inbox fa-3x mb-3"></i>
+                <div th:if="${#lists.isEmpty(docs)}" class="empty-state">
+                    <i class="fas fa-inbox"></i>
                     <p>暂无经验文档，<a th:href="@{/docs/edit}">创建一个</a>吧~</p>
                 </div>
             </div>
             <!-- 分页 -->
-            <div th:if="${totalPages > 1}" class="card-footer bg-white">
+            <div th:if="${totalPages > 1}" class="list-card-foot">
                 <nav>
                     <ul class="pagination justify-content-center mb-0">
                         <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">

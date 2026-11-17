@@ -14,9 +14,14 @@
     <div th:replace="~{fragments/sidebar :: nav('dashboard')}"></div>
 
     <div class="main-content">
-        <div class="topbar">
-            <h4 class="mb-0">仪表盘</h4>
-            <span class="text-muted">欢迎回来，<span th:text="${currentUserName}">管理员</span></span>
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-chart-line"></i>仪表盘</h4>
+                <div class="page-sub">近 7 天调用与热门经验</div>
+            </div>
+            <div class="page-actions">
+                <span class="page-sub">欢迎回来，<span th:text="${currentUserName}">管理员</span></span>
+            </div>
         </div>
 
         <div class="row mb-4">
@@ -135,21 +140,21 @@
         </div>
 
         <div class="card mt-4">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-chart-line text-primary mr-2"></i>近 7 天调用趋势</h5>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-chart-line mr-2" style="color:var(--brand)"></i>近 7 天调用趋势</h5>
             </div>
             <div class="card-body">
                 <canvas id="trendChart" height="80"></canvas>
             </div>
         </div>
 
-        <div class="card mt-4">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-fire text-danger mr-2"></i>热门经验 Top10</h5>
-                <span class="text-muted small">按「详情查看次数」排序（搜索曝光自 2026-10-21 起不再计入）</span>
+        <div class="card list-card mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-fire mr-2" style="color:var(--brand)"></i>热门经验 Top10</h5>
+                <span class="page-sub">按「详情查看次数」排序（搜索曝光自 2026-10-21 起不再计入）</span>
             </div>
             <div class="card-body p-0">
-                <table class="table mb-0">
+                <table class="table">
                     <thead>
                         <tr>
                             <th style="width: 40px;">#</th>

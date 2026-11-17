@@ -28,9 +28,12 @@
     <div th:replace="~{fragments/sidebar :: nav('tool-stats')}"></div>
 
     <div class="main-content">
-        <div class="topbar">
-            <h4 class="mb-0">MCP 工具使用统计</h4>
-            <div>
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-tools"></i>MCP 工具使用统计</h4>
+                <div class="page-sub">哪些工具真在被用、哪些是零调用候选</div>
+            </div>
+            <div class="page-actions">
                 <a class="day-btn" th:classappend="${days == 7} ? 'on'" th:href="@{/tool-stats(days=7)}">近 7 天</a>
                 <a class="day-btn" th:classappend="${days == 30} ? 'on'" th:href="@{/tool-stats(days=30)}">近 30 天</a>
                 <a class="day-btn" th:classappend="${days == 90} ? 'on'" th:href="@{/tool-stats(days=90)}">近 90 天</a>
@@ -134,15 +137,15 @@
         </div>
 
         <!-- 工具使用榜 -->
-        <div class="card mb-4">
+        <div class="card list-card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-ranking-star text-primary mr-2"></i>工具使用榜（近 <span th:text="${days}">30</span> 天）</h5>
-                <span class="text-muted" style="font-size:0.82rem;">
+                <h5 class="mb-0"><i class="fas fa-ranking-star mr-2" style="color:var(--brand)"></i>工具使用榜（近 <span th:text="${days}">30</span> 天）</h5>
+                <span class="page-sub">
                     共 <span th:text="${#lists.size(ranking)}">0</span> 个工具有调用
                 </span>
             </div>
             <div class="card-body p-0">
-                <table class="table mb-0">
+                <table class="table">
                     <thead>
                         <tr>
                             <th style="width:40px;">#</th>
@@ -237,12 +240,12 @@
 
             <!-- 按助手分布 -->
             <div class="col-md-5">
-                <div class="card mb-4">
+                <div class="card list-card mb-4">
                     <div class="card-header">
-                        <h5 class="mb-0"><i class="fas fa-robot text-primary mr-2"></i>按调用者分布（近 <span th:text="${days}">30</span> 天）</h5>
+                        <h5 class="mb-0"><i class="fas fa-robot mr-2" style="color:var(--brand)"></i>按调用者分布（近 <span th:text="${days}">30</span> 天）</h5>
                     </div>
                     <div class="card-body p-0">
-                        <table class="table mb-0">
+                        <table class="table">
                             <thead>
                                 <tr>
                                     <th>调用者</th>

@@ -21,36 +21,46 @@
     <div th:replace="~{fragments/sidebar :: nav('dispatch')}"></div>
 
     <div class="main-content">
-        <div class="topbar">
-            <h4 class="mb-0"><i class="fas fa-paper-plane mr-2" style="color:#e94560"></i>派单</h4>
-            <div>
-                <a th:href="@{/dispatch/new}" class="btn btn-sm btn-primary mr-2"><i class="fas fa-plus mr-1"></i>新建派单</a>
-                <a th:href="@{/dispatch}" class="btn btn-sm btn-outline-secondary">全部</a>
-                <a th:href="@{/dispatch(status='REVIEWING')}" class="btn btn-sm btn-outline-warning">待审核</a>
-                <a th:href="@{/dispatch(status='READY')}" class="btn btn-sm btn-outline-info">待接单</a>
-                <a th:href="@{/dispatch(status='RUNNING')}" class="btn btn-sm btn-outline-success">进行中</a>
-                <a th:href="@{/dispatch(status='CONFIRMING')}" class="btn btn-sm btn-outline-danger">待确认</a>
-                <a th:href="@{/dispatch(status='VERIFYING')}" class="btn btn-sm btn-outline-primary">待验收</a>
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-paper-plane"></i>派单</h4>
+                <div class="page-sub">
+                    共 <strong th:text="${orders.size()}">0</strong> 张单 ·
+                    待审核 <b th:text="${counts['REVIEWING']}">0</b> ·
+                    待接单 <b th:text="${counts['READY']}">0</b> ·
+                    进行中 <b th:text="${counts['RUNNING']}">0</b> ·
+                    待确认 <b th:text="${counts['CONFIRMING']}">0</b> ·
+                    待验收 <b th:text="${counts['VERIFYING']}">0</b>
+                </div>
+            </div>
+            <div class="page-actions">
+                <a th:href="@{/dispatch/new}" class="btn btn-primary"><i class="fas fa-plus mr-1"></i>新建派单</a>
             </div>
         </div>
 
         <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
         <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
 
-        <div class="card">
-            <div class="card-header bg-white">
-                <b>共 <span th:text="${orders.size()}">0</span> 张单</b>
-                <span class="text-muted ml-3" style="font-size:0.85rem">
-                    待审核 <b th:text="${counts['REVIEWING']}">0</b> ·
-                    待接单 <b th:text="${counts['READY']}">0</b> ·
-                    进行中 <b th:text="${counts['RUNNING']}">0</b> ·
-                    待确认 <b th:text="${counts['CONFIRMING']}">0</b> ·
-                    待验收 <b th:text="${counts['VERIFYING']}">0</b>
-                </span>
-            </div>
+        <!-- 状态筛选：原来 7 个按钮全塞在页头右侧，窄屏会被挤到换行，且和「新建」抢位置 -->
+        <div class="toolbar">
+            <a th:href="@{/dispatch}" class="btn btn-outline-secondary"
+               th:classappend="${status == null or status == ''} ? 'active'">全部</a>
+            <a th:href="@{/dispatch(status='REVIEWING')}" class="btn btn-outline-warning"
+               th:classappend="${status == 'REVIEWING'} ? 'active'">待审核</a>
+            <a th:href="@{/dispatch(status='READY')}" class="btn btn-outline-info"
+               th:classappend="${status == 'READY'} ? 'active'">待接单</a>
+            <a th:href="@{/dispatch(status='RUNNING')}" class="btn btn-outline-success"
+               th:classappend="${status == 'RUNNING'} ? 'active'">进行中</a>
+            <a th:href="@{/dispatch(status='CONFIRMING')}" class="btn btn-outline-danger"
+               th:classappend="${status == 'CONFIRMING'} ? 'active'">待确认</a>
+            <a th:href="@{/dispatch(status='VERIFYING')}" class="btn btn-outline-primary"
+               th:classappend="${status == 'VERIFYING'} ? 'active'">待验收</a>
+        </div>
+
+        <div class="card list-card">
             <div class="card-body p-0">
-                <table class="table table-hover mb-0">
-                    <thead class="thead-light">
+                <table class="table table-hover">
+                    <thead>
                         <tr>
                             <th style="width:190px">单号</th>
                             <th>标题</th>
@@ -74,11 +84,13 @@
                             <td th:text="${o.assignee}"></td>
                             <td th:text="${o.accepter != null ? o.accepter : '—'}"></td>
                             <td th:text="${o.priority}"></td>
-                            <td th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt, 'MM-dd HH:mm') : ''}" style="font-size:0.85rem;color:#888"></td>
+                            <td class="cell-mute" th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt, 'MM-dd HH:mm') : ''}"></td>
                         </tr>
                         <tr th:if="${orders.isEmpty()}">
-                            <td colspan="8" class="text-center text-muted py-5">
-                                还没有任何单。AI 通过 dispatch_create 建单后会出现在这里，等你审核。
+                            <td colspan="8" class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <p>还没有任何单</p>
+                                <p class="empty-hint">AI 通过 dispatch_create 建单后会出现在这里，等你审核。</p>
                             </td>
                         </tr>
                     </tbody>
@@ -86,7 +98,7 @@
             </div>
         </div>
 
-        <div class="mt-3 text-muted" style="font-size:0.85rem">
+        <div class="mt-3 page-sub">
             ⚠️ 审核、验收、取消都只能在这里做，MCP 工具里没有这些动作 —— 闸门必须在人手里。
         </div>
     </div>

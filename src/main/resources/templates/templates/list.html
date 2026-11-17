@@ -15,24 +15,29 @@
     <div th:replace="~{fragments/sidebar :: nav('templates')}"></div>
 
     <div class="main-content">
-        <div class="topbar d-flex justify-content-between align-items-center">
-            <h4 class="mb-0">模板管理</h4>
-            <button class="btn btn-primary" onclick="showCreateModal()">
-                <i class="fas fa-plus mr-1"></i> 新建模板
-            </button>
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-file-alt"></i>模板管理</h4>
+                <div class="page-sub">新建经验时按模板预填结构</div>
+            </div>
+            <div class="page-actions">
+                <button class="btn btn-primary" onclick="showCreateModal()">
+                    <i class="fas fa-plus mr-1"></i> 新建模板
+                </button>
+            </div>
         </div>
 
-        <div class="card mt-3">
+        <div class="card list-card">
             <div class="card-body p-0">
                 <div id="templateList"></div>
-                <div id="emptyState" class="text-center text-muted py-5" style="display: none;">
-                    <i class="fas fa-file-alt fa-3x mb-3"></i>
+                <div id="emptyState" class="empty-state" style="display: none;">
+                    <i class="fas fa-file-alt"></i>
                     <p>暂无模板，<a href="javascript:void(0)" onclick="showCreateModal()">创建一个</a>吧~</p>
                 </div>
             </div>
-            <div class="card-footer bg-white" id="tplPagination" style="display: none;">
+            <div class="list-card-foot" id="tplPagination" style="display: none;">
                 <nav>
-                    <ul class="pagination justify-content-center mb-0" id="tplPageNav"></ul>
+                    <ul class="pagination justify-content-center" id="tplPageNav"></ul>
                 </nav>
             </div>
         </div>
