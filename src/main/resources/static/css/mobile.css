@@ -67,6 +67,19 @@ body {
     -webkit-backdrop-filter: blur(14px);
 }
 
+/* daisyUI 的 .dock 不给 svg 定尺寸，图标会被 flex 撑到 38px（格子才 55 高），
+   五个格子全被大图标压住。钉成 22px —— 这是 iOS 底部 tabbar 的惯用视觉重量。 */
+.dock .tab svg {
+    width: 1.375rem;
+    height: 1.375rem;
+    flex: none;
+}
+
+/* 图标和文字之间留一口气，否则缩小后两者贴在一起 */
+.dock .tab {
+    gap: 2px;
+}
+
 /* 数字对齐：额度、次数、百分比一多，不等宽的话右边缘是锯齿 */
 .tnum {
     font-variant-numeric: tabular-nums;
