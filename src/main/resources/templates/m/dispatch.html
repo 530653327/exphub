@@ -50,14 +50,7 @@
                     <!-- 状态色两端（PC / 手机）同一张色表：
                          待审核 琥珀 · 待接单 蓝 · 进行中 青 · 待确认 紫 · 待验收 红 · 完成 绿 · 取消 灰。
                          左边小圆点是给「扫列表」用的 —— 一屏十几张卡，先认色点再读字。 -->
-                    <span class="badge badge-sm badge-soft badge-dot shrink-0"
-                          th:classappend="${
-                              o.status == 'REVIEWING' ? 'badge-warning' :
-                              o.status == 'READY' ? 'badge-info' :
-                              o.status == 'RUNNING' ? 'badge-secondary' :
-                              o.status == 'CONFIRMING' ? 'badge-accent' :
-                              o.status == 'VERIFYING' ? 'badge-error' :
-                              o.status == 'DONE' ? 'badge-success' : 'badge-ghost'}"
+                    <span class="tag" th:classappend="'tag-' + ${o.status}"
                           th:text="${labels[o.status]}">状态</span>
                 </div>
                 <div class="flex items-center justify-between mt-1.5">

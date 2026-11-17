@@ -170,13 +170,41 @@ details[open] > summary::after {
     border-color: var(--color-primary);
 }
 
-/* 状态徽章左侧色点：5px，跟文字同色。手机上列表密集，色点比读文字快一步。 */
-.badge-dot::before {
+/* ── 派单状态标签 ──────────────────────────────────────────────────────
+   不用 daisyUI 的 badge-warning/secondary/accent：那套依赖主题变量，
+   实测 secondary 在深色壳里解析不出来（显示成白底黑字），等于没色。
+   这里直接写死色值，和 PC 的 .st-* 一个字不差 —— 两端同色，改要一起改。
+
+     待审核 琥珀 · 待接单 蓝 · 进行中 青 · 待确认 紫 · 待验收 红 · 完成 绿 · 取消 灰
+   ────────────────────────────────────────────────────────────────────── */
+.tag {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.7;
+    white-space: nowrap;
+}
+
+/* 左边小圆点：一屏十几张卡，先认色点再读字 */
+.tag::before {
     content: "";
     flex: none;
     width: 5px;
     height: 5px;
-    margin-right: 4px;
     border-radius: 50%;
     background: currentColor;
 }
+
+.tag-REVIEWING { background: #fef3c7; color: #b45309; }
+.tag-READY     { background: #dbeafe; color: #1d4ed8; }
+.tag-RUNNING   { background: #cffafe; color: #0e7490; }
+.tag-CONFIRMING{ background: #ede9fe; color: #6d28d9; }
+.tag-VERIFYING { background: #fee2e2; color: #b91c1c; }
+.tag-DONE      { background: #d1fae5; color: #047857; }
+.tag-CANCELLED { background: #f1f5f9; color: #64748b; }
+.tag-DRAFT     { background: #f1f5f9; color: #64748b; }
