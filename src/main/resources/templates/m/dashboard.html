@@ -1,96 +1,139 @@
 <!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{m/layout :: head('看板')}"></head>
-<body>
+<body class="bg-base-100 text-base-content">
 <div class="page">
-    <div class="row-between" style="margin-bottom:14px">
-        <div>
-            <div class="h1" style="margin:0">看板</div>
-            <div class="muted" th:text="'你好，' + ${me}">你好</div>
+
+    <header class="app-bar -mx-4 -mt-3 mb-3 px-4">
+        <div class="flex-1 min-w-0">
+            <h1>看板</h1>
+            <div class="text-xs opacity-50 mt-0.5" th:text="'你好，' + ${me}">你好</div>
         </div>
-        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
+        <button class="btn btn-ghost btn-sm btn-circle" id="refreshBtn" aria-label="刷新">
+            <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+        </button>
+    </header>
+
+    <div id="loading" class="flex flex-col items-center gap-3 py-16 opacity-50">
+        <span class="loading loading-spinner loading-md"></span>
+        <span class="text-sm">加载中…</span>
     </div>
 
-    <div id="loading" class="empty">加载中…</div>
+    <div id="content" class="hidden">
 
-    <div id="content" style="display:none">
-        <!-- 首屏四个主指标：手机一眼能看清的四件事 -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-            <div class="card" style="margin:0">
-                <div class="muted">知识文档</div>
-                <div class="num" id="m-totalDocs">—</div>
-                <div class="muted" id="m-docsSub">—</div>
-            </div>
-            <div class="card" style="margin:0">
-                <div class="muted">今日调用</div>
-                <div class="num" id="m-todayCalls">—</div>
-                <div class="muted" id="m-callsSub">—</div>
-            </div>
-            <div class="card" style="margin:0">
-                <div class="muted">活跃助手</div>
-                <div class="num" id="m-totalAssistants">—</div>
-                <div class="muted">在用且非空壳</div>
-            </div>
-            <div class="card" style="margin:0">
-                <div class="muted">调用成功率</div>
-                <div class="num" id="m-successRate">—</div>
-                <div class="muted" id="m-sample">—</div>
+        <!-- 第一张卡：一次调用。手机屏幕就这么高，先把「今天有没有人用」放最大，
+             其余三项缩成一行小格，一眼扫完不用滚动。 -->
+        <div class="card bg-base-200 shadow-sm mb-3">
+            <div class="card-body p-4">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="text-xs opacity-55">今日调用</div>
+                        <div class="text-[34px] font-semibold tnum leading-none mt-1.5" id="m-todayCalls">—</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs opacity-55">成功率</div>
+                        <div class="text-lg font-semibold tnum mt-1" id="m-successRate">—</div>
+                        <div class="text-[11px] opacity-40 mt-0.5" id="m-sample">—</div>
+                    </div>
+                </div>
+                <div class="text-xs opacity-50 mt-2.5" id="m-callsSub">—</div>
             </div>
         </div>
 
-        <div class="h2">质量与风险</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <!-- 这张卡可点：数字看得见却点不进去，是之前最大的可用性缺口 -->
-            <a class="card" th:href="@{/m/problems}" style="margin:0;display:block">
-                <div class="muted">问题文档 ›</div>
-                <div class="num" id="m-problemDocs" style="color:var(--warn)">—</div>
-                <div class="muted">超期/取代/待删/异常</div>
+        <!-- 三项小格：两列变一行三列，省下的 60px 正好让「问题文档」进首屏 -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3 gap-0.5">
+                    <div class="text-[11px] opacity-55">知识文档</div>
+                    <div class="text-xl font-semibold tnum" id="m-totalDocs">—</div>
+                    <div class="text-[10px] opacity-40 truncate" id="m-docsSub">—</div>
+                </div>
+            </div>
+            <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3 gap-0.5">
+                    <div class="text-[11px] opacity-55">活跃助手</div>
+                    <div class="text-xl font-semibold tnum" id="m-totalAssistants">—</div>
+                    <div class="text-[10px] opacity-40">在用且非空壳</div>
+                </div>
+            </div>
+            <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3 gap-0.5">
+                    <div class="text-[11px] opacity-55">项目</div>
+                    <div class="text-xl font-semibold tnum" id="m-totalProjects">—</div>
+                    <div class="text-[10px] opacity-40 truncate" id="m-projectDocs">—</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-xs font-medium opacity-55 px-1 mb-2">质量与风险</div>
+
+        <!-- 风险四项，全部可点。原来只有「问题文档」能点，剩下的死数字点了没反应，
+             手机上人会以为是加载失败 -->
+        <div class="grid grid-cols-2 gap-2">
+            <a class="card bg-base-200 shadow-sm tap" th:href="@{/m/problems}">
+                <div class="card-body p-3.5 gap-0.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] opacity-55">问题文档</span>
+                        <svg class="w-3.5 h-3.5 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 6 6 6-6 6"/></svg>
+                    </div>
+                    <div class="text-2xl font-semibold tnum text-warning" id="m-problemDocs">—</div>
+                    <div class="text-[10px] opacity-40">超期/取代/待删/异常</div>
+                </div>
             </a>
-            <div class="card" style="margin:0">
-                <div class="muted">超 90 天未验证</div>
-                <div class="num" id="m-staleDocs" style="color:var(--warn)">—</div>
-                <div class="muted">结论可能已过期</div>
+            <a class="card bg-base-200 shadow-sm tap" th:href="@{/m/problems(type='stale')}">
+                <div class="card-body p-3.5 gap-0.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] opacity-55">超 90 天未验证</span>
+                        <svg class="w-3.5 h-3.5 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 6 6 6-6 6"/></svg>
+                    </div>
+                    <div class="text-2xl font-semibold tnum text-warning" id="m-staleDocs">—</div>
+                    <div class="text-[10px] opacity-40">结论可能已过期</div>
+                </div>
+            </a>
+            <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3.5 gap-0.5">
+                    <div class="text-[11px] opacity-55">待判候选</div>
+                    <div class="text-2xl font-semibold tnum" id="m-candidatePending">—</div>
+                    <div class="text-[10px] opacity-40">疑似重复待人工定</div>
+                </div>
             </div>
-            <div class="card" style="margin:0">
-                <div class="muted">待判候选</div>
-                <div class="num" id="m-candidatePending">—</div>
-                <div class="muted">疑似重复待人工定</div>
-            </div>
-            <div class="card" style="margin:0">
-                <div class="muted">搜索零命中率</div>
-                <div class="num" id="m-searchZeroRate">—</div>
-                <div class="muted" id="m-searchSub">近 30 天</div>
-            </div>
-        </div>
-
-        <div class="h2">分布</div>
-        <div class="card">
-            <div class="row-between" style="padding:6px 0">
-                <span class="muted">全局知识文档</span>
-                <span id="m-globalDocs" style="font-weight:500">—</span>
-            </div>
-            <div class="divider"></div>
-            <div class="row-between" style="padding:6px 0">
-                <span class="muted">项目内文档</span>
-                <span id="m-projectDocs" style="font-weight:500">—</span>
-            </div>
-            <div class="divider"></div>
-            <div class="row-between" style="padding:6px 0">
-                <span class="muted">项目数</span>
-                <span id="m-totalProjects" style="font-weight:500">—</span>
+            <div class="card bg-base-200 shadow-sm">
+                <div class="card-body p-3.5 gap-0.5">
+                    <div class="text-[11px] opacity-55">搜索零命中</div>
+                    <div class="text-2xl font-semibold tnum" id="m-searchZeroRate">—</div>
+                    <div class="text-[10px] opacity-40 truncate" id="m-searchSub">近 30 天</div>
+                </div>
             </div>
         </div>
 
-        <div class="h2">近 7 天调用趋势</div>
-        <div class="card">
-            <svg id="trend" viewBox="0 0 320 120" style="width:100%;height:120px;display:block"></svg>
-            <div class="muted" id="trendSub" style="margin-top:6px">—</div>
+        <div class="text-xs font-medium opacity-55 px-1 mt-5 mb-2">近 7 天调用</div>
+        <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-3">
+                <svg id="trend" viewBox="0 0 320 110" preserveAspectRatio="none"
+                     class="w-full h-[110px] block"></svg>
+                <div class="text-[11px] opacity-45 mt-1" id="trendSub">—</div>
+            </div>
         </div>
 
-        <div class="h2">热门经验 Top10</div>
-        <div id="hotList"></div>
+        <div class="text-xs font-medium opacity-55 px-1 mt-5 mb-2">全局 / 项目分布</div>
+        <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-0">
+                <div class="flex items-center justify-between px-4 py-3">
+                    <span class="text-sm opacity-60">全局知识文档</span>
+                    <span class="text-sm font-medium tnum" id="m-globalDocs">—</span>
+                </div>
+                <div class="h-px bg-base-300 mx-4"></div>
+                <div class="flex items-center justify-between px-4 py-3">
+                    <span class="text-sm opacity-60">项目内文档</span>
+                    <span class="text-sm font-medium tnum" id="m-projectDocs2">—</span>
+                </div>
+            </div>
+        </div>
 
-        <div class="muted" style="text-align:center;margin:20px 0 8px;font-size:12px" id="updatedAt"></div>
+        <div class="text-xs font-medium opacity-55 px-1 mt-5 mb-2">热门经验 Top10</div>
+        <div id="hotList" class="flex flex-col gap-2"></div>
+
+        <div class="text-center text-[11px] opacity-30 mt-6 mb-2" id="updatedAt"></div>
     </div>
 </div>
 
@@ -115,8 +158,10 @@
     }
 
     function load() {
-        document.getElementById('loading').style.display = 'block';
-        document.getElementById('content').style.display = 'none';
+        var loading = document.getElementById('loading');
+        var content = document.getElementById('content');
+        loading.classList.remove('hidden');
+        content.classList.add('hidden');
 
         Promise.all([
             fetch(CTX + '/api/stats/overview').then(function (r) { return r.json(); }),
@@ -128,10 +173,12 @@
             renderTrend((res[1] && res[1].data) || []);
             renderHot((res[2] && res[2].data) || []);
             setText('updatedAt', '数据更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('content').style.display = 'block';
+            loading.classList.add('hidden');
+            content.classList.remove('hidden');
         }).catch(function (e) {
-            document.getElementById('loading').textContent = '加载失败：' + e.message + '（下拉或点刷新重试）';
+            // 失败也要从「加载中」里出来，否则用户不知道是网络慢还是真挂了
+            loading.innerHTML = '<div class="text-error text-sm px-4 text-center">加载失败：'
+                + escapeHtml(e.message) + '<br><span class="opacity-50">下拉或点右上角刷新重试</span></div>';
         });
     }
 
@@ -157,7 +204,8 @@
         setText('m-searchSub', '近 30 天 · 共 ' + num(o.searchTotal) + ' 次搜索');
 
         setText('m-globalDocs', num(o.globalDocs));
-        setText('m-projectDocs', num(o.projectDocs));
+        setText('m-projectDocs', '文档 ' + num(o.projectDocs));
+        setText('m-projectDocs2', num(o.projectDocs));
         setText('m-totalProjects', num(o.totalProjects));
     }
 
@@ -172,7 +220,7 @@
             return Number(r.bizCalls !== undefined ? r.bizCalls : (r.calls !== undefined ? r.calls : 0));
         });
         var max = Math.max.apply(null, vals.concat([1]));
-        var W = 320, H = 120, pad = 8;
+        var W = 320, H = 110, pad = 6;
         var step = rows.length > 1 ? (W - pad * 2) / (rows.length - 1) : 0;
 
         var pts = vals.map(function (v, i) {
@@ -185,16 +233,17 @@
         var area = line + ' L' + pts[pts.length - 1][0].toFixed(1) + ' ' + (H - pad) + ' L' + pts[0][0].toFixed(1) + ' ' + (H - pad) + ' Z';
 
         var dots = pts.map(function (p) {
-            return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.6" fill="#6366f1"/>';
+            return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="2.4" fill="#6366f1"/>';
         }).join('');
 
         svg.innerHTML =
             '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
-            '<stop offset="0%" stop-color="#6366f1" stop-opacity="0.35"/>' +
+            '<stop offset="0%" stop-color="#6366f1" stop-opacity="0.38"/>' +
             '<stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>' +
             '</linearGradient></defs>' +
             '<path d="' + area + '" fill="url(#g)"/>' +
-            '<path d="' + line + '" fill="none" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>' +
+            '<path d="' + line + '" fill="none" stroke="#6366f1" stroke-width="2" ' +
+            'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
             dots;
 
         var total = vals.reduce(function (a, b) { return a + b; }, 0);
@@ -204,17 +253,21 @@
     function renderHot(list) {
         var box = document.getElementById('hotList');
         if (!list || !list.length) {
-            box.innerHTML = '<div class="empty">暂无数据</div>';
+            box.innerHTML = '<div class="text-center text-sm opacity-40 py-10">暂无数据</div>';
             return;
         }
         box.innerHTML = list.map(function (d, i) {
             var rate = d.successRate === undefined || d.successRate === null ? null : Number(d.successRate) * 100;
-            return '<div class="card">' +
-                '<div class="row">' +
-                '<div style="width:22px;color:var(--muted);font-size:13px">' + (i + 1) + '</div>' +
-                '<div class="grow">' +
-                '<div class="ell" style="font-weight:500">' + escapeHtml(d.title || '') + '</div>' +
-                '<div class="muted ell">' + escapeHtml(d.authorName || '—') +
+            // 前三名给个色，十行一模一样的卡片扫不出重点
+            var rankCls = i === 0 ? 'bg-primary text-primary-content'
+                : i === 1 ? 'bg-primary/70 text-primary-content'
+                : i === 2 ? 'bg-primary/40' : 'bg-base-300 opacity-60';
+            return '<div class="card bg-base-200 shadow-sm">' +
+                '<div class="card-body p-3 flex-row items-center gap-3">' +
+                '<div class="w-6 h-6 rounded-lg text-[11px] font-semibold flex items-center justify-center shrink-0 ' + rankCls + '">' + (i + 1) + '</div>' +
+                '<div class="flex-1 min-w-0">' +
+                '<div class="text-sm font-medium truncate">' + escapeHtml(d.title || '') + '</div>' +
+                '<div class="text-[11px] opacity-45 truncate mt-0.5">' + escapeHtml(d.authorName || '—') +
                 ' · 查看 ' + num(d.callCount) +
                 (rate === null || isNaN(rate) ? '' : ' · 成功 ' + rate.toFixed(0) + '%') +
                 '</div></div></div></div>';

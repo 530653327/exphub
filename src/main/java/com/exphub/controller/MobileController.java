@@ -6,6 +6,7 @@ import com.exphub.entity.User;
 import com.exphub.service.DispatchService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -52,6 +53,14 @@ public class MobileController {
 
     @Autowired
     private DispatchService dispatchService;
+
+    /**
+     * 产品版本号，与 health / MCP serverInfo 同读 {@code exphub.version}。
+     * 模板里不用 {@code @environment.getProperty(...)} —— 那个 Bean 表达式在纯 Thymeleaf
+     * 渲染（测试、以及某些上下文）下解析不到，会抛异常，线上表现是「200 + 半截页」。
+     */
+    @Value("${exphub.version:2.5.6}")
+    private String appVersion;
 
     @GetMapping({"", "/"})
     public String index(HttpSession session) {
@@ -252,6 +261,7 @@ public class MobileController {
         model.addAttribute("username", user == null ? "" : user.getUsername());
         model.addAttribute("lastLogin", user == null || user.getLastLogin() == null
                 ? "—" : user.getLastLogin().toString().replace('T', ' ').substring(0, 16));
+        model.addAttribute("version", appVersion);
         return "m/me";
     }
 

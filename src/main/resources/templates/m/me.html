@@ -1,43 +1,86 @@
 <!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{m/layout :: head('我的')}"></head>
-<body>
+<body class="bg-base-100 text-base-content">
 <div class="page">
-    <div class="h1">我的</div>
 
-    <div class="card">
-        <div class="row">
-            <img th:src="@{/images/pwa/icon-192.png}" alt=""
-                 style="width:48px;height:48px;border-radius:12px;">
-            <div class="grow">
-                <div style="font-weight:600" th:text="${me}">用户名</div>
-                <div class="muted" th:text="'账号 ' + ${username}">账号</div>
+    <header class="app-bar -mx-4 -mt-3 mb-3 px-4">
+        <div class="flex-1 min-w-0"><h1>我的</h1></div>
+    </header>
+
+    <div class="card bg-base-200 shadow-sm mb-4">
+        <div class="card-body p-4 gap-0">
+            <div class="flex items-center gap-3">
+                <img th:src="@{/images/pwa/icon-192.png}" alt=""
+                     class="w-12 h-12 rounded-xl shrink-0">
+                <div class="flex-1 min-w-0">
+                    <div class="text-[15px] font-semibold truncate" th:text="${me}">用户名</div>
+                    <div class="text-xs opacity-50 mt-0.5 truncate" th:text="'账号 ' + ${username}">账号</div>
+                </div>
+            </div>
+            <div class="h-px bg-base-300 my-3"></div>
+            <div class="flex items-center justify-between">
+                <span class="text-sm opacity-60">最近登录</span>
+                <span class="text-sm tnum" th:text="${lastLogin}">—</span>
             </div>
         </div>
-        <div class="divider"></div>
-        <div class="row-between">
-            <span class="muted">最近登录</span>
-            <span th:text="${lastLogin}">—</span>
+    </div>
+
+    <div class="text-xs font-medium opacity-55 px-1 mb-2">外观</div>
+    <div class="card bg-base-200 shadow-sm mb-4">
+        <div class="card-body p-3 gap-0">
+            <!-- 主题只有深/浅两档。不给「跟随系统」：daisyUI 的 default 主题就是深色，
+                 跟随系统要额外写 prefers-color-scheme 分支，而这里只有一个人用，两档够。 -->
+            <div class="flex items-center justify-between">
+                <div>
+                    <div class="text-sm font-medium">主题</div>
+                    <div class="text-xs opacity-45 mt-0.5">深色适合夜里看，浅色在户外更清楚</div>
+                </div>
+                <div class="flex gap-1.5">
+                    <button class="btn btn-sm btn-circle theme-swatch" data-theme-pick="exp" aria-pressed="true" aria-label="深色">
+                        <span class="w-3.5 h-3.5 rounded-full bg-neutral-800 border border-base-300"></span>
+                    </button>
+                    <button class="btn btn-sm btn-circle theme-swatch" data-theme-pick="explight" aria-pressed="false" aria-label="浅色">
+                        <span class="w-3.5 h-3.5 rounded-full bg-white border border-base-300"></span>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
-    <div class="h2">安装</div>
-    <div class="card">
-        <div class="muted" id="installState">检测中…</div>
-        <div class="divider"></div>
-        <div class="muted" style="font-size:12px;line-height:1.7">
-            · iOS：Safari 打开 → 分享 → 添加到主屏幕<br>
-            · 安卓：Chrome 打开 → 菜单 → 安装应用<br>
-            · 微信内置浏览器不支持安装，请用系统浏览器
+    <div class="text-xs font-medium opacity-55 px-1 mb-2">安装</div>
+    <div class="card bg-base-200 shadow-sm mb-4">
+        <div class="card-body p-4 gap-0">
+            <div class="text-sm" id="installState">检测中…</div>
+            <div class="h-px bg-base-300 my-3"></div>
+            <div class="text-xs opacity-50 leading-relaxed">
+                · iOS：Safari 打开 → 分享 → 添加到主屏幕<br>
+                · 安卓：Chrome 打开 → 菜单 → 安装应用<br>
+                · 微信内置浏览器不支持安装，请用系统浏览器
+            </div>
         </div>
     </div>
 
-    <div class="h2">账号</div>
+    <div class="text-xs font-medium opacity-55 px-1 mb-2">关于</div>
+    <div class="card bg-base-200 shadow-sm mb-4">
+        <div class="card-body p-0">
+            <div class="flex items-center justify-between px-4 py-3">
+                <span class="text-sm opacity-60">版本</span>
+                <span class="text-sm tnum" th:text="${version} ?: 'dev'">dev</span>
+            </div>
+            <div class="h-px bg-base-300 mx-4"></div>
+            <div class="flex items-center justify-between px-4 py-3">
+                <span class="text-sm opacity-60">知识文档</span>
+                <a class="text-sm link link-hover tnum" th:href="@{/m/problems}">问题文档 ›</a>
+            </div>
+        </div>
+    </div>
+
     <form th:action="@{/logout}" method="post">
-        <button class="btn danger" type="submit">退出登录</button>
+        <button class="btn btn-outline btn-error w-full" type="submit">退出登录</button>
     </form>
 
-    <div class="muted" style="text-align:center;margin-top:22px;font-size:12px">
+    <div class="text-center text-[11px] opacity-30 mt-6 leading-relaxed">
         经验阁 · 移动版<br>
         手机上只做查看与处理，新增和编辑请在电脑上完成
     </div>
@@ -55,6 +98,7 @@
 
         if (standalone) {
             el.textContent = '已以独立应用方式打开';
+            el.classList.add('text-success');
         } else if (isWeChat) {
             el.textContent = '当前在微信内打开，无法安装。用系统浏览器打开后可添加到主屏幕';
         } else if (!('serviceWorker' in navigator)) {
@@ -62,6 +106,21 @@
         } else {
             el.textContent = '尚未安装到主屏幕，按下方说明添加后体验更好';
         }
+
+        // 主题切换：写 localStorage + 立刻改 data-theme，不刷新页面
+        // （刷新会丢滚动位置，在建列表里滑到一半跳回顶部很难受）
+        var cur = document.documentElement.getAttribute('data-theme') || 'exp';
+        document.querySelectorAll('[data-theme-pick]').forEach(function (b) {
+            b.setAttribute('aria-pressed', b.getAttribute('data-theme-pick') === cur ? 'true' : 'false');
+            b.addEventListener('click', function () {
+                var t = b.getAttribute('data-theme-pick');
+                document.documentElement.setAttribute('data-theme', t);
+                try { localStorage.setItem('exphub-theme', t); } catch (e) { /* 隐私模式忽略 */ }
+                document.querySelectorAll('[data-theme-pick]').forEach(function (x) {
+                    x.setAttribute('aria-pressed', x.getAttribute('data-theme-pick') === t ? 'true' : 'false');
+                });
+            });
+        });
     })();
 </script>
 </body>

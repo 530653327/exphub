@@ -1,75 +1,85 @@
 <!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{m/layout :: head('派单')}"></head>
-<body>
+<body class="bg-base-100 text-base-content">
 <div class="page">
-    <div class="row-between" style="margin-bottom:12px">
-        <div class="grow">
-            <div class="h1" style="margin:0">派单</div>
-            <div class="muted">
-                待审核 <b th:text="${counts['REVIEWING']} ?: 0">0</b> ·
-                待接单 <b th:text="${counts['READY']} ?: 0">0</b> ·
-                进行中 <b th:text="${counts['RUNNING']} ?: 0">0</b> ·
-                待确认 <b th:text="${counts['CONFIRMING']} ?: 0">0</b> ·
-                待验收 <b th:text="${counts['VERIFYING']} ?: 0">0</b>
+
+    <header class="app-bar -mx-4 -mt-3 mb-3 px-4">
+        <div class="flex-1 min-w-0">
+            <h1>派单</h1>
+            <div class="text-xs opacity-50 mt-0.5">待审核 <b th:text="${counts['REVIEWING']} ?: 0">0</b>
+                · 待接单 <b th:text="${counts['READY']} ?: 0">0</b>
+                · 待确认 <b th:text="${counts['CONFIRMING']} ?: 0">0</b>
+                · 待验收 <b th:text="${counts['VERIFYING']} ?: 0">0</b>
             </div>
         </div>
-        <a class="btn" style="width:auto;padding:8px 14px;font-size:13px" th:href="@{/m/dispatch/new}">新建</a>
-    </div>
+        <a class="btn btn-primary btn-sm" th:href="@{/m/dispatch/new}">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            新建
+        </a>
+    </header>
 
-    <div th:if="${success}" class="card" style="border:1px solid var(--ok)">
-        <div style="color:var(--ok);white-space:pre-wrap" th:text="${success}"></div>
+    <div th:if="${success}" role="alert" class="alert alert-success mb-3 items-start">
+        <div class="flex-1 min-w-0 pre-wrap text-sm" th:text="${success}"></div>
     </div>
-    <div th:if="${error}" class="card" style="border:1px solid var(--danger)">
-        <div style="color:var(--danger);white-space:pre-wrap" th:text="${error}"></div>
+    <div th:if="${error}" role="alert" class="alert alert-error mb-3 items-start">
+        <div class="flex-1 min-w-0 pre-wrap text-sm" th:text="${error}"></div>
     </div>
 
     <!-- 状态筛选：横向可滑。手机窄，六个按钮平铺会挤成两行小字 -->
-    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;margin-bottom:10px;-webkit-overflow-scrolling:touch">
-        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
-           th:classappend="${status == null or status == ''} ? 'active'" th:href="@{/m/dispatch}">全部</a>
-        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
-           th:classappend="${status == 'REVIEWING'} ? 'active'" th:href="@{/m/dispatch(status='REVIEWING')}">待审核</a>
-        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
-           th:classappend="${status == 'READY'} ? 'active'" th:href="@{/m/dispatch(status='READY')}">待接单</a>
-        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
-           th:classappend="${status == 'RUNNING'} ? 'active'" th:href="@{/m/dispatch(status='RUNNING')}">进行中</a>
-        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
-           th:classappend="${status == 'CONFIRMING'} ? 'active'" th:href="@{/m/dispatch(status='CONFIRMING')}">待确认</a>
-        <a class="btn ghost chip" style="width:auto;padding:7px 14px;font-size:13px;white-space:nowrap;flex:none"
-           th:classappend="${status == 'VERIFYING'} ? 'active'" th:href="@{/m/dispatch(status='VERIFYING')}">待验收</a>
+    <div class="hscroll flex gap-2 mb-3 -mx-4 px-4">
+        <a class="btn btn-sm shrink-0" th:classappend="${status == null or status == ''} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch}">全部</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'REVIEWING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='REVIEWING')}">待审核</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'READY'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='READY')}">待接单</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'RUNNING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='RUNNING')}">进行中</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'CONFIRMING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='CONFIRMING')}">待确认</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'VERIFYING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='VERIFYING')}">待验收</a>
     </div>
 
-    <a th:each="o : ${orders}" class="card" style="display:block" th:href="@{'/m/dispatch/' + ${o.orderNo}}">
-        <div class="row-between" style="margin-bottom:6px">
-            <div class="grow" style="font-weight:500" th:text="${o.title}">标题</div>
-            <span class="tag" th:classappend="${
-                    o.status == 'REVIEWING' ? 'warn' :
-                    o.status == 'CONFIRMING' ? 'danger' :
-                    o.status == 'RUNNING' ? 'ok' :
-                    o.status == 'VERIFYING' ? 'ok' : ''}"
-                  th:text="${labels[o.status]}">状态</span>
-        </div>
-        <div class="row-between" style="margin-bottom:4px">
-            <span class="muted" style="font-family:monospace;font-size:12px" th:text="${o.orderNo}"></span>
-            <span class="muted" style="font-size:12px"
-                  th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt,'MM-dd HH:mm') : ''}"></span>
-        </div>
-        <div class="row" style="gap:8px;flex-wrap:wrap">
-            <span class="tag" th:text="${o.origin == 'HUMAN' ? '人工' : 'AI'}">来源</span>
-            <span class="tag" th:text="'→ ' + ${o.assignee}">指派</span>
-            <span class="tag" th:if="${o.accepter != null}" th:text="'接了 ' + ${o.accepter}">接单</span>
-            <span class="tag" th:if="${o.priority != null and o.priority == 1}" style="color:var(--danger)">高优</span>
-            <span class="tag" th:if="${o.version != null and !o.version.isEmpty()}" th:text="${o.version}">版本</span>
-        </div>
-    </a>
-
-    <div class="empty" th:if="${orders.isEmpty()}">
-        这个筛选下没有单。<br>
-        <span class="muted">AI 建的单会落在「待审核」，等你通过才会派出去。</span>
+    <div class="flex flex-col gap-2">
+        <a th:each="o : ${orders}" class="card bg-base-200 shadow-sm tap" th:href="@{'/m/dispatch/' + ${o.orderNo}}">
+            <div class="card-body p-3.5 gap-0">
+                <div class="flex items-start gap-2">
+                    <div class="flex-1 min-w-0 text-[15px] font-semibold leading-snug" th:text="${o.title}">标题</div>
+                    <!-- 状态色按「要不要你动手」分：待审核/待确认是红的（球在你手里），进行中是绿的（球在它手里） -->
+                    <span class="badge badge-sm badge-soft shrink-0"
+                          th:classappend="${
+                              o.status == 'REVIEWING' ? 'badge-warning' :
+                              o.status == 'CONFIRMING' ? 'badge-error' :
+                              o.status == 'RUNNING' ? 'badge-success' :
+                              o.status == 'VERIFYING' ? 'badge-success' :
+                              o.status == 'DONE' ? 'badge-ghost' : 'badge-ghost'}"
+                          th:text="${labels[o.status]}">状态</span>
+                </div>
+                <div class="flex items-center justify-between mt-1.5">
+                    <span class="text-[11px] opacity-40 tnum" th:text="${o.orderNo}"></span>
+                    <span class="text-[11px] opacity-40 tnum"
+                          th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt,'MM-dd HH:mm') : ''}"></span>
+                </div>
+                <div class="flex flex-wrap gap-1.5 mt-2">
+                    <span class="badge badge-sm badge-ghost" th:text="${o.origin == 'HUMAN' ? '人工' : 'AI'}">来源</span>
+                    <span class="badge badge-sm badge-ghost" th:text="'→ ' + ${o.assignee}">指派</span>
+                    <span class="badge badge-sm badge-ghost" th:if="${o.accepter != null}" th:text="'接了 ' + ${o.accepter}">接单</span>
+                    <span class="badge badge-sm badge-error badge-soft" th:if="${o.priority != null and o.priority == 1}">高优</span>
+                    <span class="badge badge-sm badge-ghost tnum" th:if="${o.version != null and !o.version.isEmpty()}" th:text="${o.version}">版本</span>
+                </div>
+            </div>
+        </a>
     </div>
 
-    <div class="muted" style="text-align:center;margin:18px 0 8px;font-size:12px">
+    <div class="flex flex-col items-center gap-1.5 py-16 opacity-45" th:if="${orders.isEmpty()}">
+        <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+        <div class="text-sm font-medium mt-1">这个筛选下没有单</div>
+        <div class="text-xs text-center px-8 leading-relaxed">AI 建的单会落在「待审核」，等你通过才会派出去。</div>
+    </div>
+
+    <div class="text-center text-[11px] opacity-30 mt-5 leading-relaxed">
         审核 / 验收 / 取消只能在这页（和 PC 后台）做，MCP 里没有这些动作 —— 闸门在人手里。
     </div>
 </div>

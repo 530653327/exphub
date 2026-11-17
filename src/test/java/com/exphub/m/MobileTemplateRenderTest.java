@@ -134,7 +134,15 @@ class MobileTemplateRenderTest {
             // @{/} 在 contextPath=/exphub 下应产出 /exphub/ 前缀
             assertTrue(html.contains(CTX_PATH), t + " 里没有出现 contextPath " + CTX_PATH
                     + "（@{/} 没生效？）");
-            assertTrue(html.contains("tabbar"), t + " 缺底部导航（layout 的 tabbar 片段没被 include）");
+
+            // 登录页是唯一不带底栏的页（还没登录，点底栏只会被弹回来）。
+            // 2026-11-17 前这条断言对 login 是「假通过」：旧 layout 把一整段 <style> 内联进每个页，
+            // 里面恰好有 .tabbar 这个选择器，字符串命中了但导航其实不存在。
+            // 换成外链 CSS 后假通过消失、断言变红 —— 所以这里必须把 login 显式排除，
+            // 而不是放宽成「包含 tabbar 就算过」。
+            if (!"m/login".equals(t)) {
+                assertTrue(html.contains("dock-label"), t + " 缺底部导航（layout 的 tabbar 片段没被 include）");
+            }
         }
     }
 

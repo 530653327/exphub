@@ -1,96 +1,116 @@
 <!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{m/layout :: head('新建派单')}"></head>
-<body>
+<body class="bg-base-100 text-base-content">
 <div class="page">
-    <a th:href="@{/m/dispatch}" class="muted" style="font-size:13px;display:inline-block;margin-bottom:10px">‹ 返回列表</a>
 
-    <div th:if="${error}" class="card" style="border:1px solid var(--danger)">
-        <div style="color:var(--danger);white-space:pre-wrap" th:text="${error}"></div>
+    <header class="app-bar -mx-4 -mt-3 mb-3 px-4">
+        <a class="btn btn-ghost btn-sm btn-circle" th:href="@{/m/dispatch}" aria-label="返回">
+            <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </a>
+        <div class="flex-1 min-w-0"><h1>新建派单</h1></div>
+    </header>
+
+    <div th:if="${error}" role="alert" class="alert alert-error mb-3 items-start">
+        <div class="flex-1 min-w-0 pre-wrap text-sm" th:text="${error}"></div>
     </div>
 
-    <div class="h1">新建派单</div>
-    <div class="muted" style="margin-bottom:14px">
+    <div class="text-xs opacity-50 px-1 mb-3 leading-relaxed">
         建完是「待审核」，还要你再点一次通过才会派出去。
     </div>
 
     <form th:action="@{/m/dispatch/create}" method="post">
-        <div class="h2" style="margin-top:0">标题</div>
-        <input type="text" name="title" required maxlength="200" placeholder="一句话说清要干什么">
 
-        <div class="h2">内容描述</div>
-        <textarea name="description" rows="8" required
+        <div class="text-xs font-medium opacity-55 px-1 mb-1.5">标题</div>
+        <input class="input w-full bg-base-200 border-base-300" type="text" name="title" required maxlength="200"
+               placeholder="一句话说清要干什么">
+
+        <div class="text-xs font-medium opacity-55 px-1 mt-4 mb-1.5">内容描述</div>
+        <textarea class="textarea w-full bg-base-200 border-base-300 leading-relaxed" name="description" rows="8" required
                   placeholder="背景 / 要做什么 / 验收标准 —— 哨兵只能看到这段，写清楚它才不会跑偏"></textarea>
 
-        <div class="h2">指派给</div>
-        <select name="assignee" required>
-            <option value="">— 选一个哨兵 —</option>
-            <option th:each="r : ${roles}" th:value="${r}" th:text="${r}"></option>
-        </select>
-
-        <div class="h2">优先级</div>
-        <select name="priority">
-            <option value="1">1 · 高</option>
-            <option value="3" selected>3 · 中</option>
-            <option value="5">5 · 低</option>
-        </select>
-
-        <div class="h2">备注</div>
-        <input type="text" name="remark" placeholder="只给你自己看，不进业务判断">
-
-        <div class="h2">授权位</div>
-        <div class="card">
-            <div class="muted" style="margin-bottom:8px;font-size:12px">
-                一个都不勾 = 这单只能读，哨兵只能出方案不能动手。
+        <div class="grid grid-cols-2 gap-2 mt-4">
+            <div>
+                <div class="text-xs font-medium opacity-55 px-1 mb-1.5">指派给</div>
+                <select class="select w-full bg-base-200 border-base-300" name="assignee" required>
+                    <option value="">— 选一个 —</option>
+                    <option th:each="r : ${roles}" th:value="${r}" th:text="${r}"></option>
+                </select>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;font-size:14px">
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="modifyCode" style="width:auto">修改代码</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="commit" style="width:auto">commit</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="push" style="width:auto">push</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="release" id="authRelease" style="width:auto"
-                           onchange="toggleVersion()">发版</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="dataWrite" style="width:auto">数据写入</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="migration" style="width:auto">数据库迁移</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="credential" style="width:auto">凭证/密钥</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="prodConfig" style="width:auto">生产配置</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="securityGroup" style="width:auto">安全组</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="firewall" style="width:auto">防火墙</label>
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
-                    <input type="checkbox" name="spend" style="width:auto">花钱</label>
+            <div>
+                <div class="text-xs font-medium opacity-55 px-1 mb-1.5">优先级</div>
+                <select class="select w-full bg-base-200 border-base-300" name="priority">
+                    <option value="1">1 · 高</option>
+                    <option value="3" selected>3 · 中</option>
+                    <option value="5">5 · 低</option>
+                </select>
             </div>
-            <div id="versionBox" style="margin-top:8px;display:none">
-                <input type="text" name="version"
-                       th:attr="placeholder='版本号，不填默认 ' + ${suggestedVersion}">
-                <div class="muted" style="font-size:12px;margin-top:4px">
-                    不填就按同项目上一张带版本的单 +1，当前推算 <b th:text="${suggestedVersion}"></b>。
+        </div>
+
+        <div class="text-xs font-medium opacity-55 px-1 mt-4 mb-1.5">备注</div>
+        <input class="input w-full bg-base-200 border-base-300" type="text" name="remark"
+               placeholder="只给你自己看，不进业务判断">
+
+        <div class="text-xs font-medium opacity-55 px-1 mt-4 mb-1.5">授权位</div>
+        <div class="card bg-base-200 shadow-sm">
+            <div class="card-body p-3.5 gap-0">
+                <div class="text-[11px] opacity-50 mb-2 leading-relaxed">
+                    一个都不勾 = 这单只能读，哨兵只能出方案不能动手。
+                </div>
+                <!-- 11 个授权位两列排。checkbox 用 daisyUI 的，右对齐在文字后面会让手指难点，
+                     所以整行 label 都可点（包住 input + 文字） -->
+                <div class="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="modifyCode">修改代码</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="commit">commit</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="push">push</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="release" id="authRelease"
+                               onchange="toggleVersion()">发版</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="dataWrite">数据写入</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="migration">数据库迁移</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="credential">凭证/密钥</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="prodConfig">生产配置</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="securityGroup">安全组</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="firewall">防火墙</label>
+                    <label class="flex items-center gap-2 py-1.5 cursor-pointer">
+                        <input class="checkbox checkbox-sm" type="checkbox" name="spend">花钱</label>
+                </div>
+
+                <div id="versionBox" style="display:none" class="mt-2.5 pt-2.5 border-t border-base-300">
+                    <input class="input w-full bg-base-100 border-base-300" type="text" name="version"
+                           th:attr="placeholder='版本号，不填默认 ' + ${suggestedVersion}">
+                    <div class="text-[11px] opacity-45 mt-1.5 leading-relaxed">
+                        不填就按同项目上一张带版本的单 +1，当前推算 <b th:text="${suggestedVersion}"></b>。
+                    </div>
                 </div>
             </div>
         </div>
 
-        <button type="submit" class="btn" style="margin-top:14px">建单（进待审核）</button>
-        <a th:href="@{/m/dispatch}" class="btn ghost" style="margin-top:8px;display:block;text-align:center;line-height:22px">取消</a>
+        <button type="submit" class="btn btn-primary w-full mt-4">建单（进待审核）</button>
+        <a th:href="@{/m/dispatch}" class="btn btn-ghost w-full mt-2">取消</a>
     </form>
+
+    <div style="height:8px"></div>
 </div>
 
 <nav th:replace="~{m/layout :: tabbar('dispatch')}"></nav>
 <th:block th:replace="~{m/layout :: pwa}"></th:block>
 
 <script>
-function toggleVersion() {
-    var el = document.getElementById('authRelease');
-    var box = document.getElementById('versionBox');
-    if (el && box) box.style.display = el.checked ? 'block' : 'none';
-}
+    function toggleVersion() {
+        var el = document.getElementById('authRelease');
+        var box = document.getElementById('versionBox');
+        if (el && box) box.style.display = el.checked ? 'block' : 'none';
+    }
 </script>
 </body>
 </html>

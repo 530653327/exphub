@@ -1,31 +1,39 @@
 <!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{m/layout :: head('问题文档')}"></head>
-<body>
+<body class="bg-base-100 text-base-content">
 <div class="page">
-    <div class="row-between" style="margin-bottom:12px">
-        <div class="grow">
-            <a th:href="@{/m/dashboard}" class="muted" style="font-size:13px">‹ 返回看板</a>
-            <div class="h1" style="margin:2px 0 0">问题文档</div>
+
+    <header class="app-bar -mx-4 -mt-3 mb-3 px-4">
+        <a class="btn btn-ghost btn-sm btn-circle" th:href="@{/m/dashboard}" aria-label="返回">
+            <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </a>
+        <div class="flex-1 min-w-0">
+            <h1>问题文档</h1>
+            <div class="text-xs opacity-50 mt-0.5 truncate" id="subtitle">加载中…</div>
         </div>
-        <button class="btn ghost" style="width:auto;padding:8px 14px;font-size:13px" id="refreshBtn">刷新</button>
-    </div>
+        <button class="btn btn-ghost btn-sm btn-circle" id="refreshBtn" aria-label="刷新">
+            <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+        </button>
+    </header>
 
     <!-- 5 个分类横向滚动：360px 宽放不下 5 个 chip，竖着换行会把列表挤到第二屏以后 -->
-    <div class="row" id="typeBar" style="gap:8px;margin-bottom:10px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px">
+    <div class="hscroll flex gap-2 mb-2 -mx-4 px-4" id="typeBar">
         <!-- chip 由 JS 渲染，计数来自接口 -->
     </div>
 
-    <div class="muted" id="typeHint" style="margin:0 2px 10px;font-size:12px">—</div>
+    <div class="text-xs opacity-45 px-1 mb-3 leading-relaxed" id="typeHint">—</div>
 
-    <div class="card" id="errBox" style="display:none;border:1px solid var(--danger)">
-        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">加载失败</div>
-        <div class="muted" id="errMsg" style="word-break:break-all"></div>
-        <button class="btn ghost" style="margin-top:10px" id="retryBtn">重试</button>
+    <div role="alert" class="alert alert-error mb-3 items-start" id="errBox" style="display:none">
+        <div class="flex-1 min-w-0">
+            <div class="font-medium">加载失败</div>
+            <div class="text-sm opacity-85 mt-1 pre-wrap" id="errMsg"></div>
+            <button class="btn btn-sm btn-ghost mt-2.5" id="retryBtn">重试</button>
+        </div>
     </div>
 
-    <div id="list"></div>
-    <div id="hint" class="muted" style="text-align:center;padding:14px 0;display:none"></div>
+    <div id="list" class="flex flex-col gap-2"></div>
+    <div id="hint" class="text-center text-xs opacity-40 py-4" style="display:none"></div>
     <div id="sentinel" style="height:1px"></div>
 </div>
 
@@ -48,7 +56,7 @@
     ];
 
     var curType = 'stale';
-    var page = 1, pages = 1, loading = false;
+    var page = 1, pages = 1, loading = false, total = 0;
     var counts = {};
     var staleDays = 90;
     var expanded = {};
@@ -79,16 +87,18 @@
 
     function showError(msg) {
         setText('errMsg', msg);
-        document.getElementById('errBox').style.display = 'block';
+        document.getElementById('errBox').style.display = 'flex';
+        setText('subtitle', '加载失败');
     }
 
     function renderTypes() {
         var bar = document.getElementById('typeBar');
         bar.innerHTML = TYPES.map(function (t) {
             var active = t.k === curType;
-            return '<button class="btn ghost' + (active ? ' chip active' : '') + '" data-type="' + t.k + '"'
-                + ' style="flex:0 0 auto;padding:8px 12px;font-size:13px;min-height:34px;white-space:nowrap">'
-                + t.name + ' <span style="opacity:.75">' + num(counts[t.countKey]) + '</span>'
+            // 选中态用 btn-primary：五个 chip 并排，只靠灰色深浅分不出选中的是哪个
+            return '<button class="btn btn-sm shrink-0' + (active ? ' btn-primary' : ' btn-ghost bg-base-200')
+                + '" data-type="' + t.k + '">'
+                + t.name + ' <span class="tnum opacity-70">' + num(counts[t.countKey]) + '</span>'
                 + '</button>';
         }).join('');
 
@@ -109,52 +119,51 @@
     /** 每类问题要摊开的信息不同：看「超期」时最想知道上次验证是什么时候，看「被取代」时最想知道指向谁 */
     function extraHtml(d) {
         if (curType === 'stale') {
-            return '<div class="muted" style="margin-top:6px;font-size:12px">'
+            return '<div class="text-[11px] opacity-55 mt-1.5 tnum">'
                 + (d.lastVerifiedAt
                     ? '最后验证 ' + fmtDate(d.lastVerifiedAt)
-                    : '<span style="color:var(--warn)">从未验证过</span>')
+                    : '<span class="text-warning font-medium">从未验证过</span>')
                 + ' · 最后修改 ' + fmtDate(d.updatedAt)
                 + '</div>';
         }
         if (curType === 'superseded') {
-            return '<div class="muted" style="margin-top:6px;font-size:12px">'
-                + '已被 #' + esc(d.supersededBy) + ' 取代</div>';
+            return '<div class="text-[11px] opacity-55 mt-1.5">已被 #' + esc(d.supersededBy) + ' 取代</div>';
         }
         if (curType === 'flagged') {
-            return '<div style="margin-top:8px;background:var(--card-2);border-radius:10px;padding:9px 11px">'
-                + '<div class="muted" style="margin-bottom:2px;font-size:12px">标记</div>'
-                + '<div style="font-size:13px">' + esc(d.flags || '—') + '</div></div>';
+            return '<div class="rounded-xl bg-warning/10 border border-warning/25 px-3 py-2 mt-2.5">'
+                + '<div class="text-[11px] opacity-50 mb-0.5">标记</div>'
+                + '<div class="text-[13px] leading-relaxed">' + esc(d.flags || '—') + '</div></div>';
         }
         if (curType === 'pending_delete') {
-            return '<div style="margin-top:8px;background:var(--card-2);border-radius:10px;padding:9px 11px">'
-                + '<div class="muted" style="margin-bottom:2px;font-size:12px">待删原因</div>'
-                + '<div style="font-size:13px">' + esc(d.deleteReason || '（标记时未写原因）') + '</div></div>';
+            return '<div class="rounded-xl bg-error/10 border border-error/25 px-3 py-2 mt-2.5">'
+                + '<div class="text-[11px] opacity-50 mb-0.5">待删原因</div>'
+                + '<div class="text-[13px] leading-relaxed">' + esc(d.deleteReason || '（标记时未写原因）') + '</div></div>';
         }
         return '';
     }
 
     function cardHtml(d) {
-        var statusBadge = '';
-        if (d.status === 'BROKEN') statusBadge = '<span class="tag danger">已失效</span>';
-        else if (d.status === 'PENDING_DELETE') statusBadge = '<span class="tag danger">待删</span>';
-        else if (d.supersededBy) statusBadge = '<span class="tag warn">被取代</span>';
+        var badges = [];
+        if (d.status === 'BROKEN') badges.push('<span class="badge badge-error badge-sm badge-soft shrink-0">已失效</span>');
+        else if (d.status === 'PENDING_DELETE') badges.push('<span class="badge badge-warning badge-sm badge-soft shrink-0">待删</span>');
+        else if (d.supersededBy) badges.push('<span class="badge badge-warning badge-sm badge-soft shrink-0">被取代</span>');
 
-        return '<div class="card" data-id="' + d.id + '">'
-            + '<div class="row-between" style="gap:8px">'
-            + '<div class="grow ell" style="font-weight:600;line-height:1.4">' + esc(d.title || '（无标题）') + '</div>'
-            + statusBadge
+        return '<div class="card bg-base-200 shadow-sm" data-id="' + d.id + '">'
+            + '<div class="card-body p-3.5 gap-0">'
+            + '<div class="flex items-start gap-2">'
+            + '<div class="flex-1 min-w-0 text-[15px] font-semibold leading-snug">' + esc(d.title || '（无标题）') + '</div>'
+            + badges.join('')
             + '</div>'
-            + '<div class="muted" style="margin-top:4px;font-size:12px">#'
+            + '<div class="text-[11px] opacity-45 mt-1 tnum">#'
             + d.id + ' · ' + esc(d.category || '未分类')
             + ' · ' + esc(d.authorName || '—')
             + ' · ' + num(d.contentLength) + ' 字</div>'
-            + (d.summary ? '<div class="clamp2" style="margin-top:8px;font-size:14px">' + esc(d.summary) + '</div>' : '')
+            + (d.summary ? '<div class="text-sm opacity-65 mt-2 line-clamp-2 leading-relaxed">' + esc(d.summary) + '</div>' : '')
             + extraHtml(d)
-            + '<div id="body-' + d.id + '" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">'
-            + '<div style="white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.65"></div></div>'
-            + '<button class="btn ghost" style="margin-top:12px;padding:9px 12px;font-size:14px;min-height:40px" '
-            + 'data-act="view" data-id="' + d.id + '">看正文</button>'
-            + '</div>';
+            + '<div id="body-' + d.id + '" style="display:none" class="mt-3 pt-3 border-t border-base-300">'
+            + '<div class="pre-wrap text-sm leading-relaxed"></div></div>'
+            + '<button class="btn btn-ghost btn-sm mt-3 self-start" data-act="view" data-id="' + d.id + '">看正文</button>'
+            + '</div></div>';
     }
 
     function getJson(url) {
@@ -176,8 +185,8 @@
         if (reset) {
             page = 1;
             pages = 1;
-            document.getElementById('list').innerHTML = '';
-            document.getElementById('list').innerHTML = '<div class="empty">加载中…</div>';
+            document.getElementById('list').innerHTML =
+                '<div class="flex justify-center py-10"><span class="loading loading-spinner loading-md opacity-50"></span></div>';
         }
 
         getJson(CTX + '/api/docs/problems?type=' + curType + '&page=' + page + '&size=20')
@@ -185,6 +194,7 @@
                 counts = d.counts || {};
                 staleDays = d.staleDays || 90;
                 pages = d.pages || 1;
+                total = d.total || 0;
 
                 // 计数变了要重画 chip（否则第一次进来数字全是 0）
                 renderTypes();
@@ -195,8 +205,12 @@
                     document.getElementById('list').insertAdjacentHTML('beforeend', rows.map(cardHtml).join(''));
                 } else if (page === 1) {
                     document.getElementById('list').innerHTML =
-                        '<div class="empty">这一类的没有问题文档</div>';
+                        '<div class="flex flex-col items-center gap-1 py-14 opacity-45">'
+                        + '<svg class="w-9 h-9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="m5 13 4 4L19 7"/></svg>'
+                        + '<div class="text-sm font-medium mt-1">这一类的没有问题文档</div></div>';
                 }
+
+                setText('subtitle', total ? total + ' 条 · 第 ' + page + '/' + pages + ' 页' : '这一类干净');
 
                 var hint = document.getElementById('hint');
                 if (page < pages) {

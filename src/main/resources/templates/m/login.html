@@ -1,45 +1,52 @@
 <!DOCTYPE html>
 <html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{m/layout :: head('登录')}"></head>
-<body>
-<div class="page" style="padding-top:56px">
+<body class="bg-base-100 text-base-content">
+<main class="min-h-dvh flex flex-col justify-center px-6">
 
-    <div style="text-align:center;margin-bottom:36px">
+    <div class="text-center mb-9">
         <img th:src="@{/images/pwa/icon-192.png}" alt="经验阁"
-             style="width:76px;height:76px;border-radius:18px;">
-        <div class="h1" style="margin-top:14px;margin-bottom:4px">经验阁</div>
-        <div class="muted">ExpHub 后台 · 移动版</div>
+             class="w-[76px] h-[76px] rounded-[20px] mx-auto shadow-lg shadow-black/25">
+        <h1 class="text-[22px] font-semibold mt-4 leading-tight">经验阁</h1>
+        <p class="text-sm opacity-55 mt-1">ExpHub 后台 · 移动版</p>
     </div>
 
     <!-- 失败原因：锁定与普通错误分开说，否则用户会一直重试把账号锁更久 -->
-    <div class="card" th:if="${param.locked}" style="border:1px solid var(--warn)">
-        <div style="color:var(--warn);font-weight:500;margin-bottom:4px">账号已临时锁定</div>
-        <div class="muted" th:text="'连续输错次数过多，请 ' + ${param.locked[0]} + ' 分钟后再试。手机输入容易错，建议先在密码管理器里确认。'"></div>
-    </div>
-    <div class="card" th:if="${param.error}" style="border:1px solid var(--danger)">
-        <div style="color:var(--danger);font-weight:500;margin-bottom:4px">用户名或密码不正确</div>
-        <div class="muted" th:if="${param.remaining}">
-            还可以再试 <span th:text="${param.remaining[0]}">4</span> 次，超过会临时锁定 15 分钟。
+    <div role="alert" class="alert alert-warning mb-3 items-start" th:if="${param.locked}">
+        <div>
+            <div class="font-medium">账号已临时锁定</div>
+            <div class="text-sm opacity-80 mt-1"
+                 th:text="'连续输错次数过多，请 ' + ${param.locked[0]} + ' 分钟后再试。手机输入容易错，建议先在密码管理器里确认。'"></div>
         </div>
     </div>
-    <div class="card" th:if="${param.logout}">
-        <div class="muted">已退出登录</div>
+    <div role="alert" class="alert alert-error mb-3 items-start" th:if="${param.error}">
+        <div>
+            <div class="font-medium">用户名或密码不正确</div>
+            <div class="text-sm opacity-80 mt-1" th:if="${param.remaining}">
+                还可以再试 <span th:text="${param.remaining[0]}">4</span> 次，超过会临时锁定 15 分钟。
+            </div>
+        </div>
+    </div>
+    <div role="alert" class="alert alert-info mb-3" th:if="${param.logout}">
+        <span>已退出登录</span>
     </div>
 
     <form th:action="@{/login}" method="post">
-        <div style="margin-bottom:12px">
+        <label class="input input-lg flex items-center gap-2 w-full mb-3">
+            <svg class="w-4 h-4 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4S18.3 16.4 19.5 20"/></svg>
             <input type="text" name="username" placeholder="用户名" autocomplete="username"
                    autocapitalize="none" autocorrect="off" required>
-        </div>
-        <div style="margin-bottom:20px">
+        </label>
+        <label class="input input-lg flex items-center gap-2 w-full mb-5">
+            <svg class="w-4 h-4 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4.5" y="10" width="15" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
             <input type="password" name="password" placeholder="密码" autocomplete="current-password" required>
-        </div>
-        <button class="btn" type="submit">登录</button>
+        </label>
+        <button class="btn btn-primary btn-lg w-full" type="submit">登录</button>
     </form>
 
-    <div class="muted" style="text-align:center;margin-top:24px;font-size:12px">
-        首次登录后可在浏览器菜单里「添加到主屏幕」，下次像 App 一样打开
-    </div>
-</div>
+    <p class="text-xs opacity-40 text-center mt-7 leading-relaxed">
+        首次登录后可在浏览器菜单里「添加到主屏幕」<br>下次像 App 一样打开
+    </p>
+</main>
 </body>
 </html>
