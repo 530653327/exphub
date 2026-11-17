@@ -336,14 +336,20 @@ pre {
     margin-bottom: var(--gap);
 }
 
+/* 注意：这里**不能**默认 display:flex。BS4 的 .card-header 默认是 block，
+   很多页只有一行标题；一旦无条件 flex + space-between，单个标题会被推到右侧
+   （2026-11-17 项目详情页的「基本信息」「AGENTS.md」就是这么歪的）。
+   需要两端对齐的页自己加 .d-flex，由下面那条接管。 */
 .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
     padding: 14px 18px;
     background: transparent;
     border-bottom: 1px solid var(--line);
+}
+
+.card-header.d-flex {
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 
 .card-header h5,
@@ -1158,6 +1164,14 @@ textarea.form-control {
    放这里而不是留在页面里的原因：换个颜色要改 8 个文件，改漏一个就不一致。
    ────────────────────────────────────────────────────────────────────── */
 
+/* 单列表单页（新建秘钥 / 创建成功）：原来写死 max-width:600px 且靠左，
+   1440 的屏上右边空掉一大片，像页面没加载完。改成居中、上限 720。 */
+.form-card {
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
 /* 文档列表 */
 .doc-item {
     padding: 16px 18px;
@@ -1258,8 +1272,8 @@ textarea.form-control {
 
 .stat-box {
     display: inline-block;
-    margin-right: 12px;
-    padding: 7px 14px;
+    margin-right: 10px;
+    padding: 9px 18px;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     text-align: center;
