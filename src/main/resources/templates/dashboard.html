@@ -2,13 +2,6 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <th:block th:replace="~{fragments/head :: head('仪表盘 - 经验阁 ExpHub')}"/>
-    <style>
-    .stat-card { padding: 20px; display: flex; align-items: center; }
-    .stat-card .icon { font-size: 2.5rem; margin-right: 15px; opacity: 0.8; }
-    .stat-card .number { font-size: 1.8rem; }
-    .stat-card .label { font-size: 0.85rem; opacity: 0.9; }
-    .badge-deprecated { background: #e2e3e5; color: #383d41; }
-    </style>
 </head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('dashboard')}"></div>
@@ -67,7 +60,7 @@
 
         <div class="row mb-4">
             <div class="col-md-4">
-                <div class="stat-card" style="background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);">
+                <div class="stat-card">
                     <i class="fas fa-chart-pie icon"></i>
                     <div>
                         <div class="number" th:if="${successSampled > 0}" th:text="${successRate} + '%'">0%</div>
@@ -87,10 +80,10 @@
                 </div>
             </div>
             <div class="col-md-4" th:if="${problemDocs > 0}">
-                <div class="stat-card" style="background: linear-gradient(135deg, #6c757d 0%, #adb5bd 100%);">
+                <div class="stat-card">
                     <i class="fas fa-clipboard-list icon"></i>
                     <div>
-                        <span class="d-block small" style="font-size:0.9rem; line-height:1.6;"
+                        <span class="d-block small"
                               th:text="'超期未验证 ' + ${problemDocsByType['STALE']} + ' · 被取代 ' + ${problemDocsByType['SUPERSEDED']} + ' · flag ' + ${problemDocsByType['FLAGGED']} + ' · 待删 ' + ${problemDocsByType['PENDING_DELETE']} + ' · BROKEN ' + ${problemDocsByType['BROKEN']}">-</span>
                     </div>
                 </div>
@@ -99,7 +92,7 @@
 
         <div class="row mb-4">
             <div class="col-md-3">
-                <div class="stat-card" style="background: linear-gradient(135deg, #6f42c1 0%, #9a67d9 100%);">
+                <div class="stat-card">
                     <i class="fas fa-folder-open icon"></i>
                     <div>
                         <div class="number" th:text="${totalProjects}">0</div>
@@ -109,16 +102,16 @@
                 </div>
             </div>
             <div class="col-md-3">
-                <div class="stat-card" style="background: linear-gradient(135deg, #f39c12 0%, #f1c40f 100%);">
+                <div class="stat-card">
                     <i class="fas fa-clock icon"></i>
                     <div>
-                        <div class="number" style="color:#333;" th:text="${staleDocs}">0</div>
-                        <div class="label" style="color:#333;">超期未验证（90天）</div>
+                        <div class="number" th:text="${staleDocs}">0</div>
+                        <div class="label">超期未验证（90天）</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
-                <div class="stat-card" style="background: linear-gradient(135deg, #2980b9 0%, #3498db 100%);">
+                <div class="stat-card">
                     <i class="fas fa-tasks icon"></i>
                     <div>
                         <div class="number" th:text="${candidatePending}">0</div>
@@ -141,7 +134,7 @@
 
         <div class="card mt-4">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-chart-line mr-2" style="color:var(--brand)"></i>近 7 天调用趋势</h5>
+                <h5 class="mb-0"><i class="fas fa-chart-line mr-2"></i>近 7 天调用趋势</h5>
             </div>
             <div class="card-body">
                 <canvas id="trendChart" height="80"></canvas>
@@ -150,7 +143,7 @@
 
         <div class="card list-card mt-4">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="fas fa-fire mr-2" style="color:var(--brand)"></i>热门经验 Top10</h5>
+                <h5 class="mb-0"><i class="fas fa-fire mr-2"></i>热门经验 Top10</h5>
                 <span class="page-sub">按「详情查看次数」排序（搜索曝光自 2026-10-21 起不再计入）</span>
             </div>
             <div class="card-body p-0">

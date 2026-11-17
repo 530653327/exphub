@@ -1,26 +1,7 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <th:block th:replace="~{fragments/head :: head('秘钥管理 - 经验阁 ExpHub')}"/>
-    <style>
-    .assistant-card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-    .assistant-avatar { width: 50px; height: 50px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 1.3rem; font-weight: bold; }
-    .assistant-info .name { font-size: 1rem; font-weight: 600; color: #333; }
-    .assistant-info .desc { font-size: 0.85rem; color: #999; margin-top: 3px; }
-    .assistant-info .api-key { font-family: monospace; font-size: 0.8rem; color: #e94560; margin-top: 5px; }
-    .assistant-stats { text-align: right; }
-    .assistant-stats .stat { display: inline-block; margin-left: 15px; text-align: center; }
-    .assistant-stats .stat .num { font-size: 1.2rem; font-weight: bold; color: #333; }
-    .assistant-stats .stat .lbl { font-size: 0.75rem; color: #999; }
-    .badge-enabled { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
-    .badge-disabled { background: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 20px; }
-    .permission-tag { font-size: 0.7rem; padding: 3px 8px; border-radius: 10px; margin-left: 5px; }
-    .permission-create { background: #fff3cd; color: #856404; }
-    .permission-update { background: #cce5ff; color: #004085; }
-    .permission-search { background: #d4edda; color: #155724; }
-    .permission-off { background: #e2e3e5; color: #6c757d; }
-    </style>
-</head>
+    <th:block th:replace="~{fragments/head :: head('秘钥管理 - 经验阁 ExpHub')}"/></head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('assistants')}"></div>
 

@@ -9,34 +9,41 @@
   点来点去菜单就「少了几项」或「顺序变了」，而且除了派单自己的页面，
   别的页面根本没有「派单」入口，进去就出不来。
 
+  2026-11-17 第四批（PC 重做视觉）：加了分组标题，图标/顺序/href 一个没改。
+  9 个菜单项平铺时找「工具统计」得逐行扫，分成 核心 / 数据 两组后一眼定位。
+  底部两项原来用 position:absolute 钉死，菜单一长就盖住上方条目，改成流式 .nav-foot。
+
   改菜单只改这里。调用：<div th:replace="~{fragments/sidebar :: nav('docs')}"></div>
   参数 active 取：dashboard / docs / projects / dispatch / assistants / logs / tool-stats / templates / profile
 -->
 <div th:fragment="nav(active)" class="sidebar">
     <div class="brand">经验<span>阁</span> ExpHub</div>
+
+    <div class="nav-group">核心</div>
     <a th:href="@{/dashboard}" th:classappend="${active == 'dashboard'} ? 'active'">
-        <i class="fas fa-chart-line mr-2"></i> 仪表盘</a>
+        <i class="fas fa-chart-line"></i><span>仪表盘</span></a>
     <a th:href="@{/docs}" th:classappend="${active == 'docs'} ? 'active'">
-        <i class="fas fa-book-open mr-2"></i> 经验管理</a>
+        <i class="fas fa-book-open"></i><span>经验管理</span></a>
     <a th:href="@{/projects}" th:classappend="${active == 'projects'} ? 'active'">
-        <i class="fas fa-folder-open mr-2"></i> 项目管理</a>
+        <i class="fas fa-folder-open"></i><span>项目管理</span></a>
     <a th:href="@{/dispatch}" th:classappend="${active == 'dispatch'} ? 'active'">
-        <i class="fas fa-paper-plane mr-2"></i> 派单</a>
+        <i class="fas fa-paper-plane"></i><span>派单</span></a>
+
+    <div class="nav-group">数据</div>
     <a th:href="@{/assistants}" th:classappend="${active == 'assistants'} ? 'active'">
-        <i class="fas fa-key mr-2"></i> 秘钥管理</a>
+        <i class="fas fa-key"></i><span>秘钥管理</span></a>
     <a th:href="@{/logs}" th:classappend="${active == 'logs'} ? 'active'">
-        <i class="fas fa-history mr-2"></i> 调用日志</a>
+        <i class="fas fa-history"></i><span>调用日志</span></a>
     <a th:href="@{/tool-stats}" th:classappend="${active == 'tool-stats'} ? 'active'">
-        <i class="fas fa-tools mr-2"></i> 工具统计</a>
+        <i class="fas fa-tools"></i><span>工具统计</span></a>
     <a th:href="@{/templates}" th:classappend="${active == 'templates'} ? 'active'">
-        <i class="fas fa-file-alt mr-2"></i> 模板管理</a>
-    <div style="margin-top: 20px; padding: 0 20px;">
+        <i class="fas fa-file-alt"></i><span>模板管理</span></a>
+
+    <div class="nav-foot">
         <a th:href="@{/profile/password}" th:classappend="${active == 'profile'} ? 'active'">
-            <i class="fas fa-lock mr-2"></i> 修改密码</a>
-    </div>
-    <div style="position: absolute; bottom: 20px; width: 100%; padding: 0 20px;">
-        <a th:href="@{/logout}" class="text-white-50" style="font-size: 0.85rem;">
-            <i class="fas fa-sign-out-alt mr-1"></i> 退出登录</a>
+            <i class="fas fa-lock"></i><span>修改密码</span></a>
+        <a th:href="@{/logout}">
+            <i class="fas fa-sign-out-alt"></i><span>退出登录</span></a>
     </div>
 </div>
 

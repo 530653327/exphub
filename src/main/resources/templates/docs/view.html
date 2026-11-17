@@ -2,24 +2,7 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
 <link rel="stylesheet" th:href="@{/lib/github-markdown-css/github-markdown.min.css}">
-        <th:block th:replace="~{fragments/head :: head('经验详情 - 经验阁 ExpHub')}"/>
-    <style>
-    .card { overflow: hidden; }
-    .markdown-body { padding: 30px; font-size: 0.95rem; }
-    .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-    .badge-version-current { background: #e94560; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; }
-    .tag-color { display: inline-block; padding: 4px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; margin-right: 4px; margin-bottom: 4px; }
-    .tag-color:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
-    .tag-color:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
-    .tag-color:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
-    .tag-color:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
-    .tag-color:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
-    .tag-color:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
-    .stat-box { display: inline-block; background: #f8f9fa; padding: 8px 15px; border-radius: 8px; text-align: center; margin-right: 15px; }
-    .stat-box .number { font-size: 1.3rem; font-weight: bold; color: #333; }
-    .stat-box .label { font-size: 0.75rem; color: #999; }
-    </style>
-</head>
+        <th:block th:replace="~{fragments/head :: head('经验详情 - 经验阁 ExpHub')}"/></head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('docs')}"></div>
 
@@ -290,7 +273,7 @@
                         <label class="font-weight-bold">分享链接</label>
                         <div class="input-group">
                             <input type="text" class="form-control" id="shareLinkInput" readonly
-                                   style="background:#f8f9fa;font-size:0.85rem;">
+                                   style="background:var(--surface-2);font-size:0.85rem;">
                             <div class="input-group-append">
                                 <button class="btn btn-success" id="copyShareBtn" onclick="copyShareLink()">
                                     <i class="fas fa-copy mr-1"></i> 复制链接

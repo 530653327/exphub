@@ -9,35 +9,24 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
     <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
     <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
+    <link rel="stylesheet" th:href="@{/css/pc.css}">
     <style>
-        body { background-color: #f5f6fa; }
-        .wrap { padding: 18px 22px; }
-        .topbar { background: #fff; padding: 14px 20px; border-radius: 10px; margin-bottom: 14px; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
-        .head-line { display: flex; justify-content: space-between; align-items: center; }
-        .stat-pill { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem;
-                     background: #eef1f6; color: #455; margin-right: 6px; }
-        .stat-pill.warn { background: #fdecea; color: #c0392b; }
-
-        /* 两栏对齐表：左右各 50%，等宽字体，行高紧凑，方便一眼扫差异 */
-        .diff-wrap { max-height: calc(100vh - 300px); overflow: auto; border-radius: 0 0 12px 12px; }
-        table.diff { width: 100%; table-layout: fixed; border-collapse: collapse; }
-        table.diff th { position: sticky; top: 0; z-index: 2; background: #fff;
-                        border-bottom: 2px solid #eee; padding: 10px 14px; font-size: 0.9rem; text-align: left; }
-        table.diff td { vertical-align: top; padding: 2px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-                        font-size: 0.82rem; line-height: 1.55; word-break: break-word; white-space: pre-wrap;
-                        border-bottom: 1px solid #f4f4f4; }
-        .cell-same { background: #fff; color: #333; }
-        /* 不一样的行：淡红底 + 左侧红条，扫视时直接跳出来 */
-        .cell-diff { background: #fdecea; color: #c0392b; font-weight: 600; box-shadow: inset 3px 0 0 #e94560; }
-        .cell-empty { background: #fafafa; }
-        td.left { border-right: 1px solid #eee; }
-
-        .legend { font-size: 0.8rem; color: #888; }
-        .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
-                    vertical-align: -2px; margin-right: 4px; }
-        .foot-actions { background: #fff; padding: 14px 20px; border-radius: 12px; margin-top: 14px;
-                        position: sticky; bottom: 0; box-shadow: 0 -2px 12px rgba(0,0,0,0.05); }
+    body {background: var(--bg);}
+    .wrap {padding: 18px 22px;}
+    .head-line {display: flex; justify-content: space-between; align-items: center;}
+    .stat-pill {display: inline-block; padding: 1px 9px; border-radius: 6px; font-size: 11.5px; font-weight: 600; background: var(--neutral-bg); color: var(--neutral-fg); margin-right: 6px;}
+    .stat-pill.warn {background: var(--bad-bg); color: var(--bad);}
+    /* 两栏对齐表：左右各 50%，等宽字体，行高紧凑，方便一眼扫差异 */ .diff-wrap {max-height: calc(100vh - 300px); overflow: auto; border-radius: 0 0 12px 12px;}
+    table.diff {width: 100%; table-layout: fixed; border-collapse: collapse;}
+    table.diff th {position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 2px solid var(--line); padding: 10px 14px; font-size: 0.9rem; text-align: left;}
+    table.diff td {vertical-align: top; padding: 2px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; border-bottom: 1px solid #f4f4f4;}
+    .cell-same {background: #fff; color: var(--text);}
+    /* 不一样的行：淡红底 + 左侧红条，扫视时直接跳出来 */ .cell-diff {background: var(--bad-bg); color: #a51e1e; font-weight: 600; box-shadow: inset 3px 0 0 var(--bad);}
+    .cell-empty {background: var(--surface-2);}
+    td.left {border-right: 1px solid var(--line);}
+    .legend {font-size: 12px; color: var(--text-faint);}
+    .legend i {display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 4px;}
+    .foot-actions {background: var(--surface); border: 1px solid var(--line); padding: 12px 18px; border-radius: var(--radius); margin-top: 14px; position: sticky; bottom: 0;}
     </style>
 </head>
 <body>
@@ -57,9 +46,9 @@
                 </span>
             </div>
             <div class="legend">
-                <span><i style="background:#fff;border:1px solid #ddd;"></i>相同</span>
-                <span class="ml-2"><i style="background:#fdecea;border:1px solid #e94560;"></i>不一样</span>
-                <span class="ml-2"><i style="background:#fafafa;border:1px solid #eee;"></i>这边没有</span>
+                <span><i style="background:var(--surface);border:1px solid var(--line-strong);"></i>相同</span>
+                <span class="ml-2"><i style="background:var(--bad-bg);border:1px solid var(--bad);"></i>不一样</span>
+                <span class="ml-2"><i style="background:var(--surface-2);border:1px solid var(--line);"></i>这边没有</span>
             </div>
         </div>
 

@@ -1,30 +1,7 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <th:block th:replace="~{fragments/head :: head('经验管理 - 经验阁 ExpHub')}"/>
-    <style>
-    .card { overflow: hidden; }
-    .badge-primary { background: #e94560; border-color: #e94560; }
-    .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-    .search-box { border-radius: 30px; padding: 10px 20px; border: 1px solid #e0e0e0; width: 300px; }
-    .nav-tab { display: inline-block; padding: 12px 16px; color: #666; text-decoration: none; font-size: 0.9rem; border-bottom: 2px solid transparent; }
-    .nav-tab:hover { color: #333; text-decoration: none; }
-    .nav-tab.active { color: #e94560; font-weight: 600; border-bottom-color: #e94560; }
-    .doc-item { padding: 20px 25px; border-bottom: 1px solid #f5f5f5; transition: all 0.2s; }
-    .doc-item:hover { background: #fafafa; }
-    .doc-item:last-child { border-bottom: none; }
-    .doc-title { font-size: 1.05rem; font-weight: 600; color: #333; }
-    .doc-title:hover { color: #e94560; }
-    .doc-meta { font-size: 0.85rem; color: #999; margin-top: 5px; }
-    .doc-tags .tag { display: inline-block; padding: 2px 10px; border-radius: 15px; font-size: 0.8rem; margin-right: 5px; margin-top: 5px; font-weight: 500; }
-    .doc-tags .tag:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
-    .doc-tags .tag:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
-    .doc-tags .tag:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
-    .doc-tags .tag:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
-    .doc-tags .tag:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
-    .doc-tags .tag:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
-    </style>
-</head>
+    <th:block th:replace="~{fragments/head :: head('经验管理 - 经验阁 ExpHub')}"/></head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('docs')}"></div>
 
@@ -215,7 +192,7 @@
                         <div class="d-flex justify-content-between align-items-start">
                         <div class="flex-grow-1">
                             <a class="doc-title" th:href="@{/docs/{id}(id=${doc.id})}" th:text="${doc.title}">-</a>
-                            <span class="badge badge-version ml-2" th:if="${doc.templateType != null and !doc.templateType.isEmpty()}" style="background:#e8f0fe;color:#1967d2;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;">
+                            <span class="badge badge-version ml-2" th:if="${doc.templateType != null and !doc.templateType.isEmpty()}" style="background:var(--brand-soft);color:var(--brand);padding:2px 8px;border-radius:6px;font-size:11.5px;font-weight:600;">
                                 <span th:switch="${doc.templateType}">
                                     <span th:case="'problem_solution'">🛠️ 问题方案</span>
                                     <span th:case="'knowledge_doc'">📚 知识文档</span>
@@ -246,7 +223,7 @@
                             </div>
                             <!-- M10：待删项把原因摊开显示，用户靠这句话决定删不删 -->
                             <div th:if="${doc.status == 'PENDING_DELETE'}" class="mt-2 p-2"
-                                 style="background:#fff5f5;border-left:3px solid #e94560;border-radius:4px;font-size:0.85rem;">
+                                 style="background:var(--bad-bg);border-left:3px solid var(--bad);border-radius:4px;font-size:0.85rem;">
                                 <i class="fas fa-exclamation-triangle text-danger mr-1"></i>
                                 <strong>待删原因：</strong><span th:text="${doc.deleteReason != null ? doc.deleteReason : '（未填写）'}">-</span>
                                 <span class="text-muted ml-2" th:if="${doc.deleteMarkedBy != null}">
@@ -257,7 +234,7 @@
                             </div>
                             <!-- set_flags：机器标记摊开显示，用户能直接判断该条是否可信 -->
                             <div th:if="${doc.flags != null and doc.flags != ''}" class="mt-2 p-2"
-                                 style="background:#fffbf0;border-left:3px solid #f0a500;border-radius:4px;font-size:0.85rem;">
+                                 style="background:var(--warn-bg);border-left:3px solid var(--warn);border-radius:4px;font-size:0.85rem;">
                                 <i class="fas fa-flag text-warning mr-1"></i>
                                 <strong>标记：</strong><span th:text="${doc.flags}">-</span>
                                 <span class="text-muted ml-2" th:if="${doc.flagNote != null and doc.flagNote != ''}">
@@ -550,7 +527,7 @@
                         <label class="font-weight-bold">分享链接</label>
                         <div class="input-group">
                             <input type="text" class="form-control" id="shareLinkInput" readonly
-                                   style="background:#f8f9fa;font-size:0.85rem;">
+                                   style="background:var(--surface-2);font-size:0.85rem;">
                             <div class="input-group-append">
                                 <button class="btn btn-success" id="copyShareBtn" onclick="copyShareLink()">
                                     <i class="fas fa-copy mr-1"></i> 复制链接
