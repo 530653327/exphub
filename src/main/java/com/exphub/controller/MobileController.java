@@ -96,16 +96,18 @@ public class MobileController {
 
     // ==================== 派单（2026-11-17 顶掉原「工具埋点」tab）====================
 
-    /** 列表：状态 chips + 卡片。默认全部，单子按更新时间倒序（service 里已排好）。 */
+    /** 列表：状态 chips + 关键词搜索 + 卡片。默认全部，单子按更新时间倒序（service 里已排好）。 */
     @GetMapping("/dispatch")
     public String dispatchList(@RequestParam(required = false) String status,
+                               @RequestParam(required = false) String keyword,
                                HttpSession session, Model model) {
         markMobile(session);
         model.addAttribute("title", "派单");
         model.addAttribute("activeTab", "dispatch");
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用，与 PC 端一致）
-        model.addAttribute("orders", dispatchService.list(null, status, null, 100, null));
+        model.addAttribute("orders", dispatchService.list(null, status, null, keyword, 100, null));
         model.addAttribute("status", status);
+        model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
         model.addAttribute("counts", dispatchService.countByStatus());
         model.addAttribute("labels", statusLabels());
         return "m/dispatch";

@@ -30,13 +30,16 @@ public class DispatchController extends BaseController {
     @Autowired
     private DispatchService dispatchService;
 
-    /** 列表：按状态筛选，顶部显示各状态张数。 */
+    /** 列表：按状态筛选 + 关键词模糊搜索，顶部显示各状态张数。 */
     @GetMapping
-    public String list(@RequestParam(required = false) String status, Model model) {
+    public String list(@RequestParam(required = false) String status,
+                       @RequestParam(required = false) String keyword,
+                       Model model) {
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用）
-        List<DispatchHeader> orders = dispatchService.list(null, status, null, 100, null);
+        List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword, 100, null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
+        model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
         model.addAttribute("counts", dispatchService.countByStatus());
         model.addAttribute("labels", statusLabels());
         model.addAttribute("active", "dispatch");

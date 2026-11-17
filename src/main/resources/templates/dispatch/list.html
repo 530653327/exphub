@@ -4,6 +4,11 @@
     <th:block th:replace="~{fragments/head :: head('派单 - 经验阁 ExpHub')}"/>
     <style>
     table td {vertical-align: middle !important;}
+    /* 筛选 chip 前的小色点：与表格里状态标签同一组色值，扫一眼就知道哪个按钮管哪种状态 */
+    .toolbar .dot {display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+    .toolbar .chip {border-color: var(--line); color: var(--head-fg);}
+    .toolbar .chip.active {background: var(--brand); border-color: var(--brand); color:#fff;}
+    .toolbar .chip.active .dot {box-shadow: 0 0 0 2px rgba(255,255,255,.55);}
     </style>
 </head>
 <body>
@@ -19,7 +24,9 @@
                     待接单 <b th:text="${counts['READY']}">0</b> ·
                     进行中 <b th:text="${counts['RUNNING']}">0</b> ·
                     待确认 <b th:text="${counts['CONFIRMING']}">0</b> ·
-                    待验收 <b th:text="${counts['VERIFYING']}">0</b>
+                    待验收 <b th:text="${counts['VERIFYING']}">0</b> ·
+                    已完成 <b th:text="${counts['DONE']}">0</b> ·
+                    已取消 <b th:text="${counts['CANCELLED']}">0</b>
                 </div>
             </div>
             <div class="page-actions">
@@ -30,20 +37,45 @@
         <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
         <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
 
-        <!-- 状态筛选：原来 7 个按钮全塞在页头右侧，窄屏会被挤到换行，且和「新建」抢位置 -->
+        <!-- 筛选条：搜索 + 八个状态（原来 7 个按钮全塞在页头右侧，窄屏会被挤到换行；
+             2026-11-17 补上「已完成 / 已取消」，并加了关键词模糊搜索） -->
         <div class="toolbar">
-            <a th:href="@{/dispatch}" class="btn btn-outline-secondary"
+            <form method="get" th:action="@{/dispatch}" class="d-flex" style="gap:8px;flex:1;min-width:260px;max-width:420px;">
+                <input type="hidden" name="status" th:value="${status}">
+                <div class="input-group">
+                    <input type="text" class="form-control" name="keyword" th:value="${keyword}"
+                           placeholder="搜单号 / 标题 / 内容 / 派给谁">
+                    <div class="input-group-append">
+                        <button class="btn btn-outline-secondary" type="submit"><i class="fas fa-search"></i></button>
+                    </div>
+                </div>
+                <a th:if="${keyword != null and keyword != ''}"
+                   th:href="@{/dispatch(status=${status})}" class="btn btn-outline-secondary">清空</a>
+            </form>
+
+            <a th:href="@{/dispatch(keyword=${keyword})}" class="btn chip"
                th:classappend="${status == null or status == ''} ? 'active'">全部</a>
-            <a th:href="@{/dispatch(status='REVIEWING')}" class="btn btn-outline-warning"
-               th:classappend="${status == 'REVIEWING'} ? 'active'">待审核</a>
-            <a th:href="@{/dispatch(status='READY')}" class="btn btn-outline-info"
-               th:classappend="${status == 'READY'} ? 'active'">待接单</a>
-            <a th:href="@{/dispatch(status='RUNNING')}" class="btn btn-outline-success"
-               th:classappend="${status == 'RUNNING'} ? 'active'">进行中</a>
-            <a th:href="@{/dispatch(status='CONFIRMING')}" class="btn btn-outline-danger"
-               th:classappend="${status == 'CONFIRMING'} ? 'active'">待确认</a>
-            <a th:href="@{/dispatch(status='VERIFYING')}" class="btn btn-outline-primary"
-               th:classappend="${status == 'VERIFYING'} ? 'active'">待验收</a>
+            <a th:href="@{/dispatch(status='REVIEWING', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'REVIEWING'} ? 'active'">
+                <i class="dot" style="background:#b45309"></i>待审核</a>
+            <a th:href="@{/dispatch(status='READY', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'READY'} ? 'active'">
+                <i class="dot" style="background:#1d4ed8"></i>待接单</a>
+            <a th:href="@{/dispatch(status='RUNNING', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'RUNNING'} ? 'active'">
+                <i class="dot" style="background:#0e7490"></i>进行中</a>
+            <a th:href="@{/dispatch(status='CONFIRMING', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'CONFIRMING'} ? 'active'">
+                <i class="dot" style="background:#6d28d9"></i>待确认</a>
+            <a th:href="@{/dispatch(status='VERIFYING', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'VERIFYING'} ? 'active'">
+                <i class="dot" style="background:#b91c1c"></i>待验收</a>
+            <a th:href="@{/dispatch(status='DONE', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'DONE'} ? 'active'">
+                <i class="dot" style="background:#047857"></i>已完成</a>
+            <a th:href="@{/dispatch(status='CANCELLED', keyword=${keyword})}" class="btn chip"
+               th:classappend="${status == 'CANCELLED'} ? 'active'">
+                <i class="dot" style="background:#94a3b8"></i>已取消</a>
         </div>
 
         <div class="card list-card">
@@ -78,8 +110,12 @@
                         <tr th:if="${orders.isEmpty()}">
                             <td colspan="8" class="empty-state">
                                 <i class="fas fa-inbox"></i>
-                                <p>还没有任何单</p>
-                                <p class="empty-hint">AI 通过 dispatch_create 建单后会出现在这里，等你审核。</p>
+                                <p th:if="${keyword != null and keyword != ''}">没搜到含「<span th:text="${keyword}"></span>」的单</p>
+                                <p th:unless="${keyword != null and keyword != ''}">还没有任何单</p>
+                                <p class="empty-hint" th:if="${keyword != null and keyword != ''}">
+                                    换个词试试；搜的是单号、标题、内容、指派人和接单人。当前状态筛选也会一起生效。
+                                </p>
+                                <p class="empty-hint" th:unless="${keyword != null and keyword != ''}">AI 通过 dispatch_create 建单后会出现在这里，等你审核。</p>
                             </td>
                         </tr>
                     </tbody>

@@ -210,6 +210,22 @@ public class DispatchService {
      * @param role 只看与我有关的：我指派的（assignee）或我创建的（creator）；null=不限
      */
     public List<DispatchHeader> list(String role, String status, String orderNo, int limit, String apiKey) {
+        return list(role, status, orderNo, null, limit, apiKey);
+    }
+
+    /**
+     * 列单 + 关键词模糊搜索（2026-11-17 越哥要求：后台与手机端派单列表要能搜）。
+     *
+     * <p>搜索口径：关键词按空白切词，**词之间 AND、词语内部 OR 全列** ——
+     * 搜「派单 手机」= 同时含有这两个词的单，任一词落在哪一列都算命中。
+     * 可搜列：单号 / 标题 / 描述 / 指派 / 创建人 / 接单人（不含日志类长文本 item）。
+     *
+     * <p>状态与关键词是「且」的关系，筛「已完成」再搜词，只在已完成的单里找。
+     *
+     * @param keyword 可为空；空 = 不过滤
+     */
+    public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
+                                     int limit, String apiKey) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<>();
         // Key 隔离：null = 后台视角（看全部）；非 null = 只看这个 Key 的
         if (apiKey != null) q.eq("api_key", apiKey);
@@ -223,9 +239,34 @@ public class DispatchService {
             String r = role.trim();
             q.and(w -> w.eq("assignee", r).or().eq("creator", r));
         }
+        applyKeyword(q, keyword);
         q.orderByDesc("id");
         if (limit > 0) q.last("LIMIT " + Math.min(limit, 50));
         return headerMapper.selectList(q);
+    }
+
+    /**
+     * 把关键词条件拼进 QueryWrapper。抽成独立方法是为了能**不开数据库就测**：
+     * 单测直接看生成的 SQL 片段，确认括号分组（词之间 AND）没拼错 ——
+     * 拼错的表现是「筛了状态又搜词，结果把别的状态也捞回来了」，线上很难一眼看出来。
+     */
+    static void applyKeyword(QueryWrapper<DispatchHeader> q, String keyword) {
+        if (keyword == null || keyword.isBlank()) return;
+        for (String token : keyword.trim().split("\\s+")) {
+            if (token.isEmpty()) continue;
+            String k = escapeLike(token);
+            q.and(w -> w.like("order_no", k).or().like("title", k).or()
+                    .like("assignee", k).or().like("creator", k).or()
+                    .like("accepter", k).or().like("description", k));
+        }
+    }
+
+    /**
+     * LIKE 通配符转义：用户输入里的百分号、下划线、反斜杠一律当字面量。
+     * MySQL 的 LIKE 默认转义符就是反斜杠，所以这里加反斜杠就够，不用额外写 ESCAPE 子句。
+     */
+    static String escapeLike(String raw) {
+        return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     /** 内部取单，不做 Key 校验。只有后台与「已确定归属」的内部逻辑可以调。 */

@@ -26,20 +26,35 @@
         <div class="flex-1 min-w-0 pre-wrap text-sm" th:text="${error}"></div>
     </div>
 
-    <!-- 状态筛选：横向可滑。手机窄，六个按钮平铺会挤成两行小字 -->
+    <!-- 搜索：手机键盘按下「搜索」即提交，状态筛选跟着一起带上，不清空 -->
+    <form method="get" th:action="@{/m/dispatch}" class="flex gap-2 mb-2">
+        <input type="hidden" name="status" th:value="${status}">
+        <input type="search" name="keyword" th:value="${keyword}"
+               class="input w-full bg-base-100 border-base-300"
+               placeholder="搜单号 / 标题 / 内容 / 派给谁">
+        <button type="submit" class="btn btn-sm btn-primary shrink-0">搜</button>
+        <a th:if="${keyword != null and keyword != ''}" th:href="@{/m/dispatch(status=${status})}"
+           class="btn btn-sm btn-ghost bg-base-200 shrink-0">清空</a>
+    </form>
+
+    <!-- 状态筛选：横向可滑。手机窄，八个按钮平铺会挤成两行小字（2026-11-17 补已完成/已取消） -->
     <div class="hscroll flex gap-2 mb-3 -mx-4 px-4">
         <a class="btn btn-sm shrink-0" th:classappend="${status == null or status == ''} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch}">全部</a>
+           th:href="@{/m/dispatch(keyword=${keyword})}">全部</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'REVIEWING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='REVIEWING')}">待审核</a>
+           th:href="@{/m/dispatch(status='REVIEWING', keyword=${keyword})}">待审核</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'READY'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='READY')}">待接单</a>
+           th:href="@{/m/dispatch(status='READY', keyword=${keyword})}">待接单</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'RUNNING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='RUNNING')}">进行中</a>
+           th:href="@{/m/dispatch(status='RUNNING', keyword=${keyword})}">进行中</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'CONFIRMING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='CONFIRMING')}">待确认</a>
+           th:href="@{/m/dispatch(status='CONFIRMING', keyword=${keyword})}">待确认</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'VERIFYING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='VERIFYING')}">待验收</a>
+           th:href="@{/m/dispatch(status='VERIFYING', keyword=${keyword})}">待验收</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'DONE'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='DONE', keyword=${keyword})}">已完成</a>
+        <a class="btn btn-sm shrink-0" th:classappend="${status == 'CANCELLED'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(status='CANCELLED', keyword=${keyword})}">已取消</a>
     </div>
 
     <div class="flex flex-col gap-2">
@@ -71,8 +86,15 @@
 
     <div class="flex flex-col items-center gap-1.5 py-16 opacity-45" th:if="${orders.isEmpty()}">
         <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
-        <div class="text-sm font-medium mt-1">这个筛选下没有单</div>
-        <div class="text-xs text-center px-8 leading-relaxed">AI 建的单会落在「待审核」，等你通过才会派出去。</div>
+        <div class="text-sm font-medium mt-1" th:if="${keyword != null and keyword != ''}"
+             th:text="'没搜到含「' + ${keyword} + '」的单'">没搜到</div>
+        <div class="text-sm font-medium mt-1" th:unless="${keyword != null and keyword != ''}">这个筛选下没有单</div>
+        <div class="text-xs text-center px-8 leading-relaxed" th:if="${keyword != null and keyword != ''}">
+            换个词试试；搜的是单号、标题、内容、指派人和接单人。状态筛选会一起生效。
+        </div>
+        <div class="text-xs text-center px-8 leading-relaxed" th:unless="${keyword != null and keyword != ''}">
+            AI 建的单会落在「待审核」，等你通过才会派出去。
+        </div>
     </div>
 
     <div class="text-center text-[11px] opacity-30 mt-5 leading-relaxed">

@@ -124,4 +124,76 @@ class PageTemplateRenderTest {
         assertTrue(html.contains("105"), "STALE 的计数没有渲染出来（problemCounts 没被读到）");
     }
 
+    // ==================== 派单列表（2026-11-17 补已完成/已取消 + 关键词搜索）====================
+
+    private static WebContext dispatchContext(String status, String keyword) {
+        MockServletContext servletContext = new MockServletContext();
+        MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
+        request.setContextPath(CTX_PATH);
+        request.setRequestURI(CTX_PATH + "/dispatch");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        JakartaServletWebApplication webApp = JakartaServletWebApplication.buildApplication(servletContext);
+        WebContext ctx = new WebContext(webApp.buildExchange(request, response), Locale.SIMPLIFIED_CHINESE);
+
+        // 与 DispatchController.list 往 Model 里放的字段逐一对齐；少一个就是线上 500。
+        // orders 给空列表：走进空态分支，模板里所有条件表达式都会被求值一遍。
+        Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        for (String st : List.of("REVIEWING", "READY", "RUNNING", "CONFIRMING", "VERIFYING", "DONE", "CANCELLED")) {
+            counts.put(st, 0L);
+        }
+        Map<String, String> labels = new java.util.LinkedHashMap<>();
+        labels.put("REVIEWING", "待审核");
+        labels.put("READY", "待接单");
+        labels.put("RUNNING", "进行中");
+        labels.put("CONFIRMING", "待确认");
+        labels.put("VERIFYING", "待验收");
+        labels.put("DONE", "已完成");
+        labels.put("CANCELLED", "已取消");
+
+        ctx.setVariable("active", "dispatch");
+        ctx.setVariable("orders", List.of());
+        ctx.setVariable("status", status);
+        // Controller 会把 null 归一成空串，这里照做，保证测的是线上真实形态
+        ctx.setVariable("keyword", keyword == null ? "" : keyword);
+        ctx.setVariable("counts", counts);
+        ctx.setVariable("labels", labels);
+        ctx.setVariable("_csrf", null);
+        return ctx;
+    }
+
+    @Test
+    @DisplayName("派单列表：八个状态筛选 + 搜索框都要在，且带关键词时不能渲染成 500")
+    void dispatchListHasAllStatusChipsAndSearch() {
+        SpringTemplateEngine engine = engine();
+
+        String plain;
+        try {
+            plain = engine.process("dispatch/list", dispatchContext(null, ""));
+        } catch (RuntimeException e) {
+            throw new AssertionError("dispatch/list 渲染失败，线上会是一个 500 页。原始异常：" + e.getMessage(), e);
+        }
+
+        // 少于八个就等于「已完成 / 已取消」翻不到，历史单一多就没法查（2026-11-17 越哥要求）
+        for (String st : List.of("REVIEWING", "READY", "RUNNING", "CONFIRMING", "VERIFYING", "DONE", "CANCELLED")) {
+            assertTrue(plain.contains("status=" + st), "派单列表缺状态筛选：" + st);
+        }
+        assertTrue(plain.contains("已完成"), "缺「已完成」筛选按钮文案");
+        assertTrue(plain.contains("已取消"), "缺「已取消」筛选按钮文案");
+        assertTrue(plain.contains("name=\"keyword\""), "没有关键词搜索输入框（name=keyword）");
+
+        // 带关键词的分支也要能渲染：空态文案换了口气，还多出「清空」入口
+        String searched;
+        try {
+            searched = engine.process("dispatch/list", dispatchContext("DONE", "七色"));
+        } catch (RuntimeException e) {
+            throw new AssertionError("dispatch/list 在带关键词时渲染失败（线上就是 500）。原始异常：" + e.getMessage(), e);
+        }
+        assertTrue(searched.contains("七色"), "搜索词没有回填到页面（keyword 没被读到）");
+        assertTrue(searched.contains("清空"), "带关键词时没有清空入口，用户只能手动删 URL");
+        // 状态筛选必须跟关键词一起留在链接里，否则点一下「已取消」就把搜索词丢了
+        assertTrue(searched.contains("keyword=%E4%B8%83%E8%89%B2") || searched.contains("keyword=七色"),
+                "状态筛选链接没有带上 keyword，切状态会丢搜索条件");
+    }
+
 }

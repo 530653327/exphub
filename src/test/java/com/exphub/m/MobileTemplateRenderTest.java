@@ -181,8 +181,9 @@ class MobileTemplateRenderTest {
     void dispatchListHasWorkingLinks() {
         String html = engine().process("m/dispatch", context());
 
-        // 三个状态筛选 + 全部，至少要有这几个状态码，否则筛不出来
-        for (String st : List.of("REVIEWING", "READY", "RUNNING", "CONFIRMING", "VERIFYING")) {
+        // 八个状态筛选一个都不能少：少了「已完成 / 已取消」就翻不到历史单（2026-11-17 越哥要求）
+        for (String st : List.of("REVIEWING", "READY", "RUNNING", "CONFIRMING", "VERIFYING",
+                "DONE", "CANCELLED")) {
             assertTrue(html.contains("status=" + st), "派单列表缺状态筛选：" + st);
         }
         assertTrue(html.contains("/m/dispatch/new"), "派单列表没有新建入口");
@@ -190,6 +191,10 @@ class MobileTemplateRenderTest {
         assertTrue(html.contains("/m/dispatch/W-20261117-000001"), "列表项没有链接到详情页");
         // 状态中文必须来自后端 labels，不是模板里硬编码的映射
         assertTrue(html.contains("待审核"), "状态中文没渲染出来（labels 没传或键名不一致）");
+
+        // 关键词模糊搜索：输入框 + 后端读得到的参数名，两者缺一就搜不了
+        assertTrue(html.contains("name=\"keyword\""), "派单列表没有搜索输入框（name=keyword）");
+        assertTrue(html.contains("<form"), "搜索必须能在手机键盘上直接提交（缺 GET 表单）");
     }
 
     @Test
