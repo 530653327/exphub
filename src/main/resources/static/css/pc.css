@@ -1327,8 +1327,9 @@ textarea.form-control {
 .st-CONFIRMING{ background: #ede9fe; color: #6d28d9; }
 .st-VERIFYING { background: #fee2e2; color: #b91c1c; }
 .st-DONE      { background: #d1fae5; color: #047857; }
-.st-CANCELLED { background: #f1f5f9; color: #64748b; }
-.st-DRAFT     { background: #f1f5f9; color: #64748b; }
+/* 终态不抢眼：取消/草稿用描边，浅底块比「完成」的绿底还亮，主次会反 */
+.st-CANCELLED { background: transparent; box-shadow: inset 0 0 0 1px currentColor; color: #94a3b8; }
+.st-DRAFT     { background: transparent; box-shadow: inset 0 0 0 1px currentColor; color: #94a3b8; }
 
 .chip {
     display: inline-block;
