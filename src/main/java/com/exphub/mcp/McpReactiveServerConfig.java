@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.server.transport.WebFluxSseServerTransportProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory;
 import org.springframework.boot.web.server.WebServer;
@@ -41,12 +42,19 @@ import java.time.Duration;
  * <b>2026-09-27 就发生过该故障</b>：`http-nio-3099-exec` 200/200 全部 WAITING、
  * 栈里 400 个 SSE 帧。WebFlux 的非阻塞模型不存在此问题，故保持本方案。
  *
+ * <p><b>2026-11-17：本类默认停用（{@code exphub.mcp.sse-enabled=false}）。</b>
+ * 越哥定的：SSE 没有重连能力，每次部署后会话失效、客户端要手动重连，用着难受。
+ * 实测公网 SSE 请求已无真实客户端，业务流量 100% 走无状态端点
+ * {@code POST /exphub/mcp/http}（3099 Servlet，见 {@link McpStatelessController}）。
+ * 代码与心跳逻辑全部保留，需要回滚时把开关改 true 并恢复 nginx 的 {@code /exphub/mcp/} 反代即可。
+ *
  * <p><b>关于身份（API Key）传递：</b>本类只负责把 assistant 写入 ThreadLocal；
  * 由于工具实际在 Reactor 线程执行，跨线程传播由
  * {@code config/McpContextPropagationConfig}（Reactor onScheduleHook）负责。
  * 两者职责分离，不要在这里再引入线程池相关的 hack。
  */
 @Configuration
+@ConditionalOnProperty(prefix = "exphub.mcp", name = "sse-enabled", havingValue = "true")
 public class McpReactiveServerConfig {
 
     private static final Logger log = LoggerFactory.getLogger(McpReactiveServerConfig.class);

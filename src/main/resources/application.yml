@@ -92,6 +92,13 @@ exphub:
   #         「已排除 mail_start 调用 N 次、真实读信 M 次仍计入」；仪表盘 totalTool/todayTool 同步排除。
   version: 2.5.6
   mcp:
+    # 2026-11-17 停用 SSE。越哥：「那个没有重连功能，用起来不方便」。
+    # 背景：SSE 有会话概念，服务一重启会话就失效（sse_session_not_found），
+    #      WorkBuddy 等客户端不会自动重连，表现就是「偶尔连不上、要手动重开」。
+    # 实测（2026-11-17）：公网 /mcp/sse 当日仅 32 次请求，全部来自 20+ 个腾讯云 IP
+    #      各 1~2 次 = 扫描器探测；真实业务流量 ~4 万次全部走 /mcp/http（2 个固定 IP）。
+    # 回滚方式：本项改 true + 恢复 nginx 的 `location /exphub/mcp/ { proxy_pass :3098; }`。
+    sse-enabled: false
     sse-heartbeat-seconds: 30
     # MCP 单次请求体上限（字节）。默认 5MB；Nginx 对应 client_max_body_size 10m。
     max-request-bytes: 5242880

@@ -328,12 +328,21 @@ done
 
 if [ "$OK" = "1" ]; then
     echo "✅ 健康检查通过: $(cat /tmp/exphub_health.json 2>/dev/null)"
-    # MCP 端口探测（不校验业务，只看能否建连）
-    MCP_CODE=$(curl -s --noproxy '*' -o /dev/null -m 5 -w "%{http_code}" http://127.0.0.1:3098/mcp/sse 2>/dev/null || echo "000")
-    if [ "$MCP_CODE" = "200" ] || [ "$MCP_CODE" = "401" ]; then
-        echo "✅ MCP(3098) 可建连 (http=$MCP_CODE)"
+    # MCP 探活：2026-11-17 起 SSE(3098) 已停用，改探无状态端点 /mcp/http（3099）。
+    # 不带 authorization-key 必须回 401 —— 同时证明「端点活着」和「鉴权生效」。
+    MCP_CODE=$(curl -s --noproxy '*' -o /dev/null -m 5 -w "%{http_code}" \
+        -X POST -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+        http://127.0.0.1:3099/exphub/mcp/http 2>/dev/null || echo "000")
+    if [ "$MCP_CODE" = "401" ]; then
+        echo "✅ MCP(/mcp/http) 端点正常且鉴权生效 (http=401)"
     else
-        echo "⚠️  MCP(3098) 异常 (http=$MCP_CODE)，请检查 app.log"
+        echo "⚠️  MCP(/mcp/http) 异常 (http=$MCP_CODE，预期 401)，请检查 app.log"
+    fi
+    if ss -tln 2>/dev/null | grep -q ':3098 '; then
+        echo "⚠️  3098 仍在监听（sse-enabled 应为 false），请检查配置"
+    else
+        echo "✅ 3098 已停用（SSE 已关）"
     fi
     echo "[5/5] 部署完成 → https://cloudim.club/exphub"
     DEPLOY_STEP="5/5 完成"
