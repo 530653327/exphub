@@ -1,32 +1,66 @@
 /* ============================================================================
- * 经验阁 ExpHub 管理后台（PC）公共外壳样式
+ * 经验阁 ExpHub 管理后台（PC）公共外壳 + 通用组件样式
  *
- * 由来（2026-11-17）：17 个 PC 模板各自在 <head> 里贴了一份几乎一模一样的
- * <style>，「深色侧边栏 + 主内容区偏移」这套外壳就占十几行，改一次配色要动
- * 十几个文件。
- *
- * 收录口径（刻意保守，只搬运不改观感）：只收「凡是页面上有该元素，各页就都
- * 这么写」的规则，共 7 条。判定方法：逐页比对「页面用了该 class」与
- * 「页面写了该规则」两个集合，只要存在「有元素却没写规则」的页面
- * （外提等于凭空给它加样式）就不收。
- *
- * 所以这些故意没收，仍留在各页内联：.topbar / .card-header / .sidebar a /
- * .btn-primary(含 :hover) / .badge-* / .stat-card —— 各页写法不一致。
- * 某页若写的是另一种变体（如 .card 带 overflow:hidden），内联在 <link> 之后，
- * 同名规则会覆盖本文件，表现与改造前完全一致。
+ * 第一批（2026-11-17）：把 17 个模板各自贴在 <head> 里的那坨 <style> 搬到这里。
+ * 原则是「按属性粒度搬家」——只有页面写的值与这里完全相同才从页面删掉，
+ * 值不同的（各页在漂的变体）原样留在页面内，内联在 <link> 之后自然覆盖，
+ * 所以改造前后渲染结果一致。
  *
  * 使用约定：
- *   1. 页面在 bootstrap / fontawesome 之后引一次：<link th:href="@{/css/admin.css}">
- *   2. 新页面只写自己独有的样式，外壳这些不要再抄一遍；
- *   3. 改全站观感（底色 / 主色 #e94560 / 侧边栏渐变）只改这里。
+ *   1. 页面 head 统一写 <th:block th:replace="~{fragments/head :: head('标题')}"/>，
+ *      它会把 bootstrap / fontawesome / 本文件 / csrf.js 一起带进来；
+ *   2. 新页面只写自己独有的样式，外壳和通用组件不要再抄一遍；
+ *   3. 改全站观感（主色 / 底色 / 侧边栏渐变 / 圆角 / 阴影）只改下面的变量。
  *
  * 不引本文件的页面：login.html（深色登录页）、share.html（对外分享页）、
  * docs/diff.html（全屏对比页，自带 .wrap/.topbar/.card）。
  * ========================================================================== */
 
+/* ---------- 设计变量：全站唯一定义处 ---------- */
+
+:root {
+    /* 主色 */
+    --brand: #e94560;
+    --brand-dark: #d63850;
+    --brand-weak: rgba(233, 69, 96, 0.2);
+    --brand-focus-ring: rgba(233, 69, 96, 0.15);
+
+    /* 中性色 */
+    --bg: #f5f6fa;
+    --surface: #fff;
+    --text: #333;
+    --text-mute: #6c757d;
+    --text-faint: #999;
+    --line: #f0f0f0;
+
+    /* 侧边栏 */
+    --sidebar-w: 220px;
+    --sidebar-from: #1a1a2e;
+    --sidebar-to: #16213e;
+    --sidebar-text: rgba(255, 255, 255, 0.7);
+
+    /* 几何 */
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-topbar: 10px;
+    --radius-pill: 20px;
+    --gap: 25px;
+    --shadow-card: 0 2px 15px rgba(0, 0, 0, 0.05);
+
+    /* 状态语义色（第一批只登记，第二批按三种语义重排时用） */
+    --ok-bg: #d4edda;
+    --ok-fg: #155724;
+    --warn-bg: #fff3cd;
+    --warn-fg: #856404;
+    --bad-bg: #f8d7da;
+    --bad-fg: #721c24;
+    --info-bg: #cce5ff;
+    --info-fg: #004085;
+}
+
 /* ---------- 页面底色 ---------- */
 
-body { background-color: #f5f6fa; }
+body { background-color: var(--bg); }
 
 /* ---------- 左侧固定导航（配合 fragments/sidebar.html） ---------- */
 
@@ -35,8 +69,8 @@ body { background-color: #f5f6fa; }
     top: 0;
     left: 0;
     bottom: 0;
-    width: 220px;
-    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    width: var(--sidebar-w);
+    background: linear-gradient(180deg, var(--sidebar-from) 0%, var(--sidebar-to) 100%);
     color: #fff;
     padding: 20px 0;
     z-index: 100;
@@ -46,27 +80,146 @@ body { background-color: #f5f6fa; }
     font-size: 1.4rem;
     font-weight: bold;
     padding: 0 20px 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     margin-bottom: 20px;
 }
 
-.sidebar .brand span { color: #e94560; }
+.sidebar .brand span { color: var(--brand); }
+
+.sidebar a {
+    display: block;
+    padding: 12px 20px;
+    color: var(--sidebar-text);
+    text-decoration: none;
+    transition: all 0.3s;
+}
+
+.sidebar a i { width: 20px; }
 
 .sidebar a:hover,
 .sidebar a.active {
-    background: rgba(233,69,96,0.2);
+    background: var(--brand-weak);
     color: #fff;
-    border-left: 3px solid #e94560;
+    border-left: 3px solid var(--brand);
 }
 
 /* ---------- 主体布局 ---------- */
 
-.main-content { margin-left: 220px; padding: 25px; }
+.main-content { margin-left: var(--sidebar-w); padding: var(--gap); }
 
-/* ---------- 卡片 ---------- */
+/* ---------- 顶栏 / 卡片 ---------- */
+
+.topbar {
+    background: var(--surface);
+    padding: 15px 25px;
+    border-radius: var(--radius-topbar);
+    margin-bottom: var(--gap);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 
 .card {
     border: none;
-    border-radius: 12px;
-    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
 }
+
+.card-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 18px 25px;
+}
+
+/* ---------- 按钮 ---------- */
+
+.btn-primary {
+    background: var(--brand);
+    border-color: var(--brand);
+}
+
+.btn-primary:hover {
+    background: var(--brand-dark);
+    border-color: var(--brand-dark);
+}
+
+.btn-primary:disabled {
+    background: #999;
+    border-color: #999;
+}
+
+/* ---------- 表单 ---------- */
+
+.form-control { border-radius: var(--radius-sm); }
+
+.form-control:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 0.2rem var(--brand-focus-ring);
+}
+
+.alert { border-radius: 10px; margin-top: 15px; }
+
+/* ---------- 表格 ---------- */
+
+.table {
+    background: var(--surface);
+    border-radius: var(--radius);
+}
+
+.table thead th {
+    border: none;
+    background: #f8f9fa;
+    color: #666;
+    font-weight: 600;
+}
+
+/* ---------- 状态徽标（语义色） ---------- */
+
+.badge-status {
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+}
+
+.badge-active {
+    background: var(--ok-bg);
+    color: var(--ok-fg);
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+}
+
+.badge-broken {
+    background: var(--bad-bg);
+    color: var(--bad-fg);
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+}
+
+.badge-deprecated {
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+}
+
+.badge-completed {
+    background: var(--info-bg);
+    color: var(--info-fg);
+    padding: 5px 10px;
+    border-radius: var(--radius-pill);
+}
+
+/* ---------- 指标卡骨架（各页 padding / 图标排布不同，留给页面） ---------- */
+
+.stat-card {
+    border-radius: var(--radius);
+    color: #fff;
+}
+
+.stat-card .number { font-weight: bold; }
+
+/* ---------- 渐变底（配色统一入口） ---------- */
+
+.bg-gradient-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.bg-gradient-success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+.bg-gradient-warning { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+.bg-gradient-danger  { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }

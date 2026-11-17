@@ -1,29 +1,12 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
-    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
-    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>调用日志 - 经验阁 ExpHub</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
-    <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
-    <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
-    <link rel="stylesheet" th:href="@{/css/admin.css}">
+    <th:block th:replace="~{fragments/head :: head('调用日志 - 经验阁 ExpHub')}"/>
     <style>
-        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
-        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
-        .table thead th { border: none; background: #f8f9fa; color: #666; font-weight: 600; }
-        .badge-success { background: #d4edda; color: #155724; }
-        .badge-fail { background: #f8d7da; color: #721c24; }
-        .btn-primary { background: #e94560; border-color: #e94560; }
-        .btn-primary:hover { background: #d63850; border-color: #d63850; }
+    .card { overflow: hidden; }
+    .badge-success { background: #d4edda; color: #155724; }
+    .badge-fail { background: #f8d7da; color: #721c24; }
     </style>
-    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('logs')}"></div>

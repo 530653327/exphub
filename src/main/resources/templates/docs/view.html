@@ -1,43 +1,24 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
-    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
-    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>经验详情 - 经验阁 ExpHub</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
-    <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
-    <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
-    <link rel="stylesheet" th:href="@{/css/admin.css}">
-    <link rel="stylesheet" th:href="@{/lib/github-markdown-css/github-markdown.min.css}">
+<link rel="stylesheet" th:href="@{/lib/github-markdown-css/github-markdown.min.css}">
+        <th:block th:replace="~{fragments/head :: head('经验详情 - 经验阁 ExpHub')}"/>
     <style>
-        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
-        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
-        .markdown-body { padding: 30px; font-size: 0.95rem; }
-        .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
-        .badge-broken { background: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 20px; }
-        .badge-deprecated { background: #fff3cd; color: #856404; padding: 5px 10px; border-radius: 20px; }
-        .btn-primary { background: #e94560; border-color: #e94560; }
-        .btn-primary:hover { background: #d63850; border-color: #d63850; }
-        .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-        .badge-version-current { background: #e94560; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; }
-        .tag-color { display: inline-block; padding: 4px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; margin-right: 4px; margin-bottom: 4px; }
-        .tag-color:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
-        .tag-color:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
-        .tag-color:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
-        .tag-color:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
-        .tag-color:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
-        .tag-color:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
-        .stat-box { display: inline-block; background: #f8f9fa; padding: 8px 15px; border-radius: 8px; text-align: center; margin-right: 15px; }
-        .stat-box .number { font-size: 1.3rem; font-weight: bold; color: #333; }
-        .stat-box .label { font-size: 0.75rem; color: #999; }
+    .card { overflow: hidden; }
+    .markdown-body { padding: 30px; font-size: 0.95rem; }
+    .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+    .badge-version-current { background: #e94560; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; }
+    .tag-color { display: inline-block; padding: 4px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; margin-right: 4px; margin-bottom: 4px; }
+    .tag-color:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
+    .tag-color:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
+    .tag-color:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
+    .tag-color:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
+    .tag-color:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
+    .tag-color:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
+    .stat-box { display: inline-block; background: #f8f9fa; padding: 8px 15px; border-radius: 8px; text-align: center; margin-right: 15px; }
+    .stat-box .number { font-size: 1.3rem; font-weight: bold; color: #333; }
+    .stat-box .label { font-size: 0.75rem; color: #999; }
     </style>
-    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('docs')}"></div>

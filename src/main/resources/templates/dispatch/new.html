@@ -1,21 +1,12 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
-    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>新建派单 - 经验阁 ExpHub</title>
-    <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
-    <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
-    <link rel="stylesheet" th:href="@{/css/admin.css}">
+    <th:block th:replace="~{fragments/head :: head('新建派单 - 经验阁 ExpHub')}"/>
     <style>
-        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 15px 22px; }
-        .btn-primary { background: #e94560; border-color: #e94560; }
-        .auth-box { border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; }
-        .auth-box label { margin-right: 18px; margin-bottom: 6px; font-size: 0.9rem; }
+    .card { margin-bottom: 20px; }
+    .card-header { padding: 15px 22px; }
+    .auth-box { border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; }
+    .auth-box label { margin-right: 18px; margin-bottom: 6px; font-size: 0.9rem; }
     </style>
 </head>
 <body>

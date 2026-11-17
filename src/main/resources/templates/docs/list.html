@@ -1,48 +1,29 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
-    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
-    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>经验管理 - 经验阁 ExpHub</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
-    <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
-    <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
-    <link rel="stylesheet" th:href="@{/css/admin.css}">
+    <th:block th:replace="~{fragments/head :: head('经验管理 - 经验阁 ExpHub')}"/>
     <style>
-        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
-        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); overflow: hidden; }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
-        .badge-status { padding: 5px 10px; border-radius: 20px; }
-        .badge-active { background: #d4edda; color: #155724; }
-        .badge-completed { background: #cce5ff; color: #004085; }
-        .badge-broken { background: #f8d7da; color: #721c24; }
-        .badge-deprecated { background: #fff3cd; color: #856404; }
-        .badge-primary { background: #e94560; border-color: #e94560; }
-        .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
-        .search-box { border-radius: 30px; padding: 10px 20px; border: 1px solid #e0e0e0; width: 300px; }
-        .nav-tab { display: inline-block; padding: 12px 16px; color: #666; text-decoration: none; font-size: 0.9rem; border-bottom: 2px solid transparent; }
-        .nav-tab:hover { color: #333; text-decoration: none; }
-        .nav-tab.active { color: #e94560; font-weight: 600; border-bottom-color: #e94560; }
-        .doc-item { padding: 20px 25px; border-bottom: 1px solid #f5f5f5; transition: all 0.2s; }
-        .doc-item:hover { background: #fafafa; }
-        .doc-item:last-child { border-bottom: none; }
-        .doc-title { font-size: 1.05rem; font-weight: 600; color: #333; }
-        .doc-title:hover { color: #e94560; }
-        .doc-meta { font-size: 0.85rem; color: #999; margin-top: 5px; }
-        .doc-tags .tag { display: inline-block; padding: 2px 10px; border-radius: 15px; font-size: 0.8rem; margin-right: 5px; margin-top: 5px; font-weight: 500; }
-        .doc-tags .tag:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
-        .doc-tags .tag:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
-        .doc-tags .tag:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
-        .doc-tags .tag:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
-        .doc-tags .tag:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
-        .doc-tags .tag:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
+    .card { overflow: hidden; }
+    .badge-primary { background: #e94560; border-color: #e94560; }
+    .badge-version { background: #e8eaf6; color: #3949ab; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+    .search-box { border-radius: 30px; padding: 10px 20px; border: 1px solid #e0e0e0; width: 300px; }
+    .nav-tab { display: inline-block; padding: 12px 16px; color: #666; text-decoration: none; font-size: 0.9rem; border-bottom: 2px solid transparent; }
+    .nav-tab:hover { color: #333; text-decoration: none; }
+    .nav-tab.active { color: #e94560; font-weight: 600; border-bottom-color: #e94560; }
+    .doc-item { padding: 20px 25px; border-bottom: 1px solid #f5f5f5; transition: all 0.2s; }
+    .doc-item:hover { background: #fafafa; }
+    .doc-item:last-child { border-bottom: none; }
+    .doc-title { font-size: 1.05rem; font-weight: 600; color: #333; }
+    .doc-title:hover { color: #e94560; }
+    .doc-meta { font-size: 0.85rem; color: #999; margin-top: 5px; }
+    .doc-tags .tag { display: inline-block; padding: 2px 10px; border-radius: 15px; font-size: 0.8rem; margin-right: 5px; margin-top: 5px; font-weight: 500; }
+    .doc-tags .tag:nth-child(6n+1) { background: #fce4ec; color: #c62828; }
+    .doc-tags .tag:nth-child(6n+2) { background: #e8eaf6; color: #283593; }
+    .doc-tags .tag:nth-child(6n+3) { background: #e0f2f1; color: #00695c; }
+    .doc-tags .tag:nth-child(6n+4) { background: #fff3e0; color: #e65100; }
+    .doc-tags .tag:nth-child(6n+5) { background: #f3e5f5; color: #6a1b9a; }
+    .doc-tags .tag:nth-child(6n+6) { background: #e1f5fe; color: #01579b; }
     </style>
-    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('docs')}"></div>

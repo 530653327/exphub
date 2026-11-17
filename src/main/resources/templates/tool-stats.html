@@ -1,46 +1,28 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
-    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
-    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工具统计 - 经验阁 ExpHub</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
-    <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
-    <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
-    <link rel="stylesheet" th:href="@{/css/admin.css}">
+    <th:block th:replace="~{fragments/head :: head('工具统计 - 经验阁 ExpHub')}"/>
     <style>
-        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
-        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
-        .stat-card { border-radius: 12px; padding: 18px; color: #fff; display: flex; align-items: center; }
-        .stat-card .icon { font-size: 2rem; margin-right: 12px; opacity: 0.85; }
-        .stat-card .number { font-size: 1.6rem; font-weight: bold; line-height: 1.2; }
-        .stat-card .label { font-size: 0.8rem; opacity: 0.9; }
-        .bg-gradient-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        .bg-gradient-success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
-        .bg-gradient-danger { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
-        .bg-gradient-warning { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
-        .bg-gradient-dark { background: linear-gradient(135deg, #434343 0%, #000000 100%); }
-        .bg-gradient-info { background: linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%); }
-        .tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86rem; font-weight: 600; }
-        .bar-bg { background: #eef0f4; border-radius: 4px; height: 16px; position: relative; overflow: hidden; min-width: 90px; }
-        .bar-fill { background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; border-radius: 4px; }
-        .bar-text { position: absolute; right: 6px; top: -1px; font-size: 0.72rem; color: #4a4a4a; }
-        .badge-active { background: #d4edda; color: #155724; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
-        .badge-low { background: #fff3cd; color: #856404; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
-        .badge-zero { background: #f8d7da; color: #721c24; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
-        .zero-item { background: #fff; border: 1px solid #f5c6cb; border-left: 4px solid #dc3545; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
-        .zero-item .desc { color: #6c757d; font-size: 0.78rem; }
-        .day-btn { padding: 4px 14px; border: 1px solid #dee2e6; background: #fff; border-radius: 16px; font-size: 0.82rem; color: #495057; text-decoration: none; }
-        .day-btn:hover { background: #f1f3f5; text-decoration: none; color: #495057; }
-        .day-btn.on { background: #e94560; border-color: #e94560; color: #fff; }
-        .hint-box { background: #fff8e6; border: 1px solid #ffe58f; border-radius: 8px; padding: 12px 16px; font-size: 0.82rem; line-height: 1.7; color: #5c4b00; }
+    .stat-card { padding: 18px; display: flex; align-items: center; }
+    .stat-card .icon { font-size: 2rem; margin-right: 12px; opacity: 0.85; }
+    .stat-card .number { font-size: 1.6rem; line-height: 1.2; }
+    .stat-card .label { font-size: 0.8rem; opacity: 0.9; }
+    .bg-gradient-dark { background: linear-gradient(135deg, #434343 0%, #000000 100%); }
+    .bg-gradient-info { background: linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%); }
+    .tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86rem; font-weight: 600; }
+    .bar-bg { background: #eef0f4; border-radius: 4px; height: 16px; position: relative; overflow: hidden; min-width: 90px; }
+    .bar-fill { background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; border-radius: 4px; }
+    .bar-text { position: absolute; right: 6px; top: -1px; font-size: 0.72rem; color: #4a4a4a; }
+    .badge-active { padding: 3px 10px; font-size: 0.75rem; }
+    .badge-low { background: #fff3cd; color: #856404; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
+    .badge-zero { background: #f8d7da; color: #721c24; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; }
+    .zero-item { background: #fff; border: 1px solid #f5c6cb; border-left: 4px solid #dc3545; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+    .zero-item .desc { color: #6c757d; font-size: 0.78rem; }
+    .day-btn { padding: 4px 14px; border: 1px solid #dee2e6; background: #fff; border-radius: 16px; font-size: 0.82rem; color: #495057; text-decoration: none; }
+    .day-btn:hover { background: #f1f3f5; text-decoration: none; color: #495057; }
+    .day-btn.on { background: #e94560; border-color: #e94560; color: #fff; }
+    .hint-box { background: #fff8e6; border: 1px solid #ffe58f; border-radius: 8px; padding: 12px 16px; font-size: 0.82rem; line-height: 1.7; color: #5c4b00; }
     </style>
-    <script th:src="@{/js/csrf.js}"></script>
 </head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('tool-stats')}"></div>

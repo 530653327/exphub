@@ -1,25 +1,7 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <!-- CSRF token：供 static/js/csrf.js 全局注入 fetch / ajax 请求头 -->
-    <meta name="_csrf" th:content="${_csrf != null ? _csrf.token : ''}">
-    <meta name="_csrf_header" th:content="${_csrf != null ? _csrf.headerName : ''}">
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>项目管理 - 经验阁 ExpHub</title>
-    <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
-    <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
-    <link rel="stylesheet" th:href="@{/css/admin.css}">
-    <style>
-        .sidebar a { display: block; padding: 12px 20px; color: rgba(255,255,255,0.7); text-decoration: none; transition: all 0.3s; }
-        .topbar { background: #fff; padding: 15px 25px; border-radius: 10px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; }
-        .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; padding: 18px 25px; }
-        .btn-primary { background: #e94560; border-color: #e94560; }
-        .btn-primary:hover { background: #d63850; border-color: #d63850; }
-        .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 20px; }
-    </style>
-    <script th:src="@{/js/csrf.js}"></script>
+    <th:block th:replace="~{fragments/head :: head('项目管理 - 经验阁 ExpHub')}"/>
 </head>
 <body>
     <div th:replace="~{fragments/sidebar :: nav('projects')}"></div>
