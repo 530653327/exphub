@@ -41,9 +41,12 @@ public class DispatchHeader {
      * 归属 API Key —— 数据隔离的唯一依据。
      *
      * <p>同一 Key 下的助手共享派单，不同 Key 互相看不见（与 docs / projects 惯例一致）。
-     * 空串 = 后台人工建的单，MCP 侧看不到（人下的单由人在后台管）。
      *
-     * <p>2026-11-16 补：第一版漏了这个字段，等于任何持有有效 Key 的调用方都能看到全库派单。
+     * <p><b>2026-11-19 起人工单不再留空</b>：后台建单没有 Key 身份（后台登录是 users 表），
+     * 所以 {@code DispatchService.create} 在 origin=HUMAN 且未显式传 Key 时，
+     * 自动归属「派单共享 Key」（最近一张 AI 单用的那把）。留空的单 MCP 侧看不见，
+     * 哨兵永远不会接 —— W-20261119-000001 就是这么挂在「待接单」的。
+     * 只有库里一张 AI 单都没有、取不到共享 Key 时才会是空串，此时建单回执会明确警告。
      */
     private String apiKey;
 

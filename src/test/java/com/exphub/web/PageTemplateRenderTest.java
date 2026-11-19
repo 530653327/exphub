@@ -168,8 +168,32 @@ class PageTemplateRenderTest {
         // 每页条数：翻页条（fragments/dispatch-pager）读这两个，不给就是「没有分页」的样子
         ctx.setVariable("size", 20);
         ctx.setVariable("pageSizes", DispatchService.PAGE_SIZE_CHOICES);
+        // 建单页（dispatch/new）会读这三个；list 模板不用，多给无害
+        ctx.setVariable("roles", DispatchService.ASSIGNABLE_ROLES);
+        ctx.setVariable("suggestedVersion", "1.0.1");
+        ctx.setVariable("ownerKeyTail", "…9999");
         ctx.setVariable("_csrf", null);
         return ctx;
+    }
+
+    @Test
+    @DisplayName("PC 建单页要渲染出「归属 Key」提示，且语法错不会变成线上 500")
+    void dispatchNewShowsOwnerKey() {
+        SpringTemplateEngine engine = engine();
+        String html;
+        try {
+            html = engine.process("dispatch/new", dispatchContext(null, ""));
+        } catch (RuntimeException e) {
+            throw new AssertionError("dispatch/new 渲染失败，线上会是一个 500 页。原始异常：" + e.getMessage(), e);
+        }
+        assertTrue(html.contains("…9999"),
+                "建单页没显示归属 Key —— 人工单写没写进 Key，建单的人只能靠猜");
+        assertTrue(html.contains("/exphub/dispatch/create") || html.contains("/dispatch/create"),
+                "建单页没有提交地址");
+        for (String f : List.of("modifyCode", "commit", "push", "release", "dataWrite", "migration",
+                "credential", "prodConfig", "securityGroup", "firewall", "spend")) {
+            assertTrue(html.contains("name=\"" + f + "\""), "建单页缺授权位：" + f);
+        }
     }
 
     @Test

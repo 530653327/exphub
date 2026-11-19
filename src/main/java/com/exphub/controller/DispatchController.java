@@ -108,6 +108,9 @@ public class DispatchController extends BaseController {
         model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
         // 建单页还没选项目，用全局最近一张带版本的单推算，当 placeholder 提示
         model.addAttribute("suggestedVersion", dispatchService.suggestVersion(null));
+        // 归属 Key：人工单会自动挂到派单共享 Key 上，让建单的人先看见「哨兵靠哪把 Key 找到这张单」
+        String ownerKey = dispatchService.sharedDispatchKey();
+        model.addAttribute("ownerKeyTail", ownerKey.isEmpty() ? "" : DispatchService.maskKey(ownerKey));
         model.addAttribute("active", "dispatch");
         return "dispatch/new";
     }

@@ -137,7 +137,22 @@ public class DispatchService {
         }
 
         DispatchHeader h = new DispatchHeader();
-        h.setApiKey(apiKey == null ? "" : apiKey.trim());
+
+        // 归属 Key（2026-11-19 修）：后台人工建单没有 Key 身份（后台登录是 users 表，没有 api_key 列），
+        // 但 MCP 查单按 Key 隔离（buildFilter / getForApi），空 Key 的单哨兵永远看不见 ——
+        // W-20261119-000001 就是这么挂在 READY 没人接的。
+        // 所以人工单若没显式给 Key，就归属到「派单共享 Key」（最近一张 AI 单用的那把，
+        // 全系统 13 个助手共用同一把）。取不到时保持空串并在回执里明说，不许静默。
+        String owner = apiKey == null ? "" : apiKey.trim();
+        boolean ownerAutoFilled = false;
+        if (human && owner.isEmpty()) {
+            String shared = sharedDispatchKey();
+            if (!shared.isEmpty()) {
+                owner = shared;
+                ownerAutoFilled = true;
+            }
+        }
+        h.setApiKey(owner);
         h.setOrderNo(nextOrderNo());
         h.setOrigin(human ? DispatchHeader.ORIGIN_HUMAN : DispatchHeader.ORIGIN_AI);
         h.setCreator(creator.trim());
@@ -171,9 +186,51 @@ public class DispatchService {
         h.setAuthSpend(flag(a, "spend"));
 
         headerMapper.insert(h);
-        log.info("DispatchService.create: order={}, origin={}, creator={}, assignee={}",
-                h.getOrderNo(), h.getOrigin(), h.getCreator(), h.getAssignee());
-        return Outcome.success("已建单 " + h.getOrderNo() + "（状态：待审核）", h, null);
+        log.info("DispatchService.create: order={}, origin={}, creator={}, assignee={}, ownerKey={}",
+                h.getOrderNo(), h.getOrigin(), h.getCreator(), h.getAssignee(), maskKey(h.getApiKey()));
+        return Outcome.success("已建单 " + h.getOrderNo() + "（状态：待审核）" + ownerNote(human, h.getApiKey(), ownerAutoFilled), h, null);
+    }
+
+    /**
+     * 建单回执里说明「归属哪把 Key」，否则「写进去了没有」只能查库才知道。
+     *
+     * <p>人工单要特别解释：后台没有 Key 身份，归属的是派单共享 Key。
+     * 取不到共享 Key 时必须明说「哨兵看不见」，不能让人以为建单成功就等于能派出去。
+     */
+    private static String ownerNote(boolean human, String owner, boolean autoFilled) {
+        if (!human) return "";
+        if (owner == null || owner.isBlank()) {
+            return "。⚠️ 库里还没有任何 AI 单，找不到派单共享 Key —— 本单 api_key 仍为空，"
+                 + "哨兵在 MCP 侧看不见；请先用 dispatch_create 建一张 AI 单，再重建本单";
+        }
+        return "。归属 Key " + maskKey(owner)
+             + (autoFilled ? "（后台没有 Key 身份，人工单自动归属派单共享 Key，哨兵才看得见）" : "（你显式传入，按传入的写）");
+    }
+
+    /**
+     * 派单共享 Key：取**最近一张 AI 单**的 api_key。
+     *
+     * <p>为什么不用配置：全系统 13 个助手共用同一把 Key，它已经写在历史单里；
+     * 再引一份配置就要改服务器 env，且可能与调用方实际用的那把不一致（那才是更难查的错）。
+     * 库里还没有 AI 单时返回空串，由调用方把「没法归属」如实报出来。
+     */
+    public String sharedDispatchKey() {
+        DispatchHeader last = headerMapper.selectOne(new QueryWrapper<DispatchHeader>()
+                .select("api_key")
+                .eq("origin", DispatchHeader.ORIGIN_AI)
+                .ne("api_key", "")
+                .orderByDesc("id")
+                .last("LIMIT 1"));
+        return last == null || last.getApiKey() == null ? "" : last.getApiKey().trim();
+    }
+
+    /**
+     * Key 只露尾 4 位：回执要能核对「是不是这把」，但不能把完整 Key 打进日志、页面或经验。
+     */
+    public static String maskKey(String key) {
+        if (key == null || key.isBlank()) return "（空）";
+        String k = key.trim();
+        return k.length() <= 4 ? "…" + k : "…" + k.substring(k.length() - 4);
     }
 
     private static Boolean flag(java.util.Map<String, Boolean> m, String key) {

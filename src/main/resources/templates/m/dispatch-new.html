@@ -19,6 +19,15 @@
         建完是「待审核」，还要你再点一次通过才会派出去。
     </div>
 
+    <div th:if="${not #strings.isEmpty(ownerKeyTail)}"
+         class="text-xs opacity-60 px-1 mb-3 leading-relaxed">
+        本单会自动归属派单共享 API Key <b th:text="${ownerKeyTail}"></b> —— 哨兵用同一把 Key 才能查到这张单。
+    </div>
+    <div th:if="${#strings.isEmpty(ownerKeyTail)}"
+         role="alert" class="alert alert-warning mb-3 items-start text-xs leading-relaxed">
+        库里还没有任何 AI 单，找不到派单共享 Key。这样建的单哨兵在 MCP 侧看不见，请先用 dispatch_create 建一张 AI 单。
+    </div>
+
     <form th:action="@{/m/dispatch/create}" method="post">
 
         <div class="text-xs font-medium opacity-55 px-1 mb-1.5">标题</div>

@@ -158,6 +158,8 @@ public class MobileController {
         model.addAttribute("activeTab", "dispatch");
         model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
         model.addAttribute("suggestedVersion", dispatchService.suggestVersion(null));
+        String ownerKey = dispatchService.sharedDispatchKey();
+        model.addAttribute("ownerKeyTail", ownerKey.isEmpty() ? "" : DispatchService.maskKey(ownerKey));
         return "m/dispatch-new";
     }
 
