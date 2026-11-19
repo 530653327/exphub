@@ -40,6 +40,21 @@
                     </div>
 
                     <div class="form-row">
+                        <div class="form-group col-md-6">
+                            <label>项目
+                                <span class="text-muted" style="font-size:0.8rem">（勾了发版就必选 —— 版本号按项目的当前版本取号）</span>
+                            </label>
+                            <select name="projectId" id="projectSelect" class="form-control"
+                                    th:attr="data-suggest-url=@{/dispatch/suggest-version}"
+                                    onchange="refreshVersionHint()">
+                                <option value="">— 不属于任何项目 —</option>
+                                <option th:each="p : ${projects}" th:value="${p.id}" th:text="${p.name}"
+                                        th:attr="data-current=${p.currentVersion}"></option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
                         <div class="form-group col-md-4">
                             <label>指派给 <span class="text-danger">*</span></label>
                             <select name="assignee" class="form-control" required>
@@ -85,10 +100,10 @@
                     </div>
                     <div id="versionBox" class="mt-3" style="display:none">
                         <label class="mb-1" style="font-size:0.9rem">发版版本号</label>
-                        <input type="text" name="version" class="form-control" style="max-width:220px"
-                               th:attr="placeholder='不填默认 ' + ${suggestedVersion}">
-                        <div class="text-muted mt-1" style="font-size:0.8rem">
-                            不填就按同项目上一张带版本的单 +1，当前推算为 <b th:text="${suggestedVersion}"></b>。
+                        <input type="text" name="version" id="versionInput" class="form-control" style="max-width:220px"
+                               placeholder="不填则按项目当前版本末尾 +1">
+                        <div id="versionHint" class="text-muted mt-1" style="font-size:0.8rem">
+                            选好项目后这里显示推算依据；算不出来会明确拒绝建单，不会静默给 1.0.0。
                         </div>
                     </div>
                     <div class="text-muted mt-2" style="font-size:0.82rem">
@@ -108,7 +123,37 @@
 function toggleVersion() {
     var on = document.getElementById('authRelease').checked;
     document.getElementById('versionBox').style.display = on ? 'block' : 'none';
+    if (on) refreshVersionHint();
 }
+function refreshVersionHint() {
+    var sel = document.getElementById('projectSelect');
+    var hint = document.getElementById('versionHint');
+    var input = document.getElementById('versionInput');
+    if (!sel || !hint) return;
+    var pid = sel.value;
+    if (!pid) {
+        hint.className = 'text-danger mt-1';
+        hint.textContent = '没选项目 → 无法确定取号基准。请选项目，或手填版本号。';
+        if (input) input.placeholder = '必须手填（没有项目基准）';
+        return;
+    }
+    var url = sel.getAttribute('data-suggest-url') + '?projectId=' + encodeURIComponent(pid);
+    fetch(url, {headers: {'Accept': 'application/json'}})
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            hint.className = (d.ok ? 'text-muted' : 'text-danger') + ' mt-1';
+            hint.textContent = d.oneLine || '';
+            if (input) input.placeholder = d.ok ? ('不填默认 ' + d.value) : '无法自动取号，请手填';
+        })
+        .catch(function () {
+            hint.className = 'text-danger mt-1';
+            hint.textContent = '推算接口调用失败 —— 不填版本号会被服务端拒绝，请手填。';
+        });
+}
+document.addEventListener('DOMContentLoaded', function () {
+    var sel = document.getElementById('projectSelect');
+    if (sel) sel.addEventListener('change', refreshVersionHint);
+});
 </script>
 </body>
 </html>

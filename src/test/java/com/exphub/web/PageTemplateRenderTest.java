@@ -170,6 +170,7 @@ class PageTemplateRenderTest {
         ctx.setVariable("pageSizes", DispatchService.PAGE_SIZE_CHOICES);
         // 建单页（dispatch/new）会读这三个；list 模板不用，多给无害
         ctx.setVariable("roles", DispatchService.ASSIGNABLE_ROLES);
+        ctx.setVariable("projects", List.of());
         ctx.setVariable("suggestedVersion", "1.0.1");
         ctx.setVariable("ownerKeyTail", "…9999");
         ctx.setVariable("_csrf", null);

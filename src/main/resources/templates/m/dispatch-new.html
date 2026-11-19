@@ -56,6 +56,14 @@
             </div>
         </div>
 
+        <div class="text-xs font-medium opacity-55 px-1 mt-4 mb-1.5">项目（勾发版必选，版本号按它的当前版本取号）</div>
+        <select class="select w-full bg-base-200 border-base-300" name="projectId" id="projectSelect"
+                th:attr="data-suggest-url=@{/dispatch/suggest-version}" onchange="refreshVersionHint()">
+            <option value="">— 不属于任何项目 —</option>
+            <option th:each="p : ${projects}" th:value="${p.id}" th:text="${p.name}"
+                    th:attr="data-current=${p.currentVersion}"></option>
+        </select>
+
         <div class="text-xs font-medium opacity-55 px-1 mt-4 mb-1.5">备注</div>
         <input class="input w-full bg-base-200 border-base-300" type="text" name="remark"
                placeholder="只给你自己看，不进业务判断">
@@ -95,10 +103,10 @@
                 </div>
 
                 <div id="versionBox" style="display:none" class="mt-2.5 pt-2.5 border-t border-base-300">
-                    <input class="input w-full bg-base-100 border-base-300" type="text" name="version"
-                           th:attr="placeholder='版本号，不填默认 ' + ${suggestedVersion}">
-                    <div class="text-[11px] opacity-45 mt-1.5 leading-relaxed">
-                        不填就按同项目上一张带版本的单 +1，当前推算 <b th:text="${suggestedVersion}"></b>。
+                    <input class="input w-full bg-base-100 border-base-300" type="text" name="version" id="versionInput"
+                           placeholder="不填则按项目当前版本末尾 +1">
+                    <div id="versionHint" class="text-[11px] opacity-45 mt-1.5 leading-relaxed">
+                        选好项目后这里显示推算依据；算不出来会明确拒绝建单，不会静默给 1.0.0。
                     </div>
                 </div>
             </div>
@@ -119,6 +127,32 @@
         var el = document.getElementById('authRelease');
         var box = document.getElementById('versionBox');
         if (el && box) box.style.display = el.checked ? 'block' : 'none';
+        if (el && el.checked) refreshVersionHint();
+    }
+    function refreshVersionHint() {
+        var sel = document.getElementById('projectSelect');
+        var hint = document.getElementById('versionHint');
+        var input = document.getElementById('versionInput');
+        if (!sel || !hint) return;
+        var pid = sel.value;
+        if (!pid) {
+            hint.className = 'text-error text-[11px] mt-1.5 leading-relaxed';
+            hint.textContent = '没选项目 → 无法确定取号基准。请选项目，或手填版本号。';
+            if (input) input.placeholder = '必须手填（没有项目基准）';
+            return;
+        }
+        var url = sel.getAttribute('data-suggest-url') + '?projectId=' + encodeURIComponent(pid);
+        fetch(url, {headers: {'Accept': 'application/json'}})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                hint.className = (d.ok ? 'opacity-45' : 'text-error') + ' text-[11px] mt-1.5 leading-relaxed';
+                hint.textContent = d.oneLine || '';
+                if (input) input.placeholder = d.ok ? ('不填默认 ' + d.value) : '无法自动取号，请手填';
+            })
+            .catch(function () {
+                hint.className = 'text-error text-[11px] mt-1.5 leading-relaxed';
+                hint.textContent = '推算接口调用失败 —— 不填版本号会被服务端拒绝，请手填。';
+            });
     }
 </script>
 </body>

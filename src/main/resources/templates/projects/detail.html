@@ -47,13 +47,27 @@
                     </div>
                     <div class="row">
                         <div class="col-md-6 form-group">
+                            <label>当前线上版本</label>
+                            <input type="text" name="currentVersion" class="form-control"
+                                   th:value="${project.currentVersion}" placeholder="如 3.4.98">
+                            <small class="text-muted">
+                                派单勾「发版」但没填版本号时，按这个值末尾 +1 自动取号。
+                                发版单验收通过时会自动回写（只升不降），也可以在这里手改。
+                            </small>
+                            <div class="text-muted mt-1" style="font-size:0.78rem"
+                                 th:if="${project.currentVersionUpdatedAt != null}">
+                                最后确认：<span th:text="${#temporals.format(project.currentVersionUpdatedAt,'yyyy-MM-dd HH:mm')}"></span>
+                                <span th:if="${project.currentVersionSource != null}" th:text="' · ' + ${project.currentVersionSource}"></span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 form-group">
                             <label>默认测试命令</label>
                             <input type="text" name="defaultTestCmd" class="form-control" th:value="${project.defaultTestCmd}">
                         </div>
-                        <div class="col-md-6 form-group">
-                            <label>默认约束</label>
-                            <textarea name="defaultConstraints" class="form-control" rows="2" th:text="${project.defaultConstraints}"></textarea>
-                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>默认约束</label>
+                        <textarea name="defaultConstraints" class="form-control" rows="2" th:text="${project.defaultConstraints}"></textarea>
                     </div>
                     <button type="submit" class="btn btn-primary btn-sm">保存基本信息</button>
                 </form>

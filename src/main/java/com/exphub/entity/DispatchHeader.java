@@ -81,9 +81,18 @@ public class DispatchHeader {
     /**
      * 发版版本号。只有 {@code authRelease=1} 时有意义。
      *
-     * <p>建单时没填就自动 +1（末尾数字加一，前面的原样保留）；基准是同项目最近一张带版本的单。
+     * <p>建单时没填就自动 +1（末尾数字加一，前面的原样保留）。
+     * 基准见 {@code DispatchService.suggestVersionInfo}：项目当前版本与项目历史发版单里数值最大的那个。
      */
     private String version;
+
+    /**
+     * 这一版号是怎么来的（「项目当前版本 3.4.98 → 3.4.99」「项目历史发版单 W-… = 1.0.2 → 1.0.3」）。
+     *
+     * <p>必须在建单时落库，不能在审核页面重新算 —— 项目当前版本会变，重算出来的依据
+     * 与当时建单的依据可能不是一回事，审核的人就没法判断这个号当初为什么这么给。
+     */
+    private String versionBasis;
     private Long projectId;
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;

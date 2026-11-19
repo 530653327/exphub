@@ -6186,7 +6186,8 @@ public class ExpHubTools {
             @ToolParam(description = "授权：改防火墙", required = false) Boolean allowFirewall,
             @ToolParam(description = "授权：花钱", required = false) Boolean allowSpend,
             @ToolParam(description = "可选。发版版本号。**只有勾了发版（allowRelease）才有意义**；"
-                    + "不填会自动 +1（末尾数字加一，基准是同项目最近一张带版本的单）。", required = false) String version) {
+                    + "不填会自动取号：按项目当前版本（或项目历史发版单里数值最大的一版）末尾数字 +1。"
+                    + "**没有项目又没填版本号会被明确拒绝**——系统不会静默给 1.0.0。", required = false) String version) {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) {
@@ -6220,6 +6221,9 @@ public class ExpHubTools {
             sb.append("**授权位**: ").append(grantedAuths(h));
             if (h.getVersion() != null && !h.getVersion().isBlank()) {
                 sb.append("\n**发版版本号**: ").append(h.getVersion());
+                if (h.getVersionBasis() != null && !h.getVersionBasis().isBlank()) {
+                    sb.append("（").append(h.getVersionBasis()).append("）");
+                }
             }
             sb.append("\n\n");
             sb.append("⚠️ 现在是「待审核」，越哥在后台通过后才会变「待接单」、哨兵才能接。")

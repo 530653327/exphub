@@ -59,6 +59,9 @@ public class MobileController {
     @Autowired
     private DispatchService dispatchService;
 
+    @Autowired
+    private com.exphub.service.ProjectService projectService;
+
     /**
      * 产品版本号，与 health / MCP serverInfo 同读 {@code exphub.version}。
      * 模板里不用 {@code @environment.getProperty(...)} —— 那个 Bean 表达式在纯 Thymeleaf
@@ -157,7 +160,8 @@ public class MobileController {
         model.addAttribute("title", "新建派单");
         model.addAttribute("activeTab", "dispatch");
         model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
-        model.addAttribute("suggestedVersion", dispatchService.suggestVersion(null));
+        model.addAttribute("projects", projectService.listProjects());
+        model.addAttribute("suggestedVersion", "");
         String ownerKey = dispatchService.sharedDispatchKey();
         model.addAttribute("ownerKeyTail", ownerKey.isEmpty() ? "" : DispatchService.maskKey(ownerKey));
         return "m/dispatch-new";
@@ -180,6 +184,7 @@ public class MobileController {
         model.addAttribute("labels", statusLabels());
         model.addAttribute("granted", grantedAuths(h));
         model.addAttribute("suggestedVersion", dispatchService.suggestVersion(h.getProjectId()));
+        model.addAttribute("versionHint", dispatchService.suggestVersionInfo(h.getProjectId()));
         model.addAttribute("ballOwner", dispatchService.ballOwnerLabel(h));
         return "m/dispatch-detail";
     }
@@ -234,6 +239,7 @@ public class MobileController {
                                  @RequestParam(required = false) Boolean securityGroup,
                                  @RequestParam(required = false) Boolean firewall,
                                  @RequestParam(required = false) Boolean spend,
+                                 @RequestParam(required = false) Long projectId,
                                  @RequestParam(required = false) String version,
                                  RedirectAttributes ra) {
         Map<String, Boolean> auths = authsMap(modifyCode, commit, push, release, dataWrite,
@@ -241,7 +247,7 @@ public class MobileController {
 
         DispatchService.Outcome out = dispatchService.create(
                 DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
-                assignee, title, description, priority, null, auths, null, version);
+                assignee, title, description, priority, projectId, auths, null, version);
         if (!out.ok() || out.header() == null) {
             ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
             return "redirect:/m/dispatch/new";

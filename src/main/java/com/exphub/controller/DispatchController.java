@@ -32,6 +32,9 @@ public class DispatchController extends BaseController {
     @Autowired
     private DispatchService dispatchService;
 
+    @Autowired
+    private com.exphub.service.ProjectService projectService;
+
     /** 每页多少张。上限是 {@link DispatchService#MAX_PAGE_SIZE}，这里只决定「一屏能读多少」。 */
     private static final int PAGE_SIZE = 20;
 
@@ -95,6 +98,7 @@ public class DispatchController extends BaseController {
         model.addAttribute("labels", statusLabels());
         model.addAttribute("granted", grantedAuths(h));
         model.addAttribute("suggestedVersion", dispatchService.suggestVersion(h.getProjectId()));
+        model.addAttribute("versionHint", dispatchService.suggestVersionInfo(h.getProjectId()));
         model.addAttribute("ballOwner", DispatchService.statusLabel(h.getStatus()));
         model.addAttribute("active", "dispatch");
         return "dispatch/detail";
@@ -106,13 +110,28 @@ public class DispatchController extends BaseController {
     @GetMapping("/new")
     public String newForm(Model model) {
         model.addAttribute("roles", DispatchService.ASSIGNABLE_ROLES);
-        // 建单页还没选项目，用全局最近一张带版本的单推算，当 placeholder 提示
-        model.addAttribute("suggestedVersion", dispatchService.suggestVersion(null));
+        // 建单页还没选项目 —— 版本号基准依赖项目，页面默认给空，选完项目后由前端按项目提示。
+        model.addAttribute("projects", projectService.listProjects());
+        model.addAttribute("suggestedVersion", "");
         // 归属 Key：人工单会自动挂到派单共享 Key 上，让建单的人先看见「哨兵靠哪把 Key 找到这张单」
         String ownerKey = dispatchService.sharedDispatchKey();
         model.addAttribute("ownerKeyTail", ownerKey.isEmpty() ? "" : DispatchService.maskKey(ownerKey));
         model.addAttribute("active", "dispatch");
         return "dispatch/new";
+    }
+
+    /** 建单页用：按项目实时算「不填版本号会得什么」，并把基准一起返回。 */
+    @GetMapping("/suggest-version")
+    @ResponseBody
+    public Map<String, Object> suggestVersion(@RequestParam(required = false) Long projectId) {
+        DispatchService.VersionBasis b = dispatchService.suggestVersionInfo(projectId);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("ok", b.ok());
+        m.put("value", b.value() == null ? "" : b.value());
+        m.put("basis", b.basis() == null ? "" : b.basis());
+        m.put("problem", b.problem() == null ? "" : b.problem());
+        m.put("oneLine", b.oneLine());
+        return m;
     }
 
     @PostMapping("/create")
@@ -132,6 +151,7 @@ public class DispatchController extends BaseController {
                          @RequestParam(required = false) Boolean securityGroup,
                          @RequestParam(required = false) Boolean firewall,
                          @RequestParam(required = false) Boolean spend,
+                         @RequestParam(required = false) Long projectId,
                          @RequestParam(required = false) String version,
                          RedirectAttributes ra) {
         Map<String, Boolean> auths = new LinkedHashMap<>();
@@ -149,7 +169,7 @@ public class DispatchController extends BaseController {
 
         DispatchService.Outcome out = dispatchService.create(
                 DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
-                assignee, title, description, priority, null, auths, null, version);
+                assignee, title, description, priority, projectId, auths, null, version);
         if (!out.ok() || out.header() == null) {
             ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
             return "redirect:/dispatch/new";

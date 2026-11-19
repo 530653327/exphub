@@ -151,6 +151,13 @@ public class ProjectService {
         if (patch.getStatus() != null) old.setStatus(patch.getStatus());
         if (patch.getDefaultTestCmd() != null) old.setDefaultTestCmd(patch.getDefaultTestCmd());
         if (patch.getDefaultConstraints() != null) old.setDefaultConstraints(patch.getDefaultConstraints());
+        // 当前版本：null = 不改；空串 = 明确清空（表单留空）
+        if (patch.getCurrentVersion() != null) {
+            String v = patch.getCurrentVersion().trim();
+            old.setCurrentVersion(v.isEmpty() ? "" : v);
+            old.setCurrentVersionUpdatedAt(java.time.LocalDateTime.now());
+            old.setCurrentVersionSource(v.isEmpty() ? "后台项目页清空" : "后台项目页手动设置");
+        }
         projectMapper.updateById(old);
         return old;
     }

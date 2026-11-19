@@ -36,7 +36,11 @@
                     <div class="col-md-6">
                         <div class="kv"><b>优先级</b><span th:text="${order.priority}"></span></div>
                         <div class="kv" th:if="${order.version != null and !order.version.isEmpty()}">
-                            <b>发版版本</b><span th:text="${order.version}"></span></div>
+                            <b>发版版本</b><span th:text="${order.version}"></span>
+                            <span class="text-muted" style="font-size:0.8rem"
+                                  th:if="${order.versionBasis != null and !order.versionBasis.isEmpty()}"
+                                  th:text="'（' + ${order.versionBasis} + '）'"></span>
+                        </div>
                         <div class="kv"><b>创建时间</b><span th:text="${order.createdAt != null ? #temporals.format(order.createdAt,'MM-dd HH:mm') : ''}"></span></div>
                         <div class="kv"><b>接单时间</b><span th:text="${order.acceptedAt != null ? #temporals.format(order.acceptedAt,'MM-dd HH:mm') : '—'}"></span></div>
                         <div class="kv"><b>备注</b><span th:text="${order.remark != null ? order.remark : '—'}"></span></div>
@@ -79,6 +83,11 @@
                             <input type="text" name="version" class="form-control"
                                    th:value="${order.version}"
                                    th:attr="placeholder='不填默认 ' + ${suggestedVersion}">
+                        </div>
+                        <div class="text-muted mt-1" style="font-size:0.78rem"
+                             th:classappend="${#strings.isEmpty(suggestedVersion)} ? 'text-danger'">
+                            <span th:text="${versionHint != null ? versionHint.oneLine() : ''}"></span>
+                            <span th:if="${order.versionBasis != null}" th:text="'｜建单时：' + ${order.versionBasis}"></span>
                         </div>
                     </div>
                     <button type="submit" class="btn btn-sm btn-outline-primary mt-2">保存授权位</button>

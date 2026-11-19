@@ -121,6 +121,7 @@ class MobileTemplateRenderTest {
         ctx.setVariable("granted", List.of("修改代码", "commit"));
         ctx.setVariable("suggestedVersion", "1.0.1");
         ctx.setVariable("roles", DispatchService.ASSIGNABLE_ROLES);
+        ctx.setVariable("projects", List.of());
         // 2026-11-19 建单页新增：人工单自动归属的派单共享 Key 尾号
         ctx.setVariable("ownerKeyTail", "…9999");
         ctx.setVariable("ballOwner", "越哥");
@@ -317,7 +318,10 @@ class MobileTemplateRenderTest {
         for (String r : DispatchService.ASSIGNABLE_ROLES) {
             assertTrue(html.contains(">" + r + "</option>"), "指派下拉缺角色：" + r);
         }
-        assertTrue(html.contains("1.0.1"), "建议版本号没渲染出来（不填时的默认值）");
+        assertTrue(html.contains("不填则按项目当前版本末尾 +1"),
+                "版本号提示没渲染出来（不填时的规则）");
+        assertTrue(html.contains("data-suggest-url"),
+                "建单页没接按项目实时推算的入口");
         assertTrue(html.contains("…9999"), "建单页没显示归属 Key —— 人工单写没写进 Key，建单的人只能靠猜");
     }
 

@@ -35,6 +35,8 @@
                 <span class="badge badge-sm badge-ghost" th:if="${order.accepter != null}" th:text="'接单 ' + ${order.accepter}">接单</span>
                 <span class="badge badge-sm badge-error badge-soft" th:if="${order.priority != null and order.priority == 1}">高优先级</span>
                 <span class="badge badge-sm badge-ghost tnum" th:if="${order.version != null and !order.version.isEmpty()}" th:text="'版本 ' + ${order.version}">版本</span>
+                <span class="badge badge-sm badge-ghost" th:if="${order.versionBasis != null and !order.versionBasis.isEmpty()}"
+                      th:text="${order.versionBasis}">基准</span>
             </div>
 
             <div class="text-[11px] opacity-40 mt-2.5 tnum">
@@ -96,7 +98,12 @@
                 </div>
                 <div id="versionBox" class="mt-2.5" th:style="${order.authRelease} ? '' : 'display:none'">
                     <input class="input w-full bg-base-100 border-base-300" type="text" name="version" th:value="${order.version}"
-                           th:attr="placeholder='版本号，不填默认 ' + ${suggestedVersion}">
+                           th:attr="placeholder='不填则按项目当前版本 +1'">
+                    <div class="text-[11px] mt-1.5 leading-relaxed"
+                         th:classappend="${#strings.isEmpty(suggestedVersion)} ? 'text-error' : 'opacity-45'">
+                        <span th:text="${versionHint != null ? versionHint.oneLine() : ''}"></span>
+                        <span th:if="${order.versionBasis != null}" th:text="'｜建单时：' + ${order.versionBasis}"></span>
+                    </div>
                 </div>
                 <button type="submit" class="btn btn-sm btn-outline w-full mt-3">保存授权位</button>
             </form>

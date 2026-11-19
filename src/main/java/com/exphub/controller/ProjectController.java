@@ -63,6 +63,7 @@ public class ProjectController extends BaseController {
                        @RequestParam(required = false) String description,
                        @RequestParam(required = false) String defaultTestCmd,
                        @RequestParam(required = false) String defaultConstraints,
+                       @RequestParam(required = false) String currentVersion,
                        RedirectAttributes ra) {
         try {
             if (id == null) {
@@ -73,6 +74,7 @@ public class ProjectController extends BaseController {
                 p.setDescription(description);
                 p.setDefaultTestCmd(defaultTestCmd);
                 p.setDefaultConstraints(defaultConstraints);
+                p.setCurrentVersion(currentVersion == null ? null : currentVersion.trim());
                 projectService.createProject(p);
                 ra.addFlashAttribute("msg", "项目创建成功");
                 return "redirect:/projects/" + p.getId();
@@ -83,6 +85,7 @@ public class ProjectController extends BaseController {
                 patch.setDescription(description);
                 patch.setDefaultTestCmd(defaultTestCmd);
                 patch.setDefaultConstraints(defaultConstraints);
+                patch.setCurrentVersion(currentVersion == null ? null : currentVersion.trim());
                 projectService.updateProject(id, patch);
                 ra.addFlashAttribute("msg", "项目已更新");
                 return "redirect:/projects/" + id;

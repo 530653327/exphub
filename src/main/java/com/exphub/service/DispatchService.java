@@ -100,6 +100,13 @@ public class DispatchService {
     private DispatchItemMapper itemMapper;
 
     /**
+     * 项目（发版取号要读 current_version）。
+     * {@code required=false}：手工构造的单测没有它也能跑，只是取号会明确报「无基准」。
+     */
+    @Autowired(required = false)
+    private com.exphub.mapper.ProjectMapper projectMapper;
+
+    /**
      * 事件发布器（2026-11-19，用于「待验收 → 发邮件」）。
      * 用 {@code required=false}：手工构造的单测里没有它也能跑，缺它只是不发提醒。
      */
@@ -164,11 +171,22 @@ public class DispatchService {
         h.setAssignee(assignee.trim());
         h.setPriority(priority == null ? 3 : priority);
         h.setProjectId(projectId);
-        // 版本号：只有勾了「发版」才有意义。没填就自动 +1（末尾数字加一）。
+        // 版本号：只有勾了「发版」才有意义。没填就按「基准末尾 +1」自动算；
+        // 算不出来就明拒，不许静默给一个 1.0.0（W-20261119-000006 就是错号被静默接受）。
         boolean willRelease = auths != null && Boolean.TRUE.equals(auths.get("release"));
         if (willRelease) {
-            String v = (version == null || version.isBlank()) ? suggestVersion(projectId) : version.trim();
-            h.setVersion(v);
+            if (version != null && !version.isBlank()) {
+                h.setVersion(version.trim());
+                h.setVersionBasis("手动指定");
+            } else {
+                VersionBasis b = suggestVersionInfo(projectId);
+                if (!b.ok()) {
+                    return Outcome.fail("勾了发版但没填版本号，且无法自动推算：" + b.problem()
+                            + "（不会静默按 1.0.0 兜底）");
+                }
+                h.setVersion(b.value());
+                h.setVersionBasis(b.basis());
+            }
         }
         h.setUpdatedAt(LocalDateTime.now());
 
@@ -188,7 +206,11 @@ public class DispatchService {
         headerMapper.insert(h);
         log.info("DispatchService.create: order={}, origin={}, creator={}, assignee={}, ownerKey={}",
                 h.getOrderNo(), h.getOrigin(), h.getCreator(), h.getAssignee(), maskKey(h.getApiKey()));
-        return Outcome.success("已建单 " + h.getOrderNo() + "（状态：待审核）" + ownerNote(human, h.getApiKey(), ownerAutoFilled), h, null);
+        String versionNote = willRelease
+                ? "。发版版本 " + h.getVersion() + "（" + h.getVersionBasis() + "）"
+                : "";
+        return Outcome.success("已建单 " + h.getOrderNo() + "（状态：待审核）"
+                + ownerNote(human, h.getApiKey(), ownerAutoFilled) + versionNote, h, null);
     }
 
     /**
@@ -827,8 +849,44 @@ public class DispatchService {
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，验收未生效，请刷新重试。");
         closeOpenItem(h, HUMAN_OPERATOR, "验收通过", DispatchItem.ST_DONE);
+        rememberProjectVersion(h);
         log.info("DispatchService.verifyPass: order={} 验收通过 → DONE", orderNo);
         return Outcome.success("验收通过，单子已完成。", get(orderNo), null);
+    }
+
+    /**
+     * 发版单验收通过后，把这一版记成项目当前版本（只升不降）。
+     *
+     * <p>为什么在「验收通过」而不是「提交验收」：提交验收只是哨兵说做完了，
+     * 越哥点通过才是这版真的上线定稿。提前回写会让下一张单基于一个还没上线的号取号。
+     *
+     * <p>异常一律吞掉：项目版本更新是附带动作，不能因为写它失败就把验收本身回滚。
+     * 失败的后果只是下一张单少一个基准，比「验收点不动」轻得多。
+     */
+    private void rememberProjectVersion(DispatchHeader h) {
+        if (projectMapper == null || h == null) return;
+        if (h.getProjectId() == null) return;
+        if (h.getVersion() == null || h.getVersion().isBlank()) return;
+        try {
+            com.exphub.entity.Project p = projectMapper.selectById(h.getProjectId());
+            if (p == null) return;
+            if (p.getCurrentVersion() != null && !p.getCurrentVersion().isBlank()
+                    && compareVersions(h.getVersion(), p.getCurrentVersion()) <= 0) {
+                return;
+            }
+            LocalDateTime now = LocalDateTime.now();
+            projectMapper.update(null, new UpdateWrapper<com.exphub.entity.Project>()
+                    .eq("id", p.getId())
+                    .set("current_version", h.getVersion().trim())
+                    .set("current_version_updated_at", now)
+                    .set("current_version_source", "派单 " + h.getOrderNo() + " 验收通过")
+                    .set("updated_at", now));
+            log.info("DispatchService.rememberProjectVersion: project={} current_version={}（来自 {}）",
+                    p.getId(), h.getVersion(), h.getOrderNo());
+        } catch (Exception e) {
+            log.warn("DispatchService.rememberProjectVersion: order={} 回写项目版本失败，已忽略：{}",
+                    h.getOrderNo(), e.getClass().getSimpleName());
+        }
     }
 
     /**
@@ -911,24 +969,126 @@ public class DispatchService {
     }
 
     /**
-     * 猜一个版本号：同项目最近一张带版本的单，末尾数字 +1。
+     * 发版版本号的推算依据。**结果和依据必须一起返回**，否则「1.0.3 是怎么算出来的」
+     * 只能事后查库反推（W-20261119-000006 就是这么一路错到发版前才被发现）。
      *
-     * <p>项目为空时退到全局最近一张 —— 宁可给一个有出处的建议值，也不要报错让人手填。
-     * 一张历史都没有就返回 {@code 1.0.0}。
+     * <p>{@code value} 为空表示**算不出来**，{@code problem} 写明为什么、下一步怎么办。
+     * 调用方必须把这个 problem 原样告诉人，不许自己补一个 1.0.0 兜底。
+     */
+    public record VersionBasis(String value, String basis, String problem) {
+        public boolean ok() { return value != null && !value.isBlank() && problem == null; }
+        /** 回执/页面用的一行话。 */
+        public String oneLine() {
+            return ok() ? "基准：" + basis + " → " + value : "无法自动取号：" + problem;
+        }
+    }
+
+    /**
+     * 猜一个版本号：基准（项目当前版本 / 项目历史发版单里数值最大的）末尾数字 +1。
+     *
+     * <p><b>为什么基准不再取「最近一张」</b>（2026-11-19 W-20261119-000008）：
+     * 「最近」是按 id 排的，而历史单里的版本号本身可能是错的。
+     * 忆阁项目的派单号段一路从 1.0.0 自我繁殖到 1.0.3，而线上实际是 3.4.x ——
+     * 于是每新建一张单，都把错号再往前推一格。按 id 取最近 = 把错误当基准。
+     *
+     * <p><b>为什么还要项目当前版本</b>：历史发版单可能全都错，或者压根没有带版本的单。
+     * 这时只能由项目维护一个真实基准（发版单验收通过会自动回写，后台也可手填）。
+     * 两者都没有就**明确报错要求手填**，绝不静默给 1.0.0。
+     *
+     * <p><b>为什么不再「项目为空退到全局」</b>：全局最大版本是别的项目的号段
+     * （exphub 的 2.5.x 与忆阁的 3.4.x 混在一起），拿它给没有项目的单取号
+     * 只会制造下一个 1.0.3。没有项目就没有基准，必须手填。
+     */
+    public VersionBasis suggestVersionInfo(Long projectId) {
+        if (projectId == null) {
+            return new VersionBasis(null, null,
+                    "没有指定项目，无法确定版本号基准。请先选项目（MCP 传 projectId / 后台选项目），或手填版本号。");
+        }
+        com.exphub.entity.Project p = projectMapper == null ? null : projectMapper.selectById(projectId);
+        if (p == null) {
+            return new VersionBasis(null, null,
+                    "项目 #" + projectId + " 不存在，无法确定版本号基准。请确认 projectId，或手填版本号。");
+        }
+
+        String best = null;
+        String basis = null;
+        // ① 项目当前版本（真实基准）
+        if (p.getCurrentVersion() != null && !p.getCurrentVersion().isBlank()) {
+            best = p.getCurrentVersion().trim();
+            basis = "项目「" + p.getName() + "」当前版本 " + best;
+        }
+        // ② 项目历史发版单里数值最大的一张（不是 id 最大）
+        DispatchHeader maxOrder = maxVersionedOrder(projectId);
+        if (maxOrder != null && !maxOrder.getVersion().isBlank()
+                && (best == null || compareVersions(maxOrder.getVersion(), best) > 0)) {
+            best = maxOrder.getVersion().trim();
+            basis = "项目「" + p.getName() + "」历史发版单 " + maxOrder.getOrderNo() + " = " + best;
+        }
+
+        if (best == null) {
+            return new VersionBasis(null, null,
+                    "项目「" + p.getName() + "」还没有当前版本，也没有带版本号的历史发版单。"
+                    + "请先在项目页填「当前版本」，或手填版本号。");
+        }
+        String next = bumpTail(best);
+        return new VersionBasis(next, basis + "（末尾 +1）", null);
+    }
+
+    /**
+     * 兼容旧调用：只要字符串（模板 placeholder）。算不出来时返回空串 ——
+     * 页面必须同时说明「无基准，必须手填」，不能拿空串当 1.0.0。
      */
     public String suggestVersion(Long projectId) {
+        VersionBasis b = suggestVersionInfo(projectId);
+        return b.ok() ? b.value() : "";
+    }
+
+    /** 该项目所有带版本号的历史单里，版本数值最大的那张（同值取 id 大的）。 */
+    private DispatchHeader maxVersionedOrder(Long projectId) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<DispatchHeader>()
-                .isNotNull("version").ne("version", "")
-                .orderByDesc("id").last("LIMIT 1");
+                .select("id", "order_no", "version", "created_at")
+                .isNotNull("version").ne("version", "");
         if (projectId != null) q.eq("project_id", projectId);
-        DispatchHeader last = headerMapper.selectOne(q);
-        if (last == null && projectId != null) {
-            last = headerMapper.selectOne(new QueryWrapper<DispatchHeader>()
-                    .isNotNull("version").ne("version", "")
-                    .orderByDesc("id").last("LIMIT 1"));
+        List<DispatchHeader> rows = headerMapper.selectList(q);
+        DispatchHeader best = null;
+        for (DispatchHeader r : rows) {
+            if (r.getVersion() == null || r.getVersion().isBlank()) continue;
+            if (best == null
+                    || compareVersions(r.getVersion(), best.getVersion()) > 0
+                    || (compareVersions(r.getVersion(), best.getVersion()) == 0
+                        && (r.getId() == null ? -1 : r.getId()) > (best.getId() == null ? -1 : best.getId()))) {
+                best = r;
+            }
         }
-        if (last == null || last.getVersion() == null || last.getVersion().isBlank()) return "1.0.0";
-        return bumpTail(last.getVersion());
+        return best;
+    }
+
+    /**
+     * 按数字段比较版本号：1.0.10 &gt; 1.0.9、3.4.98 &gt; 3.4.64、v2 &gt; v1。
+     *
+     * <p>纯字符串比较会把 1.0.10 排到 1.0.9 前面（'1' &lt; '9'），
+     * 取「最大历史版本」时会退回到更旧的号上 —— 这是取号的另一半根因。
+     * 数字段用 BigInteger 比，多余段按 0 补（3.4 与 3.4.0 相等）。
+     */
+    public static int compareVersions(String a, String b) {
+        java.util.List<java.math.BigInteger> pa = versionSegments(a);
+        java.util.List<java.math.BigInteger> pb = versionSegments(b);
+        int n = Math.max(pa.size(), pb.size());
+        for (int i = 0; i < n; i++) {
+            java.math.BigInteger x = i < pa.size() ? pa.get(i) : java.math.BigInteger.ZERO;
+            java.math.BigInteger y = i < pb.size() ? pb.get(i) : java.math.BigInteger.ZERO;
+            int c = x.compareTo(y);
+            if (c != 0) return c;
+        }
+        return 0;
+    }
+
+    private static java.util.List<java.math.BigInteger> versionSegments(String v) {
+        java.util.List<java.math.BigInteger> out = new java.util.ArrayList<>();
+        if (v == null || v.isBlank()) return out;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d+").matcher(v);
+        while (m.find()) out.add(new java.math.BigInteger(m.group()));
+        return out;
     }
 
     /**
@@ -971,9 +1131,22 @@ public class DispatchService {
         }
         java.util.Map<String, Boolean> a = auths == null ? java.util.Map.of() : auths;
         boolean willRelease = Boolean.TRUE.equals(a.get("release"));
-        String v = willRelease
-                ? ((version == null || version.isBlank()) ? suggestVersion(h.getProjectId()) : version.trim())
-                : null;
+        String v = null;
+        String vb = null;
+        if (willRelease) {
+            if (version != null && !version.isBlank()) {
+                v = version.trim();
+                vb = "手动指定";
+            } else {
+                VersionBasis b = suggestVersionInfo(h.getProjectId());
+                if (!b.ok()) {
+                    return Outcome.fail("勾了发版但没填版本号，且无法自动推算：" + b.problem()
+                            + "（不会静默按 1.0.0 兜底）");
+                }
+                v = b.value();
+                vb = b.basis();
+            }
+        }
 
         LocalDateTime now = LocalDateTime.now();
         int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
@@ -991,10 +1164,12 @@ public class DispatchService {
                 .set("auth_firewall", flag(a, "firewall"))
                 .set("auth_spend", flag(a, "spend"))
                 .set("version", willRelease ? v : null)
+                .set("version_basis", willRelease ? vb : null)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化（可能刚被审过），授权位没改成，请刷新看看。");
         log.info("DispatchService.updateAuths: order={} 授权位已改，release={}, version={}", orderNo, willRelease, v);
-        return Outcome.success("授权位已更新" + (willRelease ? "，版本号 " + v : "") + "。", get(orderNo), null);
+        return Outcome.success("授权位已更新" + (willRelease ? "，版本号 " + v + "（" + vb + "）" : "") + "。",
+                get(orderNo), null);
     }
 
     /**
