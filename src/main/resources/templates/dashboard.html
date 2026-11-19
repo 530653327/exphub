@@ -199,6 +199,12 @@
                 var updates = data.map(function(d) { return d.updateCalls; });
                 var tools = data.map(function(d) { return d.toolCalls; });
 
+                // 图表默认色按当前主题取：默认是浅灰网格 + #666 文字，深色底上网格会发白
+                if (window.ExpHubTheme) {
+                    var cd = window.ExpHubTheme.chartDefaults();
+                    Chart.defaults.color = cd.color;
+                    Chart.defaults.borderColor = cd.grid;
+                }
                 var ctx2d = document.getElementById('trendChart').getContext('2d');
                 new Chart(ctx2d, {
                     type: 'line',

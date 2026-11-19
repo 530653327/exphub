@@ -32,15 +32,55 @@
     <link rel="icon" type="image/png" sizes="32x32" th:href="@{/images/pwa/favicon-32.png}">
 
     <!-- 主题必须在 CSS 之前定好，否则浅色用户会先看到一帧深色再跳过来。
-         daisyUI 的 exp 主题是 default，所以「没设置」就等于深色，这里只管切浅色。 -->
+         规则：没手动选过 → 6:00–18:00 浅色（explight），其余深色（exp）；
+         在「我的 → 外观」选过就固定，选「自动」清掉手动选择。
+         ⚠️ 时段边界与 PC 的 /js/theme.js 是同一份，两处一起改
+         （ThemeAutoSwitchTest 会比对两边的 6 / 18）。 -->
     <script th:inline="javascript">
         (function () {
-            try {
-                var t = localStorage.getItem('exphub-theme');
-                if (t === 'explight' || t === 'exp') {
-                    document.documentElement.setAttribute('data-theme', t);
+            var KEY = 'exphub-theme';
+
+            function pick() {
+                var t = null;
+                try { t = localStorage.getItem(KEY); } catch (e) { /* 隐私模式禁用 localStorage */ }
+                if (t === 'exp' || t === 'explight') return t;
+                var h = new Date().getHours();
+                return (h >= 6 && h < 18) ? 'explight' : 'exp';
+            }
+
+            function apply() {
+                var t = pick();
+                document.documentElement.setAttribute('data-theme', t);
+                var meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) meta.setAttribute('content', t === 'explight' ? '#f5f6fa' : '#16161d');
+                return t;
+            }
+
+            apply();
+
+            // 跨时段：每分钟 + 回前台（手机后台会冻住定时器，只靠 setInterval 换不过去）
+            setInterval(apply, 60 * 1000);
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) apply();
+            });
+
+            /* 「我的 → 外观」用：三态 auto / exp / explight，改完立刻生效不刷新 */
+            window.ExpHubMobileTheme = {
+                current: function () { return document.documentElement.getAttribute('data-theme'); },
+                isManual: function () {
+                    try {
+                        var t = localStorage.getItem(KEY);
+                        return t === 'exp' || t === 'explight';
+                    } catch (e) { return false; }
+                },
+                set: function (t) {
+                    try {
+                        if (t === 'auto') localStorage.removeItem(KEY);
+                        else if (t === 'exp' || t === 'explight') localStorage.setItem(KEY, t);
+                    } catch (e) { /* 存不了就只本次生效 */ }
+                    return apply();
                 }
-            } catch (e) { /* 隐私模式下 localStorage 会抛，忽略即可，深色兜底 */ }
+            };
         })();
     </script>
 

@@ -29,6 +29,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="${pageTitle}">经验阁 ExpHub</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23ffffff' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
+
+    <!-- 主题必须在 CSS 之前定下来，否则夜间打开会先白闪一帧（规则与 /js/theme.js 一致） -->
+    <th:block th:replace="~{fragments/theme :: init}"/>
+
     <!-- 顺序不能动：Bootstrap 打底 → FontAwesome → admin.css（旧变量）→ pc.css（新视觉层，必须最后，
          否则盖不住 Bootstrap 的 .btn / .table / .card） -->
     <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">

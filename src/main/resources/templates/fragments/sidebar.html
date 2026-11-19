@@ -40,6 +40,9 @@
         <i class="fas fa-file-alt"></i><span>模板管理</span></a>
 
     <div class="nav-foot">
+        <!-- 主题按钮：点击循环「自动 → 白天 → 夜间」，逻辑在 /js/theme.js（事件委托，这里不写 onclick） -->
+        <a href="#" data-theme-cycle title="点击切换：自动 → 白天 → 夜间">
+            <i class="fas fa-adjust"></i><span data-theme-label>外观</span></a>
         <a th:href="@{/profile/password}" th:classappend="${active == 'profile'} ? 'active'">
             <i class="fas fa-lock"></i><span>修改密码</span></a>
         <a th:href="@{/logout}">

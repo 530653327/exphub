@@ -8,6 +8,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="${doc != null ? doc.title + ' - ExpHub 分享' : '分享链接无效 - ExpHub'}">经验分享 - ExpHub</title>
+    <!-- 主题必须在 CSS 之前定下来，否则夜间打开会先白闪一帧（与 fragments/head 同一份规则） -->
+    <th:block th:replace="~{fragments/theme :: init}"/>
     <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
     <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
     <link rel="stylesheet" th:href="@{/lib/github-markdown-css/github-markdown.min.css}">

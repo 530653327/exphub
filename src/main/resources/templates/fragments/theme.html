@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!-- ============================================================================
+     主题首帧初始化（2026-11-19：后台支持白天/夜间，自动按时间切换）
+
+     为什么必须内联在 <head> 里：主题脚本放到 body 末尾或外链 defer 后，浏览器
+     会先用默认浅色画一帧再变深 —— 夜间打开就是明显的一下白闪。
+
+     规则与 /js/theme.js 的 byHour() 是同一份：06:00–18:00 白天，其余夜间。
+     两处必须一起改（ThemeAutoSwitchTest 会比对边界数字）。
+     localStorage 键 exphub-pc-theme 存手动选择（light/dark），没存 = 自动。
+
+     用法：放在 fragments/head 的 CSS 之前，或独立 head 的 <head> 开头：
+         <th:block th:replace="~{fragments/theme :: init}"/>
+     ============================================================================ -->
+
+<th:block th:fragment="init">
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('exphub-pc-theme');
+                if (t !== 'light' && t !== 'dark') {
+                    var h = new Date().getHours();
+                    t = (h >= 6 && h < 18) ? 'light' : 'dark';
+                }
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {
+                /* 隐私模式禁用 localStorage：不设属性，按默认浅色渲染 */
+            }
+        })();
+    </script>
+    <script th:src="@{/js/theme.js}" defer></script>
+</th:block>
+
+</body>
+</html>

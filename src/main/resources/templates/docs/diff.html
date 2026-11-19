@@ -7,6 +7,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>候选对比 - 经验阁 ExpHub</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231a1a2e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='%23e94560' font-family='system-ui,sans-serif' font-weight='bold'>E</text></svg>" type="image/svg+xml">
+    <!-- 主题必须在 CSS 之前定下来，否则夜间打开会先白闪一帧（与 fragments/head 同一份规则） -->
+    <th:block th:replace="~{fragments/theme :: init}"/>
     <link rel="stylesheet" th:href="@{/lib/bootstrap/bootstrap.min.css}">
     <link rel="stylesheet" th:href="@{/lib/fontawesome/css/all.min.css}">
     <link rel="stylesheet" th:href="@{/css/pc.css}">
@@ -18,10 +20,10 @@
     .stat-pill.warn {background: var(--bad-bg); color: var(--bad);}
     /* 两栏对齐表：左右各 50%，等宽字体，行高紧凑，方便一眼扫差异 */ .diff-wrap {max-height: calc(100vh - 300px); overflow: auto; border-radius: 0 0 12px 12px;}
     table.diff {width: 100%; table-layout: fixed; border-collapse: collapse;}
-    table.diff th {position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 2px solid var(--line); padding: 10px 14px; font-size: 0.9rem; text-align: left;}
-    table.diff td {vertical-align: top; padding: 2px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; border-bottom: 1px solid #f4f4f4;}
-    .cell-same {background: #fff; color: var(--text);}
-    /* 不一样的行：淡红底 + 左侧红条，扫视时直接跳出来 */ .cell-diff {background: var(--bad-bg); color: #a51e1e; font-weight: 600; box-shadow: inset 3px 0 0 var(--bad);}
+    table.diff th {position: sticky; top: 0; z-index: 2; background: var(--surface); border-bottom: 2px solid var(--line); padding: 10px 14px; font-size: 0.9rem; text-align: left;}
+    table.diff td {vertical-align: top; padding: 2px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; border-bottom: 1px solid var(--line);}
+    .cell-same {background: var(--surface); color: var(--text);}
+    /* 不一样的行：淡红底 + 左侧红条，扫视时直接跳出来 */ .cell-diff {background: var(--bad-bg); color: var(--bad-fg); font-weight: 600; box-shadow: inset 3px 0 0 var(--bad);}
     .cell-empty {background: var(--surface-2);}
     td.left {border-right: 1px solid var(--line);}
     .legend {font-size: 12px; color: var(--text-faint);}

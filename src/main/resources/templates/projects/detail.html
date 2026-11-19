@@ -134,7 +134,7 @@
                         </div>
                     </div>
                 </form>
-                <div th:each="p : ${progress}" class="border-left pl-3 mb-3" style="border-left: 3px solid #e94560 !important;">
+                <div th:each="p : ${progress}" class="border-left pl-3 mb-3" style="border-left: 3px solid var(--brand) !important;">
                     <div class="d-flex justify-content-between">
                         <strong th:text="${p.title}">标题</strong>
                         <small class="text-muted" th:text="${p.createdAt}">时间</small>

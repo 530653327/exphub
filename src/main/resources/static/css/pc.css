@@ -42,12 +42,20 @@
     /* 语义色（徽章 / 提示 / 按钮通用） */
     --ok: #059669;
     --ok-bg: #e7f7f0;
+    --ok-line: #b7e6d3;
+    --ok-fg: #04664a;
     --warn: #b45309;
     --warn-bg: #fef4e6;
+    --warn-line: #f5d9ac;
+    --warn-fg: #8a4708;
     --bad: #dc2626;
     --bad-bg: #feecec;
+    --bad-line: #f6c0c0;
+    --bad-fg: #a51e1e;
     --info: #2563eb;
     --info-bg: #eaf1ff;
+    --info-line: #c3d7fb;
+    --info-fg: #1a4fb0;
     --neutral-bg: #f0f2f7;
     --neutral-fg: #4b5265;
 
@@ -66,6 +74,15 @@
     --shadow-pop: 0 8px 28px rgba(16, 24, 40, 0.12);
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
         "Hiragino Sans GB", "微软雅黑", "Helvetica Neue", sans-serif;
+
+    /* 少数还没变量化、但夜间必须换的值（2026-11-19 主题改造时收进来） */
+    --code-fg: #b3376c;              /* 行内 code 的字色 */
+    --neutral-bg-hover: #e7eaf2;     /* 次要按钮 hover */
+    --disabled-bg: #c7cbe0;          /* 主按钮 disabled */
+    --scroll-thumb: #d3d7e3;
+    --scroll-thumb-hover: #b9bfd0;
+    --login-glow: #eef0ff;           /* 登录页顶部那团淡光 */
+}
 
 /* ── 基础 ─────────────────────────────────────────────────────────────── */
 
@@ -104,7 +121,7 @@ code {
     background: var(--surface-2);
     border: 1px solid var(--line);
     border-radius: var(--radius-xs);
-    color: #b3376c;
+    color: var(--code-fg);
     padding: 1px 5px;
     font-size: 0.84em;
 }
@@ -127,14 +144,14 @@ pre {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #d3d7e3;
+    background: var(--scroll-thumb);
     border: 3px solid transparent;
     border-radius: 999px;
     background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #b9bfd0;
+    background: var(--scroll-thumb-hover);
     background-clip: content-box;
 }
 
@@ -446,8 +463,8 @@ pre {
 
 .btn-primary:disabled,
 .btn-primary.disabled {
-    background: #c7cbe0;
-    border-color: #c7cbe0;
+    background: var(--disabled-bg);
+    border-color: var(--disabled-bg);
     color: #fff;
 }
 
@@ -458,7 +475,7 @@ pre {
 }
 
 .btn-secondary:hover {
-    background: #e7eaf2;
+    background: var(--neutral-bg-hover);
     color: var(--text);
 }
 
@@ -513,7 +530,7 @@ pre {
 .btn-outline-dark:hover,
 .btn-outline-light:hover {
     background: var(--surface-2);
-    border-color: #cfd4e2;
+    border-color: var(--line-strong);
     color: var(--text);
 }
 
@@ -525,13 +542,13 @@ pre {
 
 .btn-outline-danger:hover {
     background: var(--bad-bg);
-    border-color: #f5b5b5;
+    border-color: var(--bad-line);
     color: var(--bad);
 }
 
 .btn-outline-warning:hover {
     background: var(--warn-bg);
-    border-color: #f3d5a8;
+    border-color: var(--warn-line);
     color: var(--warn);
 }
 
@@ -937,26 +954,26 @@ textarea.form-control {
 
 .alert-success {
     background: var(--ok-bg);
-    border-color: #b7e6d3;
-    color: #04664a;
+    border-color: var(--ok-line);
+    color: var(--ok-fg);
 }
 
 .alert-danger {
     background: var(--bad-bg);
-    border-color: #f6c0c0;
-    color: #a51e1e;
+    border-color: var(--bad-line);
+    color: var(--bad-fg);
 }
 
 .alert-warning {
     background: var(--warn-bg);
-    border-color: #f5d9ac;
-    color: #8a4708;
+    border-color: var(--warn-line);
+    color: var(--warn-fg);
 }
 
 .alert-info {
     background: var(--info-bg);
-    border-color: #c3d7fb;
-    color: #1a4fb0;
+    border-color: var(--info-line);
+    color: var(--info-fg);
 }
 
 .alert-light {
@@ -1067,6 +1084,7 @@ textarea.form-control {
 /* ── 弹窗（Bootstrap modal 保留，只换皮）──────────────────────────────── */
 
 .modal-content {
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     box-shadow: var(--shadow-pop);
@@ -1097,6 +1115,7 @@ textarea.form-control {
 
 /* 下拉菜单 */
 .dropdown-menu {
+    background: var(--surface);
     padding: 5px;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
@@ -1577,7 +1596,7 @@ textarea.form-control {
     border-left: 3px solid var(--warn);
     border-radius: var(--radius-sm);
     background: var(--warn-bg);
-    color: #7a4a10;
+    color: var(--warn-fg);
     font-size: 12.5px;
     line-height: 1.75;
 }
@@ -1689,4 +1708,131 @@ textarea.form-control {
         flex-direction: column;
         align-items: flex-start;
     }
+}
+
+/* ── 夜间主题（2026-11-19）─────────────────────────────────────────────────
+   两套模式：白天（默认 :root）/ 夜间（html[data-theme="dark"]）。
+   切换由 /js/theme.js 按时间自动做（6:00–18:00 白天），侧栏底部可手动固定。
+
+   色板与移动端 daisyUI 的 exp 主题同值（#16161d / #1e1e27 / #6366f1），
+   这样同一个牌子在手机和 PC 上不是两个东西。
+
+   只在变量层没覆盖住的地方才写具体规则，且集中在本段末尾 —— 上面 1600 行
+   组件样式保持「只认变量」，夜间才能一改全改。
+   ────────────────────────────────────────────────────────────────────── */
+
+html[data-theme="dark"] {
+    color-scheme: dark;              /* 原生下拉框/滚动条/日期控件跟着变，漏了就是白块 */
+
+    --brand: #6366f1;
+    --brand-hover: #818cf8;
+    --brand-press: #4f46e5;
+    --brand-soft: #262a4d;
+    --brand-soft-2: #2f3568;
+    --brand-ring: rgba(99, 102, 241, 0.30);
+
+    --bg: #16161d;
+    --surface: #1e1e27;
+    --surface-2: #24252f;
+    --text: #e8e8f2;
+    --text-mute: #a8abbd;
+    --text-faint: #7c8093;
+    --line: #2a2a36;
+    --line-strong: #35374a;
+
+    --ok: #34d399;
+    --ok-bg: #12261f;
+    --ok-line: #1f4436;
+    --ok-fg: #6ee7b7;
+    --warn: #fbbf24;
+    --warn-bg: #2b2111;
+    --warn-line: #4a3a14;
+    --warn-fg: #fcd34d;
+    --bad: #f87171;
+    --bad-bg: #2d1618;
+    --bad-line: #4d2528;
+    --bad-fg: #fca5a5;
+    --info: #60a5fa;
+    --info-bg: #152438;
+    --info-line: #24405f;
+    --info-fg: #93c5fd;
+    --neutral-bg: #262832;
+    --neutral-fg: #c0c4d4;
+
+    --code-fg: #f0a3c0;
+    --neutral-bg-hover: #30323e;
+    --disabled-bg: #35374a;
+    --scroll-thumb: #3a3d4d;
+    --scroll-thumb-hover: #4a4e60;
+    --login-glow: #1e2140;
+
+    /* admin.css 里那组只在列表页用的旧变量（pc.css 没重定义过） */
+    --head-bg: #1d1e26;
+    --head-fg: #8b90a3;
+    --line-soft: #262832;
+    --title-fg: #e8e8f2;
+}
+
+/* Bootstrap 自身写死白底/黑字的几处。组件层没转到变量的，只能在这里点名覆盖。 */
+html[data-theme="dark"] .close {
+    color: var(--text);
+    text-shadow: none;
+}
+
+html[data-theme="dark"] .dropdown-divider {
+    border-top-color: var(--line);
+}
+
+html[data-theme="dark"] .btn-dark {
+    background: var(--neutral-bg);
+    border-color: var(--line-strong);
+    color: var(--text);
+}
+
+html[data-theme="dark"] .badge-dark {
+    background: var(--neutral-bg);
+    color: var(--text);
+}
+
+/* 标签六色（亮色是淡底深字，夜间反过来：深底亮字，色相不变） */
+html[data-theme="dark"] .doc-tags .tag:nth-child(6n+1),
+html[data-theme="dark"] .tag-color:nth-child(6n+1) { background: #3a1f28; color: #f0a3b8; }
+html[data-theme="dark"] .doc-tags .tag:nth-child(6n+2),
+html[data-theme="dark"] .tag-color:nth-child(6n+2) { background: #23264a; color: #b4bbff; }
+html[data-theme="dark"] .doc-tags .tag:nth-child(6n+3),
+html[data-theme="dark"] .tag-color:nth-child(6n+3) { background: #16332c; color: #7fe0c6; }
+html[data-theme="dark"] .doc-tags .tag:nth-child(6n+4),
+html[data-theme="dark"] .tag-color:nth-child(6n+4) { background: #3a2b16; color: #f0c58a; }
+html[data-theme="dark"] .doc-tags .tag:nth-child(6n+5),
+html[data-theme="dark"] .tag-color:nth-child(6n+5) { background: #33213d; color: #d8aae8; }
+html[data-theme="dark"] .doc-tags .tag:nth-child(6n+6),
+html[data-theme="dark"] .tag-color:nth-child(6n+6) { background: #16293a; color: #8fc9ef; }
+
+/* 派单状态七色：色相与亮色一致，只把「淡底深字」翻成「深底亮字」 */
+html[data-theme="dark"] .st-REVIEWING { background: #2b2410; color: #fbbf24; }
+html[data-theme="dark"] .st-READY     { background: #12233d; color: #93b4f5; }
+html[data-theme="dark"] .st-RUNNING   { background: #0f2a2e; color: #67e8f9; }
+html[data-theme="dark"] .st-CONFIRMING{ background: #241b3a; color: #c4b5fd; }
+html[data-theme="dark"] .st-VERIFYING { background: #2d1517; color: #fca5a5; }
+html[data-theme="dark"] .st-DONE      { background: #11261f; color: #6ee7b7; }
+html[data-theme="dark"] .st-CANCELLED,
+html[data-theme="dark"] .st-DRAFT     { color: var(--text-faint); }
+
+/* 经验详情 / 分享页的 GitHub Markdown 样式：它自带的暗色只在「系统深色」下生效，
+   我们按时间切主题时系统可能还是浅色，所以这里手动把它的变量换成深色一套。 */
+html[data-theme="dark"] .markdown-body {
+    color-scheme: dark;
+    --color-fg-default: #e8e8f2;
+    --color-fg-muted: #a8abbd;
+    --color-fg-subtle: #7c8093;
+    --color-canvas-default: #1e1e27;
+    --color-canvas-subtle: #24252f;
+    --color-border-default: #35374a;
+    --color-border-muted: #2a2a36;
+    --color-neutral-muted: rgba(110, 118, 129, 0.30);
+    --color-accent-fg: #a5b4fc;
+    --color-accent-emphasis: #6366f1;
+    --color-danger-fg: #f87171;
+    --color-attention-subtle: #2b2111;
+    --color-done-fg: #6ee7b7;
 }

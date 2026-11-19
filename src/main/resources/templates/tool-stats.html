@@ -260,6 +260,12 @@
     <script th:src="@{/lib/chartjs/chart.umd.min.js}"></script>
     <script th:inline="javascript">
         var trend = /*[[${trend}]]*/ [];
+        // 图表默认色按当前主题取（与 dashboard 同一口径）
+        if (window.ExpHubTheme) {
+            var cd = window.ExpHubTheme.chartDefaults();
+            Chart.defaults.color = cd.color;
+            Chart.defaults.borderColor = cd.grid;
+        }
         var ctx2d = document.getElementById('toolTrendChart').getContext('2d');
         var labels = trend.map(function (d) { return String(d.date).substring(0, 10); });
         var calls = trend.map(function (d) { return d.calls; });

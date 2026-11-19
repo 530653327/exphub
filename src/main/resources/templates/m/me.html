@@ -29,14 +29,18 @@
     <div class="text-xs font-medium opacity-55 px-1 mb-2">外观</div>
     <div class="card bg-base-200 shadow-sm mb-4">
         <div class="card-body p-3 gap-0">
-            <!-- 主题只有深/浅两档。不给「跟随系统」：daisyUI 的 default 主题就是深色，
-                 跟随系统要额外写 prefers-color-scheme 分支，而这里只有一个人用，两档够。 -->
+            <!-- 主题三档：自动 / 深 / 浅。自动 = 按时间（6:00–18:00 浅色），规则在 m/layout.html；
+                 不跟随系统 —— PWA 里系统深色与「我晚上想用浅色」经常打架，固定时段可预期。 -->
             <div class="flex items-center justify-between">
                 <div>
                     <div class="text-sm font-medium">主题</div>
-                    <div class="text-xs opacity-45 mt-0.5">深色适合夜里看，浅色在户外更清楚</div>
+                    <div class="text-xs opacity-45 mt-0.5">自动按时间切；手动点过就固定</div>
                 </div>
                 <div class="flex gap-1.5">
+                    <button class="btn btn-sm btn-circle theme-swatch" data-theme-pick="auto" aria-pressed="false" aria-label="自动">
+                        <span class="w-3.5 h-3.5 rounded-full border border-base-300"
+                              style="background: linear-gradient(135deg, #1e1e27 0 50%, #ffffff 50% 100%);"></span>
+                    </button>
                     <button class="btn btn-sm btn-circle theme-swatch" data-theme-pick="exp" aria-pressed="true" aria-label="深色">
                         <span class="w-3.5 h-3.5 rounded-full bg-neutral-800 border border-base-300"></span>
                     </button>
@@ -107,20 +111,26 @@
             el.textContent = '尚未安装到主屏幕，按下方说明添加后体验更好';
         }
 
-        // 主题切换：写 localStorage + 立刻改 data-theme，不刷新页面
+        // 主题切换：三档（自动 / 深 / 浅），写 localStorage + 立刻改 data-theme，不刷新页面
         // （刷新会丢滚动位置，在建列表里滑到一半跳回顶部很难受）
-        var cur = document.documentElement.getAttribute('data-theme') || 'exp';
+        // 逻辑在 m/layout.html 的 ExpHubMobileTheme：自动档清掉手动选择，按 6:00–18:00 切
+        function syncSwatches() {
+            var cur = window.ExpHubMobileTheme ? window.ExpHubMobileTheme.current() : 'exp';
+            var manual = window.ExpHubMobileTheme ? window.ExpHubMobileTheme.isManual() : false;
+            document.querySelectorAll('[data-theme-pick]').forEach(function (b) {
+                var pick = b.getAttribute('data-theme-pick');
+                b.setAttribute('aria-pressed', (pick === 'auto' ? !manual : (manual && pick === cur)) ? 'true' : 'false');
+            });
+        }
         document.querySelectorAll('[data-theme-pick]').forEach(function (b) {
-            b.setAttribute('aria-pressed', b.getAttribute('data-theme-pick') === cur ? 'true' : 'false');
             b.addEventListener('click', function () {
-                var t = b.getAttribute('data-theme-pick');
-                document.documentElement.setAttribute('data-theme', t);
-                try { localStorage.setItem('exphub-theme', t); } catch (e) { /* 隐私模式忽略 */ }
-                document.querySelectorAll('[data-theme-pick]').forEach(function (x) {
-                    x.setAttribute('aria-pressed', x.getAttribute('data-theme-pick') === t ? 'true' : 'false');
-                });
+                var pick = b.getAttribute('data-theme-pick');
+                if (window.ExpHubMobileTheme) window.ExpHubMobileTheme.set(pick);
+                else document.documentElement.setAttribute('data-theme', pick === 'auto' ? 'exp' : pick);
+                syncSwatches();
             });
         });
+        syncSwatches();
     })();
 </script>
 </body>
