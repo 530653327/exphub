@@ -205,12 +205,24 @@ public class DispatchService {
     // ==================== 查询（零副作用）====================
 
     /**
+     * 单次查询最多返回多少张。MCP 的 limit 与后台每页条数共用这一个上限 ——
+     * 两处各拍一个数（后台曾传 100、被这里悄悄截成 50），界面和意图就对不上了。
+     */
+    public static final int MAX_PAGE_SIZE = 50;
+
+    /**
      * 列单。**不写任何账本、不推任何游标** —— 这是与旧信箱最大的区别，不要在这里加任何写操作。
      *
      * @param role 只看与我有关的：我指派的（assignee）或我创建的（creator）；null=不限
      */
     public List<DispatchHeader> list(String role, String status, String orderNo, int limit, String apiKey) {
-        return list(role, status, orderNo, null, limit, apiKey);
+        return list(role, status, orderNo, null, limit, 0, apiKey);
+    }
+
+    /** 带偏移量的重载（后台翻页用，不搜关键词）。 */
+    public List<DispatchHeader> list(String role, String status, String orderNo,
+                                     int limit, int offset, String apiKey) {
+        return list(role, status, orderNo, null, limit, offset, apiKey);
     }
 
     /**
@@ -226,6 +238,58 @@ public class DispatchService {
      */
     public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
                                      int limit, String apiKey) {
+        return list(role, status, orderNo, keyword, limit, 0, apiKey);
+    }
+
+    /**
+     * 列单 + 搜索 + 分页（2026-11-19 加，后台派单列表原来一次最多 50 张、无翻页）。
+     *
+     * @param limit  每页条数；<=0 表示不限条数（MCP 传 0 就是要不截断）；上限 {@link #MAX_PAGE_SIZE}
+     * @param offset 跳过前 N 条，从 0 开始；越界不报错，返回空列表
+     */
+    public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
+                                     int limit, int offset, String apiKey) {
+        QueryWrapper<DispatchHeader> q = buildFilter(role, status, orderNo, keyword, apiKey);
+        q.orderByDesc("id");
+        String page = limitClause(limit, offset);
+        if (page != null) q.last(page);
+        return headerMapper.selectList(q);
+    }
+
+    /**
+     * 分页窗口：页码、总页数、本页显示的起止序号。
+     *
+     * <p>抽成纯函数而不是在两个 Controller 里各算一遍 —— 页头写的「第 a–b 张 / 共 N 张」
+     * 与页码、与 SQL 的 offset 必须来自同一个算式，否则迟早出现「共 41 张、翻到第 3 页是空的」。
+     */
+    public record PageWindow(int page, int totalPages, long total,
+                             int from, int to, int offset, int size) {}
+
+    /** 越界页码**不报错、不返回空页**，落到最后一页；调用方拿 {@code page()} 回写 URL 保持地址与内容一致。 */
+    public static PageWindow pageWindow(long total, int page, int size) {
+        int sz = size <= 0 ? MAX_PAGE_SIZE : size;
+        int totalPages = (int) Math.max(1, (total + sz - 1) / sz);
+        int p = Math.min(Math.max(1, page), totalPages);
+        int offset = (p - 1) * sz;
+        int from = total == 0 ? 0 : offset + 1;
+        int to = (int) Math.min(total, (long) offset + sz);
+        return new PageWindow(p, totalPages, total, from, to, offset, sz);
+    }
+
+    /**
+     * 与 {@link #list} **同一套过滤条件**的总数。
+     *
+     * <p>为什么必须同源：页头「共 N 张」与页码都读它。两处各拼一份 WHERE，
+     * 迟早出现「页头说 51 张、翻到底只有 3 页」这种对不上的数（2026-11-19 之前的实际形状）。
+     */
+    public long count(String role, String status, String orderNo, String keyword, String apiKey) {
+        Long c = headerMapper.selectCount(buildFilter(role, status, orderNo, keyword, apiKey));
+        return c == null ? 0L : c;
+    }
+
+    /** 列表与统计共用的过滤条件（不含排序、不含分页）。 */
+    static QueryWrapper<DispatchHeader> buildFilter(String role, String status, String orderNo,
+                                                    String keyword, String apiKey) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<>();
         // Key 隔离：null = 后台视角（看全部）；非 null = 只看这个 Key 的
         if (apiKey != null) q.eq("api_key", apiKey);
@@ -240,9 +304,16 @@ public class DispatchService {
             q.and(w -> w.eq("assignee", r).or().eq("creator", r));
         }
         applyKeyword(q, keyword);
-        q.orderByDesc("id");
-        if (limit > 0) q.last("LIMIT " + Math.min(limit, 50));
-        return headerMapper.selectList(q);
+        return q;
+    }
+
+    /**
+     * 生成 MySQL 的 `LIMIT offset,size`；
+     * limit&lt;=0（不限条数）返回 null，调用方据此决定要不要拼这一段。
+     */
+    static String limitClause(int limit, int offset) {
+        if (limit <= 0) return null;
+        return "LIMIT " + Math.max(0, offset) + "," + Math.min(limit, MAX_PAGE_SIZE);
     }
 
     /**

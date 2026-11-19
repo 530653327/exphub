@@ -15,11 +15,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 移动端后台（H5 + PWA）。
@@ -50,6 +52,9 @@ public class MobileController {
 
     /** 会话标记：本次是移动壳在用，登录成功后跳 /m/dashboard 而不是 /dashboard。 */
     public static final String UI_SESSION_KEY = "ui.mobile";
+
+    /** 手机端派单每页几张。比 PC 少一半：卡片比表格行高，一屏翻太多反而不好找。 */
+    private static final int MOBILE_PAGE_SIZE = 10;
 
     @Autowired
     private DispatchService dispatchService;
@@ -96,20 +101,45 @@ public class MobileController {
 
     // ==================== 派单（2026-11-17 顶掉原「工具埋点」tab）====================
 
-    /** 列表：状态 chips + 关键词搜索 + 卡片。默认全部，单子按更新时间倒序（service 里已排好）。 */
+    /**
+     * 列表：状态 chips + 关键词搜索 + 卡片 + 翻页。
+     *
+     * <p>2026-11-19：原来一次取 100 条、被 service 截成 50 且无翻页，单子过 50 张就看不到更早的。
+     * 现在与 PC 后台同一套口径（每页 20、总数与列表同源）。
+     */
     @GetMapping("/dispatch")
     public String dispatchList(@RequestParam(required = false) String status,
                                @RequestParam(required = false) String keyword,
+                               @RequestParam(defaultValue = "1") int page,
                                HttpSession session, Model model) {
         markMobile(session);
         model.addAttribute("title", "派单");
         model.addAttribute("activeTab", "dispatch");
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用，与 PC 端一致）
-        model.addAttribute("orders", dispatchService.list(null, status, null, keyword, 100, null));
+        long total = dispatchService.count(null, status, null, keyword, null);
+        DispatchService.PageWindow w = DispatchService.pageWindow(total, page, MOBILE_PAGE_SIZE);
+        if (w.page() != page) {
+            // 页码越界重定向到合法页，别让地址栏说的和内容不一致
+            String kw = (keyword == null || keyword.isBlank()) ? null : keyword;
+            String st = (status == null || status.isBlank()) ? null : status;
+            return "redirect:" + UriComponentsBuilder.fromPath("/m/dispatch")
+                    .queryParam("page", w.page())
+                    .queryParamIfPresent("status", Optional.ofNullable(st))
+                    .queryParamIfPresent("keyword", Optional.ofNullable(kw))
+                    .build().encode().toUriString();
+        }
+        List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
+                w.size(), w.offset(), null);
+        model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
         model.addAttribute("counts", dispatchService.countByStatus());
         model.addAttribute("labels", statusLabels());
+        model.addAttribute("total", w.total());
+        model.addAttribute("page", w.page());
+        model.addAttribute("totalPages", w.totalPages());
+        model.addAttribute("from", w.from());
+        model.addAttribute("to", w.to());
         return "m/dispatch";
     }
 

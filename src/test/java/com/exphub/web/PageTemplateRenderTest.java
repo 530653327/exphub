@@ -158,8 +158,37 @@ class PageTemplateRenderTest {
         ctx.setVariable("keyword", keyword == null ? "" : keyword);
         ctx.setVariable("counts", counts);
         ctx.setVariable("labels", labels);
+        // 2026-11-19 分页新增的四个字段，Controller 必然会给 —— 少一个线上就是 500
+        ctx.setVariable("total", 0L);
+        ctx.setVariable("page", 1);
+        ctx.setVariable("totalPages", 1);
+        ctx.setVariable("from", 0);
+        ctx.setVariable("to", 0);
         ctx.setVariable("_csrf", null);
         return ctx;
+    }
+
+    @Test
+    @DisplayName("派单列表：翻页控件要印当前页/总页数，且翻页链接不许丢 status 与 keyword")
+    void dispatchPaginationKeepsFilters() {
+        SpringTemplateEngine engine = engine();
+        WebContext ctx = dispatchContext("DONE", "七色");
+        ctx.setVariable("total", 41L);
+        ctx.setVariable("page", 2);
+        ctx.setVariable("totalPages", 3);
+        ctx.setVariable("from", 21);
+        ctx.setVariable("to", 40);
+
+        String html = engine.process("dispatch/list", ctx);
+        assertTrue(html.contains("上一页"), "第 2 页没有上一页入口");
+        assertTrue(html.contains("下一页"), "第 2 页没有下一页入口");
+        assertTrue(html.contains("2 / 3"), "没印「第几页 / 共几页」，用户不知道还有没有");
+        assertTrue(html.contains(">41<"), "页头总数没用 count()，41 张单应当直接印出来");
+        // 翻页链接带上筛选条件，否则一翻页搜索和状态就没了
+        assertTrue(html.contains("page=3") && html.contains("status=DONE"),
+                "下一页链接丢了 status：翻页会把筛选清空");
+        assertTrue(html.contains("keyword=%E4%B8%83%E8%89%B2") || html.contains("keyword=七色"),
+                "下一页链接丢了 keyword：翻页会把搜索词清空");
     }
 
     @Test

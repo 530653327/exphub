@@ -8,11 +8,13 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 后台：派单系统（2026-11-16）。
@@ -30,20 +32,46 @@ public class DispatchController extends BaseController {
     @Autowired
     private DispatchService dispatchService;
 
-    /** 列表：按状态筛选 + 关键词模糊搜索，顶部显示各状态张数。 */
+    /** 每页多少张。上限是 {@link DispatchService#MAX_PAGE_SIZE}，这里只决定「一屏能读多少」。 */
+    private static final int PAGE_SIZE = 20;
+
+    /** 列表：按状态筛选 + 关键词模糊搜索 + 翻页，顶部显示各状态张数。 */
     @GetMapping
     public String list(@RequestParam(required = false) String status,
                        @RequestParam(required = false) String keyword,
+                       @RequestParam(defaultValue = "1") int page,
                        Model model) {
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用）
-        List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword, 100, null);
+        long total = dispatchService.count(null, status, null, keyword, null);
+        DispatchService.PageWindow w = DispatchService.pageWindow(total, page, PAGE_SIZE);
+        // 页码越界就重定向到合法的 URL，而不是「URL 说第 9 页、内容其实是第 3 页」。
+        // 静默截断会让地址栏和内容互相矛盾，翻页时再点上一页就像跳了一下。
+        if (w.page() != page) {
+            return "redirect:" + UriComponentsBuilder.fromPath("/dispatch")
+                    .queryParam("page", w.page())
+                    .queryParamIfPresent("status", Optional.ofNullable(blankToNull(status)))
+                    .queryParamIfPresent("keyword", Optional.ofNullable(blankToNull(keyword)))
+                    .build().encode().toUriString();
+        }
+        List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
+                w.size(), w.offset(), null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
         model.addAttribute("counts", dispatchService.countByStatus());
         model.addAttribute("labels", statusLabels());
+        // 页头与页码读的都是 count()，与列表同源 —— 不许用 orders.size() 顶替总数
+        model.addAttribute("total", w.total());
+        model.addAttribute("page", w.page());
+        model.addAttribute("totalPages", w.totalPages());
+        model.addAttribute("from", w.from());
+        model.addAttribute("to", w.to());
         model.addAttribute("active", "dispatch");
         return "dispatch/list";
+    }
+
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s;
     }
 
     /** 详情：单子全貌 + item 流水 + 按当前状态显示能做的动作。 */

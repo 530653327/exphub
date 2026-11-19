@@ -109,6 +109,12 @@ class MobileTemplateRenderTest {
         ctx.setVariable("items", List.of());
         ctx.setVariable("labels", Map.of(DispatchHeader.ST_REVIEWING, "待审核"));
         ctx.setVariable("counts", Map.of(DispatchHeader.ST_REVIEWING, 1L));
+        // 2026-11-19 派单翻页：Controller 一定给这五个，少一个页面就断在翻页条上
+        ctx.setVariable("total", 21L);
+        ctx.setVariable("page", 2);
+        ctx.setVariable("totalPages", 3);
+        ctx.setVariable("from", 11);
+        ctx.setVariable("to", 20);
         ctx.setVariable("granted", List.of("修改代码", "commit"));
         ctx.setVariable("suggestedVersion", "1.0.1");
         ctx.setVariable("roles", DispatchService.ASSIGNABLE_ROLES);
@@ -195,6 +201,36 @@ class MobileTemplateRenderTest {
         // 关键词模糊搜索：输入框 + 后端读得到的参数名，两者缺一就搜不了
         assertTrue(html.contains("name=\"keyword\""), "派单列表没有搜索输入框（name=keyword）");
         assertTrue(html.contains("<form"), "搜索必须能在手机键盘上直接提交（缺 GET 表单）");
+    }
+
+    @Test
+    @DisplayName("派单列表翻页：手机上有上一页/下一页，且不许丢 status 与 keyword")
+    void dispatchPagerKeepsFilters() {
+        WebContext c = context();
+        c.setVariable("status", "DONE");
+        c.setVariable("keyword", "七色");
+
+        String html = engine().process("m/dispatch", c);
+        assertTrue(html.contains("上一页"), "手机派单列表没有上一页入口");
+        assertTrue(html.contains("下一页"), "手机派单列表没有下一页入口");
+        assertTrue(html.contains("page=1") && html.contains("page=3"),
+                "翻页链接没指向相邻页 —— 点一下可能原地不动");
+        assertTrue(html.contains("status=DONE"), "翻页链接丢了 status：一翻页筛选就被清空");
+    }
+
+    @Test
+    @DisplayName("派单列表翻页：第 1 页的「上一页」、末页的「下一页」必须置灰")
+    void firstAndLastPageButtonsAreDisabled() {
+        WebContext first = context();
+        first.setVariable("page", 1);
+        // btn-disabled 是我们唯一依赖的禁用类；改成只调透明度会「看着灰、其实能点」
+        assertTrue(engine().process("m/dispatch", first).contains("btn-disabled"),
+                "第 1 页的翻页按钮没有置灰标记");
+
+        WebContext last = context();
+        last.setVariable("page", 3);
+        assertTrue(engine().process("m/dispatch", last).contains("btn-disabled"),
+                "最后一页的「下一页」没有置灰标记");
     }
 
     @Test

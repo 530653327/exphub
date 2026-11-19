@@ -19,7 +19,8 @@
             <div class="page-title-wrap">
                 <h4 class="page-title"><i class="fas fa-paper-plane"></i>派单</h4>
                 <div class="page-sub">
-                    共 <strong th:text="${orders.size()}">0</strong> 张单 ·
+                    共 <strong th:text="${total}">0</strong> 张单 ·
+                    <span th:if="${totalPages > 1}">第 <b th:text="${from}">1</b>–<b th:text="${to}">20</b> 张 · </span>
                     待审核 <b th:text="${counts['REVIEWING']}">0</b> ·
                     待接单 <b th:text="${counts['READY']}">0</b> ·
                     进行中 <b th:text="${counts['RUNNING']}">0</b> ·
@@ -120,6 +121,22 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- 翻页（2026-11-19 加）：原来一次最多 50 张、无翻页，超过就静默丢更早的单。
+             页码链接必须带上 status / keyword，否则一翻页筛选就被清空了。 -->
+        <div class="d-flex align-items-center justify-content-between mt-3" th:if="${totalPages > 1}">
+            <div class="page-sub">
+                第 <b th:text="${from}">1</b>–<b th:text="${to}">20</b> 张 / 共 <b th:text="${total}">0</b> 张
+                <span th:if="${keyword != null and keyword != ''}">（关键词「<span th:text="${keyword}"></span>」）</span>
+            </div>
+            <div class="btn-group">
+                <a class="btn btn-sm btn-outline-secondary" th:classappend="${page <= 1} ? 'disabled'"
+                   th:href="@{/dispatch(page=${page - 1}, status=${status}, keyword=${keyword})}">上一页</a>
+                <span class="btn btn-sm btn-outline-secondary disabled" th:text="${page} + ' / ' + ${totalPages}"></span>
+                <a class="btn btn-sm btn-outline-secondary" th:classappend="${page >= totalPages} ? 'disabled'"
+                   th:href="@{/dispatch(page=${page + 1}, status=${status}, keyword=${keyword})}">下一页</a>
             </div>
         </div>
 

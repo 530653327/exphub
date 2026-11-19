@@ -84,6 +84,20 @@
         </a>
     </div>
 
+    <!-- 翻页（2026-11-19 加）：原来一次最多 50 张且无翻页。链接必须带上 status / keyword -->
+    <div class="flex items-center justify-between mt-3 gap-2" th:if="${totalPages > 1}">
+        <a class="btn btn-sm shrink-0"
+           th:classappend="${page <= 1} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(page=${page - 1}, status=${status}, keyword=${keyword})}">上一页</a>
+        <div class="text-[11px] opacity-50 tnum text-center leading-tight">
+            <div th:text="${page} + ' / ' + ${totalPages} + ' 页'"></div>
+            <div th:text="'第 ' + ${from} + '–' + ${to} + ' 张 / 共 ' + ${total} + ' 张'"></div>
+        </div>
+        <a class="btn btn-sm shrink-0"
+           th:classappend="${page >= totalPages} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(page=${page + 1}, status=${status}, keyword=${keyword})}">下一页</a>
+    </div>
+
     <div class="flex flex-col items-center gap-1.5 py-16 opacity-45" th:if="${orders.isEmpty()}">
         <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
         <div class="text-sm font-medium mt-1" th:if="${keyword != null and keyword != ''}"
