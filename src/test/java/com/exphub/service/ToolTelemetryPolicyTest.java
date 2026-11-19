@@ -64,6 +64,14 @@ class ToolTelemetryPolicyTest {
     }
 
     @Test
+    @DisplayName("回执里的时间要压成 MM-dd HH:mm：Timestamp 与 LocalDateTime 两种形态都不许漏出 T")
+    void shortStampHandlesBothJdbcShapes() {
+        assertEquals("11-19 15:08", com.exphub.mcp.ExpHubTools.shortStamp("2026-11-19 15:08:33.0"));
+        assertEquals("11-19 15:13", com.exphub.mcp.ExpHubTools.shortStamp("2026-11-19T15:13"));
+        assertEquals("", com.exphub.mcp.ExpHubTools.shortStamp(null));
+    }
+
+    @Test
     @DisplayName("历史行必须同时被统计口径排除，否则开关上线前那 4.5 万行继续当榜一")
     void historicalRowsAreStillExcludedBySql() {
         assertTrue(ToolPollPolicy.EXCLUDE_POLL_SQL.contains("'dispatch_list'"),

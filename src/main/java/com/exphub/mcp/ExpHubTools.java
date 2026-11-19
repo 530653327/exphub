@@ -2676,6 +2676,13 @@ public class ExpHubTools {
             Map<String, Object> pollStats = callLogService.getMailStartPollStats(d);
             Map<String, String> registered = mcpToolRegistry.getTools();
 
+            // 先收集「窗口内被调用过」的工具名：总览那行要用它解释「有调用 > 已注册」的情况
+            java.util.Set<String> called = new java.util.LinkedHashSet<>();
+            for (Map<String, Object> m : ranking) {
+                Object t = firstNonNull(m, "toolName", "tool_name");
+                if (t != null) called.add(String.valueOf(t));
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.append("📊 **工具调用统计**（近 ").append(d).append(" 天｜数据源 call_logs.action='TOOL'）\n\n");
             sb.append("**总览**: 总调用 ").append(val(overview, "total"))
@@ -2683,7 +2690,20 @@ public class ExpHubTools {
               .append("｜成功 ").append(val(overview, "successCalls"))
               .append("｜平均耗时 ").append(val(overview, "avgCostMs")).append(" ms")
               .append("｜**有调用的工具 ").append(val(overview, "activeTools"))
-              .append(" / 已注册 ").append(registered.size()).append("**\n");
+              .append(" / 已注册 ").append(registered.size()).append("**");
+            // 已下线/改名的旧工具（mail_thread、mail_send…）历史行还在窗口里，会让「有调用」大于注册表。
+            // 不解释一句，这一行本身就是一个自相矛盾的数字。
+            java.util.List<String> stale = new java.util.ArrayList<>();
+            for (String t : called) {
+                if (!registered.containsKey(t)) stale.add(t);
+            }
+            if (!stale.isEmpty()) {
+                sb.append("（多出的 ").append(stale.size()).append(" 个是注册表里已经没有的旧工具：")
+                  .append(String.join("、", stale.size() > 6 ? stale.subList(0, 6) : stale))
+                  .append(stale.size() > 6 ? "…" : "")
+                  .append(" —— 它们只剩窗口内的历史行，滑出窗口就归零）");
+            }
+            sb.append("\n");
 
             long polls = pollStats == null ? 0L : num(firstNonNull(pollStats, "polls", "POLLS"));
             long realCalls = pollStats == null ? 0L : num(firstNonNull(pollStats, "realCalls", "REALCALLS"));
@@ -2691,20 +2711,11 @@ public class ExpHubTools {
             Map<String, Object> excludedStats = callLogService.getStatsExcludedToolStats(d);
             long dispatchCalls = excludedStats == null ? 0L : num(firstNonNull(excludedStats, "calls", "CALLS"));
             Object lastAt = excludedStats == null ? null : firstNonNull(excludedStats, "lastCallAt", "LASTCALLAT");
-            String dispatchLastAt = lastAt == null ? "" : String.valueOf(lastAt);
-            if (dispatchLastAt.length() >= 16) {
-                // "2026-11-19 15:08:33.0" -> "11-19 15:08"
-                dispatchLastAt = dispatchLastAt.substring(5, 16);
-            }
+            String dispatchLastAt = shortStamp(lastAt);
             sb.append("**统计排除**: ")
               .append(ToolPollPolicy.explain(polls, realCalls, unclassified, dispatchCalls, dispatchLastAt, d))
               .append("\n");
 
-            java.util.Set<String> called = new java.util.LinkedHashSet<>();
-            for (Map<String, Object> m : ranking) {
-                Object t = firstNonNull(m, "toolName", "tool_name");
-                if (t != null) called.add(String.valueOf(t));
-            }
             java.util.List<String> neverCalled = new java.util.ArrayList<>();
             for (String t : registered.keySet()) {
                 // 不计统计的工具不许进「从未被调用」：
@@ -2805,6 +2816,21 @@ public class ExpHubTools {
 
     private static String str(Object o) {
         return o == null ? "-" : String.valueOf(o);
+    }
+
+    /**
+     * 把 JDBC 返回的时间压成「MM-dd HH:mm」，供回执里点名「最后一次调用」。
+     *
+     * <p>要兼容两种字符串形态：{@code Timestamp} 的 {@code "2026-11-19 15:13:00.0"} 与
+     * {@code LocalDateTime.toString()} 的 {@code "2026-11-19T15:13"}。只切片不做转换，
+     * 所以必须先干掉那个 {@code T} —— 否则回执里出现「11-19T15:13」，读起来像另一个格式。
+     */
+    public static String shortStamp(Object v) {
+        if (v == null) {
+            return "";
+        }
+        String s = String.valueOf(v).trim().replace('T', ' ');
+        return s.length() >= 16 ? s.substring(5, 16) : s;
     }
 
     @Tool(name = "set_flags", description = "给经验打机器可读标记（待复核/疑似重复/已被取代/可能失效/质量存疑）。**不要用 update_experience 改 tags 代替**：本工具不递增版本、不写快照、不动更新时间。flags 传空串=清空。标记会在检索与详情回显。")
