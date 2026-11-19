@@ -342,10 +342,49 @@ public class DispatchService {
     public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
                                      int limit, int offset, String apiKey) {
         QueryWrapper<DispatchHeader> q = buildFilter(role, status, orderNo, keyword, apiKey);
-        q.orderByDesc("id");
+        applyOrder(q, status);
         String page = limitClause(limit, offset);
         if (page != null) q.last(page);
         return headerMapper.selectList(q);
+    }
+
+    /**
+     * 这个查询是不是「只看待接单」。归一规则与 {@link #buildFilter} 一致（trim + 忽略大小写）。
+     */
+    static boolean isReadyQueue(String status) {
+        return status != null && DispatchHeader.ST_READY.equalsIgnoreCase(status.trim());
+    }
+
+    /**
+     * 列表排序（唯一出口，后台 / 手机端 / MCP 三处共用）。
+     *
+     * <p><b>待接单必须先进先出</b>（2026-11-20 越哥定，W-20261120-000010）：
+     * 哨兵的 watch.js 每 20 秒轮询 {@code dispatch_list(status=READY)} 并取首张认领，
+     * 原来统一 {@code id DESC} 导致**后进先出** —— 新单一直插队，老单饿死在队尾。
+     * 现在 READY 按 {@code priority ASC（1=高）+ created_at ASC + id ASC}：先做急的，
+     * 同级按建单先后。其余状态保持 {@code id DESC}（后台和阁主查单要看最新的）。
+     *
+     * <p>为什么不靠调用方传排序参数：哨兵的 watch.js 不改、不发版就要生效，
+     * 排序只能在服务端按状态决定。
+     */
+    static void applyOrder(QueryWrapper<DispatchHeader> q, String status) {
+        if (isReadyQueue(status)) {
+            q.orderByAsc("priority", "created_at", "id");
+        } else {
+            q.orderByDesc("id");
+        }
+    }
+
+    /**
+     * 当前查询生效的排序说明，**只此一份**（MCP 回执、后台页头都从这里取）。
+     *
+     * <p>为什么必须回显：排序是「看不见的行为」，2026-11-20 之前没人能从上一次回执里
+     * 判断首张为什么是它。回执说清规则，人才对得上「老单终于排前面了」。
+     */
+    public static String orderNote(String status) {
+        return isReadyQueue(status)
+                ? "排序：待接单按优先级升序（1=高，先做急的）+ 建单时间升序（先进先出）"
+                : "排序：id 倒序（最新建的单在最前）";
     }
 
     /**

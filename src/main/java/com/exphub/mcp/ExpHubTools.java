@@ -6256,7 +6256,9 @@ public class ExpHubTools {
     @Tool(name = "dispatch_list",
           description = "【派单】列单。**纯只读、零副作用** —— 调一百次也不会改任何状态、不写任何账本，"
                       + "这是与旧信箱最本质的区别（旧的查一次就记一次账，复查就丢信）。"
-                      + "开工先调这个：不传 orderNo 时按 role 查「指派给我的 / 我创建的」，按 id 倒序。")
+                      + "开工先调这个：不传 orderNo 时按 role 查「指派给我的 / 我创建的」。"
+                      + "**排序**：status=READY（待接单）按优先级升序（1=高）+ 建单时间升序，先进先出；"
+                      + "其他状态与不带 status 时按 id 倒序（最新在前）。")
     public String dispatchList(
             @ToolParam(description = "可选。只看某个单号的详情（含最近几轮 item）", required = false) String orderNo,
             @ToolParam(description = "可选。状态过滤：DRAFT/REVIEWING/READY/RUNNING/CONFIRMING/VERIFYING/DONE/CANCELLED；不传=全部", required = false) String status,
@@ -6348,12 +6350,15 @@ public class ExpHubTools {
                      + "不传就会退化成「同一把 Key 下的全部单」，那等于没有隔离。";
             }
             java.util.List<com.exphub.entity.DispatchHeader> list = dispatchService.list(r, status, null, lim, callerApiKey());
+            String orderNote = com.exphub.service.DispatchService.orderNote(status);
             if (list.isEmpty()) {
                 return "📋 没有符合条件的单（角色=" + r + "，状态="
-                        + (status == null || status.isBlank() ? "全部" : status) + "）。";
+                        + (status == null || status.isBlank() ? "全部" : status) + "）。"
+                        + "\n" + orderNote + "。";
             }
             StringBuilder sb = new StringBuilder();
-            sb.append("📋 ").append(list.size()).append(" 张单（角色 ").append(r).append("）\n\n");
+            sb.append("📋 ").append(list.size()).append(" 张单（角色 ").append(r).append("）\n")
+              .append(orderNote).append("\n\n");
             for (com.exphub.entity.DispatchHeader h : list) {
                 sb.append(renderDispatchHeader(h)).append("\n\n");
             }
