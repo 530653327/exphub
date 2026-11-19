@@ -84,18 +84,26 @@
         </a>
     </div>
 
-    <!-- 翻页（2026-11-19 加）：原来一次最多 50 张且无翻页。链接必须带上 status / keyword -->
-    <div class="flex items-center justify-between mt-3 gap-2" th:if="${totalPages > 1}">
+    <!-- 翻页（2026-11-19 加；同日二次修）：原来整块被 totalPages>1 藏起来，单子不够一页时
+         页面看起来就是「没有分页」。现在始终显示，并给「每页 N 张」选择器。链接带 status / keyword / size -->
+    <div class="flex items-center justify-between mt-3 gap-2">
         <a class="btn btn-sm shrink-0"
            th:classappend="${page <= 1} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(page=${page - 1}, status=${status}, keyword=${keyword})}">上一页</a>
+           th:href="@{/m/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword})}">上一页</a>
         <div class="text-[11px] opacity-50 tnum text-center leading-tight">
             <div th:text="${page} + ' / ' + ${totalPages} + ' 页'"></div>
             <div th:text="'第 ' + ${from} + '–' + ${to} + ' 张 / 共 ' + ${total} + ' 张'"></div>
         </div>
         <a class="btn btn-sm shrink-0"
            th:classappend="${page >= totalPages} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(page=${page + 1}, status=${status}, keyword=${keyword})}">下一页</a>
+           th:href="@{/m/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword})}">下一页</a>
+    </div>
+    <div class="flex items-center justify-center gap-1.5 mt-2" th:if="${pageSizes != null}">
+        <span class="text-[11px] opacity-50">每页</span>
+        <a th:each="s : ${pageSizes}" class="btn btn-xs"
+           th:classappend="${s == size} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword})}"
+           th:text="${s}">10</a>
     </div>
 
     <div class="flex flex-col items-center gap-1.5 py-16 opacity-45" th:if="${orders.isEmpty()}">

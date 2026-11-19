@@ -284,6 +284,21 @@ public class DispatchService {
     }
 
     /**
+     * 后台可选的每页条数。**只认这几档**，别的一律回落到默认值 ——
+     * {@code ?size=100000} 不该让一次请求把整张表塞进内存。
+     *
+     * <p>2026-11-19 加这个选择器的原因：库里只有 19 张单、PC 每页 20 张，
+     * 于是「分页」在页面上根本看不见（页脚整块被 {@code totalPages > 1} 藏掉），
+     * 越哥打开就只会说「还是没有分页」。**能看见、能验，才算做出来了。**
+     */
+    public static final java.util.List<Integer> PAGE_SIZE_CHOICES = java.util.List.of(10, 20, 50);
+
+    /** 每页条数白名单校验：非白名单/空值 → 用 {@code defaultSize}。 */
+    public static int normalizePageSize(Integer size, int defaultSize) {
+        return (size != null && PAGE_SIZE_CHOICES.contains(size)) ? size : defaultSize;
+    }
+
+    /**
      * 与 {@link #list} **同一套过滤条件**的总数。
      *
      * <p>为什么必须同源：页头「共 N 张」与页码都读它。两处各拼一份 WHERE，

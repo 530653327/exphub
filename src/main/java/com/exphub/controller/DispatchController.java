@@ -39,19 +39,24 @@ public class DispatchController extends BaseController {
     @GetMapping
     public String list(@RequestParam(required = false) String status,
                        @RequestParam(required = false) String keyword,
+                       @RequestParam(required = false) Integer size,
                        @RequestParam(defaultValue = "1") int page,
                        Model model) {
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用）
+        int pageSize = DispatchService.normalizePageSize(size, PAGE_SIZE);
         long total = dispatchService.count(null, status, null, keyword, null);
-        DispatchService.PageWindow w = DispatchService.pageWindow(total, page, PAGE_SIZE);
+        DispatchService.PageWindow w = DispatchService.pageWindow(total, page, pageSize);
         // 页码越界就重定向到合法的 URL，而不是「URL 说第 9 页、内容其实是第 3 页」。
         // 静默截断会让地址栏和内容互相矛盾，翻页时再点上一页就像跳了一下。
         if (w.page() != page) {
-            return "redirect:" + UriComponentsBuilder.fromPath("/dispatch")
+            UriComponentsBuilder b = UriComponentsBuilder.fromPath("/dispatch")
                     .queryParam("page", w.page())
                     .queryParamIfPresent("status", Optional.ofNullable(blankToNull(status)))
-                    .queryParamIfPresent("keyword", Optional.ofNullable(blankToNull(keyword)))
-                    .build().encode().toUriString();
+                    .queryParamIfPresent("keyword", Optional.ofNullable(blankToNull(keyword)));
+            if (pageSize != PAGE_SIZE) {
+                b.queryParam("size", pageSize);
+            }
+            return "redirect:" + b.build().encode().toUriString();
         }
         List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
                 w.size(), w.offset(), null);
@@ -66,6 +71,8 @@ public class DispatchController extends BaseController {
         model.addAttribute("totalPages", w.totalPages());
         model.addAttribute("from", w.from());
         model.addAttribute("to", w.to());
+        model.addAttribute("size", w.size());
+        model.addAttribute("pageSizes", DispatchService.PAGE_SIZE_CHOICES);
         model.addAttribute("active", "dispatch");
         return "dispatch/list";
     }

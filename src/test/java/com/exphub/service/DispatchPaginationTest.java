@@ -121,6 +121,43 @@ class DispatchPaginationTest {
         assertTrue(m.contains("${total}"), "手机端没接总数");
     }
 
+    @Test
+    @DisplayName("每页条数只认白名单；?size=100000 回落默认，不许一页塞整张表")
+    void pageSizeIsWhitelisted() {
+        assertEquals(10, DispatchService.normalizePageSize(10, 20));
+        assertEquals(50, DispatchService.normalizePageSize(50, 20));
+        assertEquals(20, DispatchService.normalizePageSize(null, 20), "没传就走默认");
+        assertEquals(20, DispatchService.normalizePageSize(999, 20), "白名单外必须回落，不能当成上限截断（会变成猜）");
+        assertEquals(20, DispatchService.normalizePageSize(0, 20));
+        assertEquals(20, DispatchService.normalizePageSize(-5, 20));
+        assertEquals(10, DispatchService.normalizePageSize(null, 10), "手机端默认 10");
+    }
+
+    @Test
+    @DisplayName("19 张单 / 每页 20 张时，翻页条也必须显示 —— 整块被 totalPages>1 藏起来就等于「没有分页」")
+    void pagerIsAlwaysVisible() throws IOException {
+        DispatchService.PageWindow onePage = DispatchService.pageWindow(19, 1, 20);
+        assertEquals(1, onePage.totalPages());
+
+        String pc = Files.readString(PC_LIST, StandardCharsets.UTF_8);
+        String mobile = Files.readString(MOBILE_LIST, StandardCharsets.UTF_8);
+        // 整块翻页容器不许再挂 totalPages 条件（挂上了，单子不足一页时页面上什么都看不到）
+        assertFalse(pc.contains("justify-content-between mt-3\" th:if=\"${totalPages > 1}\""),
+                "PC 翻页条又被藏起来了：单子不足一页时页面看起来就是没有分页");
+        assertFalse(mobile.contains("justify-between mt-3 gap-2\" th:if=\"${totalPages > 1}\""),
+                "手机端翻页条又被藏起来了");
+        // 两个模板都必须给出「每页 N 张」的入口，否则「有没有分页」无法当场验证
+        assertTrue(pc.contains("${pageSizes}") && pc.contains("size=${s}"),
+                "PC 没有每页条数选择器：数据不足一页时无法验证翻页");
+        assertTrue(mobile.contains("${pageSizes}") && mobile.contains("size=${s}"),
+                "手机端没有每页条数选择器");
+        // 翻页链接必须带 size/status/keyword —— 少一个，翻页就等于重置筛选
+        assertTrue(pc.contains("page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}"),
+                "PC 下一页链接没带全参数");
+        assertTrue(mobile.contains("page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}"),
+                "手机端下一页链接没带全参数");
+    }
+
     private static int countOccurrences(String haystack, String needle) {
         int n = 0, i = 0;
         while ((i = haystack.indexOf(needle, i)) >= 0) {
