@@ -99,6 +99,13 @@ public class DispatchService {
     @Autowired
     private DispatchItemMapper itemMapper;
 
+    /**
+     * 事件发布器（2026-11-19，用于「待验收 → 发邮件」）。
+     * 用 {@code required=false}：手工构造的单测里没有它也能跑，缺它只是不发提醒。
+     */
+    @Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher events;
+
     // ==================== 结果封装 ====================
 
     /** 一次操作的结果：成功与否 + 给人看的那句话 + 落地后的对象。 */
@@ -516,7 +523,28 @@ public class DispatchService {
 
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, concl, body,
                 DispatchItem.ST_DONE);
+        // 2026-11-19：进入待验收时给越哥发邮件。事务内只发事件，监听器 AFTER_COMMIT 才真发信
+        // （回滚了不该发「待验收」邮件）；通知失败也不许影响这次状态转移。
+        publishVerifying(h, concl, body, it, now);
         return Outcome.success("已提交验收，等越哥判断。item " + it.getItemNo(), get(orderNo), it);
+    }
+
+    /**
+     * 发「待验收」事件。异常一律吞掉 —— 通知是纯副作用，不能拖垮状态转移（AGENTS.md 第 2 章）。
+     * {@code events} 为空（手工构造的单测）时安静跳过。
+     */
+    private void publishVerifying(DispatchHeader h, String conclusion, String content,
+                                  DispatchItem it, LocalDateTime at) {
+        if (events == null) {
+            return;
+        }
+        try {
+            events.publishEvent(new com.exphub.notify.DispatchVerifyingEvent(
+                    h.getOrderNo(), h.getTitle(), h.getAssignee(), h.getAccepter(),
+                    conclusion, content, it == null ? null : it.getItemNo(), at));
+        } catch (Exception e) {
+            log.warn("派单 {} 的验收事件发布失败，已忽略：{}", h.getOrderNo(), e.getClass().getSimpleName());
+        }
     }
 
     /**

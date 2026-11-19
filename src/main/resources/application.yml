@@ -90,7 +90,12 @@ exphub:
   #         （1=unreadOnly 轮询 / 0=真实调用 / NULL=迁移前历史行不回填）；所有工具维度聚合
   #         统一拼 ToolPollPolicy.EXCLUDE_POLL_SQL；/tool-stats 与 get_tool_stats 共用同一句
   #         「已排除 mail_start 调用 N 次、真实读信 M 次仍计入」；仪表盘 totalTool/todayTool 同步排除。
-  version: 2.5.6
+  # 2.5.7 = 派单进「待验收」时发邮件提醒（2026-11-19，抄忆阁 3.3.96 的作业）：submitAccept 提交成功后
+  #         在 AFTER_COMMIT 发一封邮件（单号/标题/指派/结论/内容/后台直达链接）；独立单线程发送队列、
+  #         失败重试 2 次、同一轮去重 10 分钟、每小时 20 封/每天 100 封（超限累计进下一封）；
+  #         缺 EXPHUB_MAIL_HOST/USER/PASS/TO 任一项 = 未配置：启动不报错、发信跳过，派单主流程照跑。
+  #         ⚠️ 不配 spring.mail.*（避免自动配置建 bean 的启动依赖），凭证只写 /etc/exphub/.env，日志零回显。
+  version: 2.5.7
   mcp:
     # 2026-11-17 停用 SSE。越哥：「那个没有重连功能，用起来不方便」。
     # 背景：SSE 有会话概念，服务一重启会话就失效（sse_session_not_found），
@@ -105,6 +110,31 @@ exphub:
     # get_experience_detail / get_experience_history 单次读取上限（字符）。
     # 超过后提示用 export_document 读取完整内容。
     detail-max-chars: 20000
+
+  # 邮件提醒（2026-11-19 加）：派单提交验收（进「待验收」）时给越哥发一封邮件。
+  # ⚠️ 这里只有占位符，真值写在服务器 /etc/exphub/.env（systemd EnvironmentFile）。
+  # ⚠️ 缺 host/user/pass/to 任一项 = 未配置：**启动不报错**，发信时跳过并打一条节流日志，
+  #    派单主流程照跑（fail-soft，抄忆阁 3.3.96 的口径）。
+  # ⚠️ 不要在这里写明文授权码，也不要把它贴进任何经验/日志/接口响应。
+  mail:
+    enabled: ${EXPHUB_MAIL_ENABLED:true}
+    host: ${EXPHUB_MAIL_HOST:}
+    # 465 = 隐式 SSL；其它端口（常见 587）自动走 STARTTLS
+    port: ${EXPHUB_MAIL_PORT:465}
+    user: ${EXPHUB_MAIL_USER:}
+    pass: ${EXPHUB_MAIL_PASS:}
+    to: ${EXPHUB_MAIL_TO:}
+    from-name: ${EXPHUB_MAIL_FROM_NAME:经验阁 ExpHub}
+    # 邮件里「去后台处理」的链接前缀（不带末尾斜杠）
+    base-url: ${EXPHUB_MAIL_BASE_URL:https://cloudim.club/exphub}
+    # 同一事件（同一轮 item）10 分钟内只发一封；每小时 20 封、每天 100 封，超限累计进下一封
+    dedup-minutes: ${EXPHUB_MAIL_DEDUP_MINUTES:10}
+    hour-limit: ${EXPHUB_MAIL_HOUR_LIMIT:20}
+    day-limit: ${EXPHUB_MAIL_DAY_LIMIT:100}
+    connect-timeout-ms: ${EXPHUB_MAIL_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${EXPHUB_MAIL_READ_TIMEOUT_MS:10000}
+    # 失败重试 2 次（5s、15s），仍失败只记 WARN，不抛给调用方
+    retry-delays-ms: "${EXPHUB_MAIL_RETRY_DELAYS_MS:5000,15000}"
 
 
 mybatis-plus:

@@ -52,6 +52,15 @@
             <version>${mybatis-plus.version}</version>
         </dependency>
 
+        <!-- 邮件提醒（派单进「待验收」时通知越哥）。
+             2026-11-19：与忆阁 3.3.96 同一套做法 —— 只引 starter，**不配 spring.mail.***，
+             由 SmtpMailTransport 按自己的配置现建 JavaMailSenderImpl，
+             这样缺配置时启动不会因为自动配置建 bean 失败（缺配置只跳过发信）。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- MySQL -->
         <dependency>
             <groupId>com.mysql</groupId>
