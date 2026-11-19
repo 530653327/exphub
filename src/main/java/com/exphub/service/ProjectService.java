@@ -1,6 +1,7 @@
 package com.exphub.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.Doc;
 import com.exphub.entity.Project;
@@ -128,6 +129,46 @@ public class ProjectService {
         }
         w.eq("status", "ACTIVE").orderByDesc("updated_at");
         return projectMapper.selectList(w);
+    }
+
+    /**
+     * 后台项目列表分页 + 关键词搜索（2026-11-20，派单 W-20261120-000005）。
+     *
+     * <p>搜索口径与派单列表一致：多个词之间 <b>AND</b>，单个词在
+     * 名称 / 编码 / 别名三列里 <b>OR</b> —— 输入「hjs」应当同时命中编码 huijinsuan 和别名里写着 HJS 的项目。
+     * 别名是逗号分隔字符串，用 LIKE 就够了，不额外拆表。</p>
+     *
+     * <p>可见性口径与 {@link #listProjects()} 完全一致（同 Key / 只列 ACTIVE / 更新时间倒序），
+     * 这里不另写一套过滤条件，否则「搜索时能看到归档项目、不搜索时看不到」这种差异没人会发现。</p>
+     */
+    public Page<Project> listProjects(String keyword, int page, int size) {
+        QueryWrapper<Project> w = new QueryWrapper<>();
+        String key = currentKey();
+        if (key != null) {
+            w.eq("api_key", key);
+        }
+        w.eq("status", "ACTIVE");
+        applyProjectKeyword(w, keyword);
+        w.orderByDesc("updated_at");
+        return projectMapper.selectPage(new Page<>(Math.max(1, page), Math.max(1, size)), w);
+    }
+
+    /**
+     * 把关键词条件拼进 QueryWrapper。抽成独立方法是为了能**不开数据库就测**：
+     * 单测直接看生成的 SQL 片段，确认括号分组（词之间 AND）没拼错。
+     *
+     * <p>必须用 {@code and(...)} 把每组的 OR 包起来，否则 {@code status='ACTIVE' OR ...}
+     * 会把归档项目也放回来 —— 这类错误线上表现是「搜出来的比预期多」，几乎不会有人报。</p>
+     */
+    static void applyProjectKeyword(QueryWrapper<Project> w, String keyword) {
+        if (keyword == null || keyword.isBlank()) return;
+        for (String token : keyword.trim().split("\\s+")) {
+            if (token.isEmpty()) continue;
+            String k = com.exphub.util.LikeEscape.escape(token);
+            w.and(x -> x.like("name", k)
+                    .or().like("project_code", k)
+                    .or().like("aliases", k));
+        }
     }
 
     public Project getProject(Long id) {

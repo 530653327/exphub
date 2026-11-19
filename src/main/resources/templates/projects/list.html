@@ -10,7 +10,12 @@
         <div class="topbar page-head">
             <div class="page-title-wrap">
                 <h4 class="page-title"><i class="fas fa-folder-open"></i>项目管理</h4>
-                <div class="page-sub">共 <span th:text="${#lists.size(projects)}">0</span> 个项目</div>
+                <div class="page-sub">
+                    <span th:if="${keyword != null and keyword != ''}">搜索「<strong th:text="${keyword}"></strong>」 · </span>
+                    <span th:if="${keyword == null or keyword == ''}">全部项目 · </span>
+                    共 <strong th:text="${totalRows}">0</strong> 个项目
+                    <span th:if="${totalPages > 1}">· 第 <span th:text="${currentPage}">1</span> / <span th:text="${totalPages}">1</span> 页</span>
+                </div>
             </div>
             <div class="page-actions">
                 <button class="btn btn-primary" data-toggle="modal" data-target="#createModal">
@@ -21,6 +26,20 @@
 
         <div th:if="${msg}" class="alert alert-success" th:text="${msg}"></div>
         <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <!-- 搜索：名称 / 编码 / 别名 三列 OR 模糊匹配（服务端口径见 ProjectService.listProjects） -->
+        <div class="toolbar">
+            <form th:action="@{/projects}" method="get" class="input-group" style="flex:1;min-width:240px;">
+                <input type="text" class="form-control" name="keyword" th:value="${keyword}"
+                       placeholder="搜索名称 / 编码 / 别名...">
+                <div class="input-group-append">
+                    <button class="btn btn-outline-secondary" type="submit">
+                        <i class="fas fa-search"></i>
+                    </button>
+                </div>
+            </form>
+            <a th:if="${keyword != null and keyword != ''}" th:href="@{/projects}" class="btn btn-outline-secondary">清空</a>
+        </div>
 
         <div class="card list-card">
             <div class="card-body p-0">
@@ -48,11 +67,38 @@
                         <tr th:if="${#lists.isEmpty(projects)}">
                             <td colspan="7" class="empty-state">
                                 <i class="fas fa-folder-open"></i>
-                                <p>暂无项目，点击右上角「新建项目」</p>
+                                <p th:if="${keyword != null and keyword != ''}">没有匹配「<span th:text="${keyword}"></span>」的项目，换个词或
+                                    <a th:href="@{/projects}">清空搜索</a>
+                                </p>
+                                <p th:if="${keyword == null or keyword == ''}">暂无项目，点击右上角「新建项目」</p>
                             </td>
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            <!-- 分页：始终显示（一页装得下也明确写出来），否则会像「没有分页」 -->
+            <div th:if="${totalRows > 0}" class="list-card-foot d-flex justify-content-between align-items-center flex-wrap" style="gap:10px;">
+                <div class="page-sub">
+                    第 <b th:text="${(currentPage - 1) * pageSize + 1}">1</b>–<b th:text="${(currentPage - 1) * pageSize + #lists.size(projects)}">20</b> 个
+                    / 共 <b th:text="${totalRows}">0</b> 个
+                    <span th:if="${totalPages <= 1}" th:text="|· 一页装得下（每页 ${pageSize} 个）|"></span>
+                </div>
+                <nav>
+                    <ul class="pagination mb-0">
+                        <li class="page-item" th:classappend="${currentPage <= 1} ? 'disabled'">
+                            <a class="page-link" th:href="@{/projects(keyword=${keyword}, page=${currentPage - 1})}">&laquo; 上一页</a>
+                        </li>
+                        <li class="page-item" th:each="i : ${pageNumbers}"
+                            th:classappend="${i != 0 and i == currentPage} ? 'active'">
+                            <a th:if="${i != 0}" class="page-link" th:href="@{/projects(keyword=${keyword}, page=${i})}" th:text="${i}">1</a>
+                            <span th:if="${i == 0}" class="page-link disabled-link text-muted">&hellip;</span>
+                        </li>
+                        <li class="page-item" th:classappend="${currentPage >= totalPages} ? 'disabled'">
+                            <a class="page-link" th:href="@{/projects(keyword=${keyword}, page=${currentPage + 1})}">下一页 &raquo;</a>
+                        </li>
+                    </ul>
+                </nav>
             </div>
         </div>
     </div>

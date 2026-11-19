@@ -2,6 +2,7 @@ package com.exphub.controller;
 
 import com.exphub.entity.Doc;
 import com.exphub.entity.Project;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.exphub.service.DocService;
 import com.exphub.service.ProjectService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +12,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -28,11 +28,20 @@ public class ProjectController extends BaseController {
     @Autowired
     private DocService docService;
 
-    /** 项目列表 */
+    /** 项目列表（分页 + 名称/编码/别名搜索，2026-11-20） */
     @GetMapping
-    public String list(Model model) {
-        List<Project> projects = projectService.listProjects();
-        model.addAttribute("projects", projects);
+    public String list(@RequestParam(required = false) String keyword,
+                       @RequestParam(defaultValue = "1") int page,
+                       Model model) {
+        int size = 20;
+        Page<Project> result = projectService.listProjects(keyword, page, size);
+        model.addAttribute("projects", result.getRecords());
+        model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
+        model.addAttribute("currentPage", result.getCurrent());
+        model.addAttribute("totalPages", result.getPages());
+        model.addAttribute("totalRows", result.getTotal());
+        model.addAttribute("pageSize", size);
+        model.addAttribute("pageNumbers", paginationWindow(result.getCurrent(), result.getPages()));
         model.addAttribute("active", "projects");
         return "projects/list";
     }

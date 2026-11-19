@@ -129,7 +129,10 @@ exphub:
   # 2.5.15 = 后台首页仪表盘加派单统计区块（W-20261120-000001）：四项指标（累计 / 待接单 /
   #          进行中 / 待确认）+ 最近 5 张单，数字与 /dispatch 页头同源（countByStatus / count），
   #          单号可直接点进详情；新增 PageTemplateRenderTest 两条真渲染守卫（有数据 / 空态）。
-  version: 2.5.15
+  # 2.5.16 = 后台项目列表加分页 + 关键词搜索（W-20261120-000005）：名称 / 编码 / 别名三列 OR
+  #          模糊匹配，分页走 MyBatis-Plus Page；页码窗口从 PageController 上提到 BaseController 共用，
+  #          新增 ProjectListTest（SQL 条件 / 分页口径）+ projects/list 渲染守卫。
+  version: 2.5.16
   # 工具统计口径（2026-11-19 加）
   tool-stats:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，

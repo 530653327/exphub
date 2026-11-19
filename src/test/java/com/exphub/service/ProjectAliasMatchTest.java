@@ -116,8 +116,17 @@ class ProjectAliasMatchTest {
     void aliasLikeGuard() throws IOException {
         String src = Files.readString(Path.of("src/main/java/com/exphub/service/ProjectService.java"),
                 StandardCharsets.UTF_8);
-        assertFalse(src.contains("like(\"aliases\""),
-                "别名判定不许退回 aliases LIKE '%q%' —— api 会作为 xy-api 的子串命中整个项目域");
+        // 2026-11-20 收敛到判定路径本身：原断言扫全文件，会误伤后台项目列表的关键词搜索 ——
+        // 那里 aliases LIKE 是**人主动输入关键词**的检索语义（搜「校友」想看校友会项目），
+        // 与「自动判定查询属于哪个项目域、api 命中 xy-api 就整域拖进来」是两回事。
+        for (String sig : new String[]{"public List<Project> resolveProject(",
+                "private List<Project> matchAlias("}) {
+            String body = SourceScan.methodBody(src, sig);
+            assertFalse(body.isEmpty(), "取不到 " + sig + " 的方法体，守卫失效");
+            assertFalse(body.contains("like(\"aliases\""),
+                    "别名判定不许退回 aliases LIKE '%q%' —— api 会作为 xy-api 的子串命中整个项目域："
+                            + sig);
+        }
     }
 
     @Test

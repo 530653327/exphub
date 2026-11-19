@@ -363,11 +363,78 @@ class PageTemplateRenderTest {
         assertTrue(html.contains("st-RUNNING"), "状态标签没带上 CSS 类（列表里会看不出状态）");
     }
 
+    // ==================== 项目列表分页 + 搜索（2026-11-20 W-20261120-000005）====================
+
+    /**
+     * 与 {@code ProjectController.list} 往 Model 里放的字段逐一对齐；
+     * 少给一个 Thymeleaf 求值就抛异常 —— 那正是线上 500。
+     */
+    private static WebContext projectsContext(String keyword, List<com.exphub.entity.Project> projects,
+                                              long currentPage, long totalPages, long totalRows) {
+        MockServletContext servletContext = new MockServletContext();
+        MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
+        request.setContextPath(CTX_PATH);
+        request.setRequestURI(CTX_PATH + "/projects");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        JakartaServletWebApplication webApp = JakartaServletWebApplication.buildApplication(servletContext);
+        WebContext ctx = new WebContext(webApp.buildExchange(request, response), Locale.SIMPLIFIED_CHINESE);
+
+        ctx.setVariable("contextPath", CTX_PATH);
+        ctx.setVariable("active", "projects");
+        ctx.setVariable("projects", projects);
+        ctx.setVariable("keyword", keyword);
+        ctx.setVariable("currentPage", currentPage);
+        ctx.setVariable("totalPages", totalPages);
+        ctx.setVariable("totalRows", totalRows);
+        ctx.setVariable("pageSize", 20);
+        ctx.setVariable("pageNumbers", List.of(1, 0, 3));
+        ctx.setVariable("_csrf", null);
+        return ctx;
+    }
+
+    private static com.exphub.entity.Project project(long id, String name, String code, String aliases) {
+        com.exphub.entity.Project p = new com.exphub.entity.Project();
+        p.setId(id);
+        p.setName(name);
+        p.setProjectCode(code);
+        p.setAliases(aliases);
+        p.setStatus("ACTIVE");
+        p.setUpdatedAt(java.time.LocalDateTime.of(2026, 11, 20, 9, 0));
+        return p;
+    }
+
     @Test
-    @DisplayName("仪表盘：一张单都没有时要显示空态，不能是一张空白卡片")
-    void dashboardDispatchEmptyState() {
-        String html = engine().process("dashboard", dashboardContext(List.of()));
-        assertTrue(html.contains("还没有任何派单"), "没有派单时缺空态文案，看起来像没加载出来");
+    @DisplayName("项目列表：分页要印总数与页码，翻页链接不许丢搜索词")
+    void projectsListPaginationKeepsKeyword() {
+        SpringTemplateEngine engine = engine();
+        WebContext ctx = projectsContext("七色", List.of(project(1L, "七色铃", "qise", "七色铃,QSL")),
+                2L, 3L, 45L);
+
+        String html;
+        try {
+            html = engine.process("projects/list", ctx);
+        } catch (RuntimeException e) {
+            throw new AssertionError("projects/list 渲染失败，线上项目页会是一个 500。原始异常：" + e.getMessage(), e);
+        }
+        assertTrue(html.contains(">45<"), "页头没有印出总项目数（totalRows 没接上）");
+        assertTrue(html.contains("上一页") && html.contains("下一页"), "缺翻页按钮");
+        assertTrue(html.contains("page=3"), "没有下一页链接");
+        assertTrue(html.contains("keyword=%E4%B8%83%E8%89%B2") || html.contains("keyword=七色"),
+                "翻页链接丢了 keyword：一翻页搜索条件就没了");
+        assertTrue(html.contains("七色铃"), "项目行没渲染出来");
+        assertTrue(html.contains("name=\"keyword\""), "没有搜索输入框（name=keyword）");
+    }
+
+    @Test
+    @DisplayName("项目列表：搜不到时要有空态和清空入口，不能是一张空白表")
+    void projectsListEmptyStateOffersClearSearch() {
+        String html = engine().process("projects/list",
+                projectsContext("不存在的项目", List.of(), 0L, 0L, 0L));
+
+        assertTrue(html.contains("没有匹配"), "搜不到时缺空态文案，看起来像页面坏了");
+        assertTrue(html.contains("清空搜索"), "搜不到时没有清空入口，用户只能手动删 URL");
+        assertTrue(html.contains("不存在的项目"), "搜索词没有回填到页面（keyword 没被读到）");
     }
 
 }

@@ -442,9 +442,11 @@ public class DispatchService {
     /**
      * LIKE 通配符转义：用户输入里的百分号、下划线、反斜杠一律当字面量。
      * MySQL 的 LIKE 默认转义符就是反斜杠，所以这里加反斜杠就够，不用额外写 ESCAPE 子句。
+     *
+     * <p>实现已抽到 {@link com.exphub.util.LikeEscape}，这里只保留旧签名给既有调用方与测试。</p>
      */
     static String escapeLike(String raw) {
-        return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return com.exphub.util.LikeEscape.escape(raw);
     }
 
     /** 内部取单，不做 Key 校验。只有后台与「已确定归属」的内部逻辑可以调。 */
