@@ -124,34 +124,8 @@
             </div>
         </div>
 
-        <!-- 翻页（2026-11-19 加；同日二次修）：
-             原来整块被 th:if="${totalPages > 1}" 藏起来，而库里只有 19 张单、每页 20 张 ——
-             页面看起来就是「没有分页」，说了也验不了。现在**始终显示**页码与「每页 N 张」选择器，
-             一页装得下时也明确写着「1 / 1」和「每页 20 张」，能看见才叫做出来了。
-             页码链接必须带上 status / keyword / size，否则一翻页筛选就被清空、每页条数被打回默认。 -->
-        <div class="d-flex align-items-center justify-content-between mt-3 flex-wrap" style="gap:10px;">
-            <div class="page-sub">
-                第 <b th:text="${from}">0</b>–<b th:text="${to}">0</b> 张 / 共 <b th:text="${total}">0</b> 张
-                <span th:if="${keyword != null and keyword != ''}">（关键词「<span th:text="${keyword}"></span>」）</span>
-                <span th:if="${totalPages == 1}"
-                      th:text="'· 一页装得下（每页 ' + ${size} + ' 张），把每页调小就能翻页'"></span>
-            </div>
-            <div class="d-flex align-items-center flex-wrap" style="gap:8px;">
-                <div class="btn-group">
-                    <a class="btn btn-sm btn-outline-secondary" th:classappend="${page <= 1} ? 'disabled'"
-                       th:href="@{/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword})}">上一页</a>
-                    <span class="btn btn-sm btn-outline-secondary disabled" th:text="${page} + ' / ' + ${totalPages}"></span>
-                    <a class="btn btn-sm btn-outline-secondary" th:classappend="${page >= totalPages} ? 'disabled'"
-                       th:href="@{/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword})}">下一页</a>
-                </div>
-                <div class="btn-group" th:if="${pageSizes != null}">
-                    <a th:each="s : ${pageSizes}" class="btn btn-sm btn-outline-secondary"
-                       th:classappend="${s == size} ? 'active'"
-                       th:href="@{/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword})}"
-                       th:text="${s} + ' 张/页'">20 张/页</a>
-                </div>
-            </div>
-        </div>
+        <!-- 翻页：唯一实现在 fragments/dispatch-pager.html（与手机端共用，可被测试真实渲染） -->
+        <div th:replace="~{fragments/dispatch-pager :: pc}"></div>
 
         <div class="mt-3 page-sub">
             ⚠️ 审核、验收、取消都只能在这里做，MCP 工具里没有这些动作 —— 闸门必须在人手里。

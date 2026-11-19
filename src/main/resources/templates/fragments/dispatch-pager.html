@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!--
+  派单列表的翻页条（2026-11-19）。**两个端只有这一处实现**，PC 页面与手机页面都 th:replace 过去。
+
+  为什么单独抽成片段：
+
+  1. 原来这段整块挂在 `th:if="${totalPages > 1}"` 下，而库里只有 19 张单、PC 每页 20 张 ——
+     总页数恒为 1，页面上一个翻页元素都没有。越哥打开只会说「还是没有分页」。
+     **功能在、界面上看不见 = 等于没做。** 现在一律显示，一页装得下时也明确写「1 / 1」「每页 20 张」。
+  2. 抽出来之后 `DispatchPagerRenderTest` 能拿真实模板 + 真实模型值渲染一遍，
+     而不是用「源码里有没有这段字符串」来假装验证过 —— 表达式写错（比如 `th:text` 里把
+     `${}` 和字面量混着拼）在字符串断言下永远是绿的。
+  3. 翻页链接必须带全 size / status / keyword：少一个，翻页就等于把筛选重置了。
+
+  片段读的是页面模型里的同名属性（page / totalPages / from / to / total / size / pageSizes /
+  status / keyword），不接参数 —— 少一层传参，少一处漂移。
+-->
+
+<!-- ==================== PC 后台（Bootstrap）==================== -->
+<div th:fragment="pc" class="d-flex align-items-center justify-content-between mt-3 flex-wrap" style="gap:10px;">
+    <div class="page-sub">
+        第 <b th:text="${from}">0</b>–<b th:text="${to}">0</b> 张 / 共 <b th:text="${total}">0</b> 张
+        <span th:if="${keyword != null and keyword != ''}">（关键词「<span th:text="${keyword}"></span>」）</span>
+        <span th:if="${totalPages == 1}"
+              th:text="|· 一页装得下（每页 ${size} 张），把每页调小就能翻页|"></span>
+    </div>
+    <div class="d-flex align-items-center flex-wrap" style="gap:8px;">
+        <div class="btn-group">
+            <a class="btn btn-sm btn-outline-secondary" th:classappend="${page <= 1} ? 'disabled'"
+               th:href="@{/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword})}">上一页</a>
+            <span class="btn btn-sm btn-outline-secondary disabled" th:text="|${page} / ${totalPages}|"></span>
+            <a class="btn btn-sm btn-outline-secondary" th:classappend="${page >= totalPages} ? 'disabled'"
+               th:href="@{/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword})}">下一页</a>
+        </div>
+        <div class="btn-group" th:if="${pageSizes != null}">
+            <a th:each="s : ${pageSizes}" class="btn btn-sm btn-outline-secondary"
+               th:classappend="${s == size} ? 'active'"
+               th:href="@{/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword})}"
+               th:text="|${s} 张/页|">20 张/页</a>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== 手机端（Tailwind 风格）==================== -->
+<div th:fragment="m">
+    <div class="flex items-center justify-between mt-3 gap-2">
+        <a class="btn btn-sm shrink-0"
+           th:classappend="${page <= 1} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword})}">上一页</a>
+        <div class="text-[11px] opacity-50 tnum text-center leading-tight">
+            <div th:text="|${page} / ${totalPages} 页|"></div>
+            <div th:text="|第 ${from}–${to} 张 / 共 ${total} 张|"></div>
+        </div>
+        <a class="btn btn-sm shrink-0"
+           th:classappend="${page >= totalPages} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword})}">下一页</a>
+    </div>
+    <div class="flex items-center justify-center gap-1.5 mt-2" th:if="${pageSizes != null}">
+        <span class="text-[11px] opacity-50">每页</span>
+        <a th:each="s : ${pageSizes}" class="btn btn-xs"
+           th:classappend="${s == size} ? 'btn-primary' : 'btn-ghost bg-base-200'"
+           th:href="@{/m/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword})}"
+           th:text="${s}">10</a>
+    </div>
+</div>
+
+</body>
+</html>

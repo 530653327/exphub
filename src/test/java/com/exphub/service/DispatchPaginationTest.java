@@ -35,6 +35,9 @@ class DispatchPaginationTest {
             Path.of("src/main/resources/templates/dispatch/list.html");
     private static final Path MOBILE_LIST =
             Path.of("src/main/resources/templates/m/dispatch.html");
+    /** 翻页条的唯一实现（两个端共用）。 */
+    private static final Path PAGER =
+            Path.of("src/main/resources/templates/fragments/dispatch-pager.html");
 
     @Test
     @DisplayName("分页片段带 offset：第 2 页就是跳过前 20 条")
@@ -117,8 +120,10 @@ class DispatchPaginationTest {
         assertFalse(pc.contains("共 <strong th:text=\"${orders.size()}"),
                 "PC 页头仍在用展示条数当总数 —— 单子过一页后这个数就是假的");
 
-        String m = Files.readString(MOBILE_LIST, StandardCharsets.UTF_8);
-        assertTrue(m.contains("${total}"), "手机端没接总数");
+        String pager = Files.readString(PAGER, StandardCharsets.UTF_8);
+        assertTrue(pager.contains("${total}"), "翻页条没接总数");
+        assertFalse(pager.contains("${orders.size()}"),
+                "翻页条在用展示条数当总数 —— 一翻页这个数就是假的");
     }
 
     @Test
@@ -139,23 +144,27 @@ class DispatchPaginationTest {
         DispatchService.PageWindow onePage = DispatchService.pageWindow(19, 1, 20);
         assertEquals(1, onePage.totalPages());
 
-        String pc = Files.readString(PC_LIST, StandardCharsets.UTF_8);
-        String mobile = Files.readString(MOBILE_LIST, StandardCharsets.UTF_8);
-        // 整块翻页容器不许再挂 totalPages 条件（挂上了，单子不足一页时页面上什么都看不到）
-        assertFalse(pc.contains("justify-content-between mt-3\" th:if=\"${totalPages > 1}\""),
-                "PC 翻页条又被藏起来了：单子不足一页时页面看起来就是没有分页");
-        assertFalse(mobile.contains("justify-between mt-3 gap-2\" th:if=\"${totalPages > 1}\""),
-                "手机端翻页条又被藏起来了");
-        // 两个模板都必须给出「每页 N 张」的入口，否则「有没有分页」无法当场验证
-        assertTrue(pc.contains("${pageSizes}") && pc.contains("size=${s}"),
-                "PC 没有每页条数选择器：数据不足一页时无法验证翻页");
-        assertTrue(mobile.contains("${pageSizes}") && mobile.contains("size=${s}"),
-                "手机端没有每页条数选择器");
+        // 只检查「真的会渲染的 markup」—— 注释里引用了旧写法会把字符串断言骗成失败/通过
+        String pager = Files.readString(PAGER, StandardCharsets.UTF_8)
+                .replaceAll("(?s)<!--.*?-->", "");
+        // 翻页条不许再挂 totalPages 条件（挂上了，单子不足一页时页面上什么都看不到）
+        assertFalse(pager.contains("th:if=\"${totalPages > 1}\""),
+                "翻页条又被藏起来了：单子不足一页时页面看起来就是没有分页");
+        // 两个片段都必须给出「每页 N 张」的入口，否则「有没有分页」无法当场验证
+        assertEquals(2, countOccurrences(pager, "${pageSizes}"), "两个端各缺一个每页条数选择器");
+        assertEquals(2, countOccurrences(pager, "size=${s}"), "两个端的每页条数链接都要带 size");
         // 翻页链接必须带 size/status/keyword —— 少一个，翻页就等于重置筛选
-        assertTrue(pc.contains("page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}"),
-                "PC 下一页链接没带全参数");
-        assertTrue(mobile.contains("page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}"),
-                "手机端下一页链接没带全参数");
+        assertEquals(2, countOccurrences(pager,
+                        "page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}"),
+                "下一页链接没带全参数");
+
+        // 两个页面都必须真的引用这个片段，否则「抽出来但没人用」= 页面还是旧的
+        assertTrue(Files.readString(PC_LIST, StandardCharsets.UTF_8)
+                        .contains("~{fragments/dispatch-pager :: pc}"),
+                "PC 列表没引用翻页片段");
+        assertTrue(Files.readString(MOBILE_LIST, StandardCharsets.UTF_8)
+                        .contains("~{fragments/dispatch-pager :: m}"),
+                "手机端列表没引用翻页片段");
     }
 
     private static int countOccurrences(String haystack, String needle) {

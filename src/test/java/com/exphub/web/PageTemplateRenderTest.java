@@ -2,6 +2,7 @@ package com.exphub.web;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import com.exphub.service.DispatchService;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockServletContext;
@@ -158,12 +159,15 @@ class PageTemplateRenderTest {
         ctx.setVariable("keyword", keyword == null ? "" : keyword);
         ctx.setVariable("counts", counts);
         ctx.setVariable("labels", labels);
-        // 2026-11-19 分页新增的四个字段，Controller 必然会给 —— 少一个线上就是 500
+        // 2026-11-19 分页新增的字段，Controller 必然会给 —— 少一个线上就是 500
         ctx.setVariable("total", 0L);
         ctx.setVariable("page", 1);
         ctx.setVariable("totalPages", 1);
         ctx.setVariable("from", 0);
         ctx.setVariable("to", 0);
+        // 每页条数：翻页条（fragments/dispatch-pager）读这两个，不给就是「没有分页」的样子
+        ctx.setVariable("size", 20);
+        ctx.setVariable("pageSizes", DispatchService.PAGE_SIZE_CHOICES);
         ctx.setVariable("_csrf", null);
         return ctx;
     }
@@ -189,6 +193,11 @@ class PageTemplateRenderTest {
                 "下一页链接丢了 status：翻页会把筛选清空");
         assertTrue(html.contains("keyword=%E4%B8%83%E8%89%B2") || html.contains("keyword=七色"),
                 "下一页链接丢了 keyword：翻页会把搜索词清空");
+        // 每页条数必须跟着翻页链接走，否则翻到第 2 页会被打回默认 20 张
+        assertTrue(html.contains("size=20"), "翻页链接丢了 size：翻页会重置每页条数");
+        // 三个档位都要能看见 —— 数据不足一页时，靠调小每页条数才能验证翻页
+        assertTrue(html.contains("10 张/页") && html.contains("50 张/页"),
+                "每页条数选择器没渲染出来，数据不足一页时无法验证翻页");
     }
 
     @Test

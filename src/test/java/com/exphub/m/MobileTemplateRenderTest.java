@@ -115,6 +115,9 @@ class MobileTemplateRenderTest {
         ctx.setVariable("totalPages", 3);
         ctx.setVariable("from", 11);
         ctx.setVariable("to", 20);
+        // 每页条数：翻页条（fragments/dispatch-pager）读这两个
+        ctx.setVariable("size", 10);
+        ctx.setVariable("pageSizes", DispatchService.PAGE_SIZE_CHOICES);
         ctx.setVariable("granted", List.of("修改代码", "commit"));
         ctx.setVariable("suggestedVersion", "1.0.1");
         ctx.setVariable("roles", DispatchService.ASSIGNABLE_ROLES);
@@ -216,6 +219,10 @@ class MobileTemplateRenderTest {
         assertTrue(html.contains("page=1") && html.contains("page=3"),
                 "翻页链接没指向相邻页 —— 点一下可能原地不动");
         assertTrue(html.contains("status=DONE"), "翻页链接丢了 status：一翻页筛选就被清空");
+        // 每页条数：链接要带 size，界面上要能看见选择器（数据不足一页时靠它验证翻页）
+        assertTrue(html.contains("size=10"), "翻页链接丢了 size：一翻页每页条数被打回默认");
+        assertTrue(html.contains("/m/dispatch?page=1") || html.contains("page=1&amp;size"),
+                "每页条数选择器没渲染出来");
     }
 
     @Test
