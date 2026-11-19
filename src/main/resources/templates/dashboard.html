@@ -138,6 +138,91 @@
             </div>
         </div>
 
+        <!-- 派单统计（2026-11-20 W-20261120-000001）
+             数字与 /dispatch 页头同源：各状态读 countByStatus()，总数读无筛选 count()，
+             不在首页另算一套口径。点单号进详情，看全部走右上角。 -->
+        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+            <h5 class="mb-0"><i class="fas fa-paper-plane mr-2"></i>派单</h5>
+            <a class="page-sub" th:href="@{/dispatch}">查看全部 →</a>
+        </div>
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <i class="fas fa-paper-plane icon"></i>
+                    <div>
+                        <div class="number" th:text="${dispatchTotal}">0</div>
+                        <div class="label">累计派单</div>
+                        <div class="small" th:text="'已完成 ' + ${dispatchDone} + ' · 已取消 ' + ${dispatchCounts['CANCELLED']}">已完成 0 · 已取消 0</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card" style="border-left-color: var(--brand);">
+                    <i class="fas fa-inbox icon"></i>
+                    <div>
+                        <div class="number" th:text="${dispatchReady}">0</div>
+                        <div class="label">待接单（等哨兵认领）</div>
+                        <div class="small" th:text="'待审核 ' + ${dispatchReviewing}">待审核 0</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card" style="border-left-color: var(--ok);">
+                    <i class="fas fa-spinner icon"></i>
+                    <div>
+                        <div class="number" th:text="${dispatchRunning}">0</div>
+                        <div class="label">进行中（在哨兵手上）</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card" style="border-left-color: var(--warn);">
+                    <i class="fas fa-hourglass-half icon"></i>
+                    <div>
+                        <div class="number" th:text="${dispatchConfirming}">0</div>
+                        <div class="label">待确认（等回复）</div>
+                        <div class="small" th:text="'待验收 ' + ${dispatchVerifying}">待验收 0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card list-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-list mr-2"></i>最近派单</h5>
+                <span class="page-sub">最新建的 5 张</span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th style="width:190px">单号</th>
+                            <th>标题</th>
+                            <th style="width:90px">状态</th>
+                            <th style="width:90px">指派</th>
+                            <th style="width:150px">更新时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="o : ${dispatchRecent}">
+                            <td><a th:href="@{'/dispatch/' + ${o.orderNo}}" th:text="${o.orderNo}" style="font-family:monospace"></a></td>
+                            <td th:text="${o.title}">-</td>
+                            <td><span class="st" th:classappend="'st-' + ${o.status}" th:text="${dispatchLabels[o.status]}">-</span></td>
+                            <td th:text="${o.assignee}">-</td>
+                            <td class="cell-mute" th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt, 'MM-dd HH:mm') : ''}">-</td>
+                        </tr>
+                        <tr th:if="${dispatchRecent.isEmpty()}">
+                            <td colspan="5" class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <p>还没有任何派单</p>
+                                <p class="empty-hint">AI 通过 dispatch_create 建单、或你在后台新建后，会出现在这里。</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="card mt-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0"><i class="fas fa-chart-line mr-2"></i>近 7 天调用趋势</h5>

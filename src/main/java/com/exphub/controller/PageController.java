@@ -5,9 +5,11 @@ import com.exphub.entity.Doc;
 import com.exphub.entity.ReviewCandidate;
 import com.exphub.entity.AiAssistant;
 import com.exphub.entity.DocVersion;
+import com.exphub.entity.DispatchHeader;
 import com.exphub.mapper.DocMapper;
 import com.exphub.service.AiAssistantService;
 import com.exphub.service.CallLogService;
+import com.exphub.service.DispatchService;
 import com.exphub.service.DocService;
 import com.exphub.service.ReviewCandidateService;
 import com.exphub.service.ProjectService;
@@ -54,6 +56,9 @@ public class PageController extends BaseController {
 
     @Autowired
     private ProjectService projectService;
+
+    @Autowired
+    private DispatchService dispatchService;
 
     // 登录页
     @GetMapping("/login")
@@ -112,6 +117,24 @@ public class PageController extends BaseController {
         model.addAttribute("searchTotal", searchHit.get("totalSearch"));
         model.addAttribute("searchZeroHit", searchHit.get("zeroHit"));
         model.addAttribute("searchZeroRate", String.format("%.1f", ((Number) searchHit.get("zeroRate")).doubleValue() * 100));
+
+        // 派单统计（2026-11-20 W-20261120-000001）
+        // 总数与 /dispatch 页头的「共 N 张单」同源：同一个 count(null, null, null, null, null)，
+        // 无筛选 = 全部；各状态张数与派单列表页读同一个 countByStatus()，不另算一套口径。
+        Map<String, Long> dispatchCounts = dispatchService.countByStatus();
+        Map<String, String> dispatchLabels = new java.util.LinkedHashMap<>();
+        dispatchCounts.forEach((code, n) -> dispatchLabels.put(code, DispatchService.statusLabel(code)));
+        model.addAttribute("dispatchCounts", dispatchCounts);
+        model.addAttribute("dispatchLabels", dispatchLabels);
+        model.addAttribute("dispatchTotal", dispatchService.count(null, null, null, null, null));
+        model.addAttribute("dispatchReady", dispatchCounts.getOrDefault(DispatchHeader.ST_READY, 0L));
+        model.addAttribute("dispatchRunning", dispatchCounts.getOrDefault(DispatchHeader.ST_RUNNING, 0L));
+        model.addAttribute("dispatchConfirming", dispatchCounts.getOrDefault(DispatchHeader.ST_CONFIRMING, 0L));
+        model.addAttribute("dispatchVerifying", dispatchCounts.getOrDefault(DispatchHeader.ST_VERIFYING, 0L));
+        model.addAttribute("dispatchReviewing", dispatchCounts.getOrDefault(DispatchHeader.ST_REVIEWING, 0L));
+        model.addAttribute("dispatchDone", dispatchCounts.getOrDefault(DispatchHeader.ST_DONE, 0L));
+        // 最近 5 张：与派单列表同一排序（id 倒序 = 最新建的在前），不另写 SQL。
+        model.addAttribute("dispatchRecent", dispatchService.list(null, null, null, 5, 0, null));
 
         // 热门文档
         List<Doc> hotDocs = docMapper.selectList(

@@ -227,8 +227,7 @@ class PageTemplateRenderTest {
 
     @Test
     @DisplayName("派单列表：八个状态筛选 + 搜索框都要在，且带关键词时不能渲染成 500")
-    void dispatchListHasAllStatusChipsAndSearch() {
-        SpringTemplateEngine engine = engine();
+    void dispatchListHasAllStatusChipsAndSearch() {        SpringTemplateEngine engine = engine();
 
         String plain;
         try {
@@ -257,6 +256,118 @@ class PageTemplateRenderTest {
         // 状态筛选必须跟关键词一起留在链接里，否则点一下「已取消」就把搜索词丢了
         assertTrue(searched.contains("keyword=%E4%B8%83%E8%89%B2") || searched.contains("keyword=七色"),
                 "状态筛选链接没有带上 keyword，切状态会丢搜索条件");
+    }
+
+    // ==================== 仪表盘派单统计（2026-11-20 W-20261120-000001）====================
+
+    /**
+     * 与 {@code PageController.dashboard} 往 Model 里放的字段逐一对齐。
+     *
+     * <p>首页变量多，少给一个 Thymeleaf 就会在求值时抛 {@code SpelEvaluationException} ——
+     * 那正是这层守卫要拦的（线上就是一个 500 的首页，而且只在点进后台第一屏才暴露）。
+     */
+    private static WebContext dashboardContext(List<com.exphub.entity.DispatchHeader> recent) {
+        MockServletContext servletContext = new MockServletContext();
+        MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
+        request.setContextPath(CTX_PATH);
+        request.setRequestURI(CTX_PATH + "/dashboard");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        JakartaServletWebApplication webApp = JakartaServletWebApplication.buildApplication(servletContext);
+        WebContext ctx = new WebContext(webApp.buildExchange(request, response), Locale.SIMPLIFIED_CHINESE);
+
+        ctx.setVariable("contextPath", CTX_PATH);
+        ctx.setVariable("active", "dashboard");
+        ctx.setVariable("pageTitle", "仪表盘");
+        ctx.setVariable("currentUserName", "越哥");
+
+        ctx.setVariable("totalDocs", 0L);
+        ctx.setVariable("totalCalls", 0L);
+        ctx.setVariable("totalBiz", 0L);
+        ctx.setVariable("totalTool", 0L);
+        ctx.setVariable("todayCalls", 0L);
+        ctx.setVariable("todayBiz", 0L);
+        ctx.setVariable("todayTool", 0L);
+        ctx.setVariable("successRate", "0.0");
+        ctx.setVariable("successSampled", 0L);
+        ctx.setVariable("toolSuccessRate", "0.0");
+        ctx.setVariable("problemDocs", 0L);
+        ctx.setVariable("problemDocsByType", Map.of(
+                "STALE", 0L, "SUPERSEDED", 0L, "FLAGGED", 0L, "PENDING_DELETE", 0L, "BROKEN", 0L));
+        ctx.setVariable("totalAssistants", 0L);
+        ctx.setVariable("totalProjects", 0L);
+        ctx.setVariable("projectDocs", 0L);
+        ctx.setVariable("globalDocs", 0L);
+        ctx.setVariable("staleDocs", 0L);
+        ctx.setVariable("candidatePending", 0L);
+        ctx.setVariable("candidateTotal", 0L);
+        ctx.setVariable("searchTotal", 0L);
+        ctx.setVariable("searchZeroHit", 0L);
+        ctx.setVariable("searchZeroRate", "0.0");
+        ctx.setVariable("hotDocs", List.of());
+
+        Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        counts.put("REVIEWING", 1L);
+        counts.put("READY", 2L);
+        counts.put("RUNNING", 3L);
+        counts.put("CONFIRMING", 4L);
+        counts.put("VERIFYING", 5L);
+        counts.put("DONE", 6L);
+        counts.put("CANCELLED", 7L);
+        Map<String, String> labels = new java.util.LinkedHashMap<>();
+        counts.keySet().forEach(st -> labels.put(st, DispatchService.statusLabel(st)));
+        ctx.setVariable("dispatchCounts", counts);
+        ctx.setVariable("dispatchLabels", labels);
+        ctx.setVariable("dispatchTotal", 28L);
+        ctx.setVariable("dispatchReady", 2L);
+        ctx.setVariable("dispatchRunning", 3L);
+        ctx.setVariable("dispatchConfirming", 4L);
+        ctx.setVariable("dispatchVerifying", 5L);
+        ctx.setVariable("dispatchReviewing", 1L);
+        ctx.setVariable("dispatchDone", 6L);
+        ctx.setVariable("dispatchRecent", recent);
+
+        ctx.setVariable("_csrf", null);
+        return ctx;
+    }
+
+    private static com.exphub.entity.DispatchHeader sampleOrder() {
+        com.exphub.entity.DispatchHeader h = new com.exphub.entity.DispatchHeader();
+        h.setOrderNo("W-20261120-000001");
+        h.setTitle("后台首页仪表盘增加派单统计区块");
+        h.setStatus("RUNNING");
+        h.setAssignee("烛龙");
+        h.setUpdatedAt(java.time.LocalDateTime.of(2026, 11, 20, 9, 30));
+        return h;
+    }
+
+    @Test
+    @DisplayName("仪表盘：派单统计区块要印出四项指标、状态标签，单号要能点进详情")
+    void dashboardShowsDispatchBlock() {
+        SpringTemplateEngine engine = engine();
+        String html;
+        try {
+            html = engine.process("dashboard", dashboardContext(List.of(sampleOrder())));
+        } catch (RuntimeException e) {
+            throw new AssertionError("dashboard 渲染失败，线上后台首页会是一个 500 页。原始异常：" + e.getMessage(), e);
+        }
+        assertTrue(html.contains("派单"), "首页没有派单区块");
+        for (String label : List.of("待接单", "进行中", "待确认", "待验收")) {
+            assertTrue(html.contains(label), "派单统计缺指标文案：" + label);
+        }
+        // 数字要真读模型（28 是 context 里的 dispatchTotal），写死 0 就说明没接上
+        assertTrue(html.contains(">28<"), "累计派单总数没有渲染出来");
+        assertTrue(html.contains("W-20261120-000001"), "最近派单没印单号");
+        assertTrue(html.contains("/exphub/dispatch/W-20261120-000001"), "单号没有链接到派单详情");
+        // 状态标签走 dispatchLabels map；写成死文本就说明没读模型
+        assertTrue(html.contains("st-RUNNING"), "状态标签没带上 CSS 类（列表里会看不出状态）");
+    }
+
+    @Test
+    @DisplayName("仪表盘：一张单都没有时要显示空态，不能是一张空白卡片")
+    void dashboardDispatchEmptyState() {
+        String html = engine().process("dashboard", dashboardContext(List.of()));
+        assertTrue(html.contains("还没有任何派单"), "没有派单时缺空态文案，看起来像没加载出来");
     }
 
 }
