@@ -122,7 +122,11 @@ exphub:
   #          版本比较按数字段（1.0.10 > 1.0.9）；算不出基准就明拒，不再静默给 1.0.0。
   #          推算依据落库（dispatch_header.version_basis），建单回执 / 待审核页都显示；
   #          发版单验收通过时把版本自动回写项目当前版本（只升不降）。
-  version: 2.5.13
+  # 2.5.14 = 派单角色别名补 yinglong→应龙（W-20261119-000010 / #3539）：应龙上岗时漏了
+  #          ROLE_ALIASES 与 ASSIGNABLE_ROLES 两处，dispatch_list 按 code 查单永远落空、
+  #          W-20261119-000007 卡在待接单零 item。补映射 + 后台下拉；新增
+  #          DispatchRoleAliasTest 守住「可指派角色必须都有别名」。
+  version: 2.5.14
   # 工具统计口径（2026-11-19 加）
   tool-stats:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，

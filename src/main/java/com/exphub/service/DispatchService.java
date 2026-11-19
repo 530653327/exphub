@@ -62,8 +62,11 @@ public class DispatchService {
      *
      * <p><b>这是权宜</b>：正解是角色名落库（旧的 mail_roles 已随信箱删除）。
      * 新增角色时**必须同步这里**，否则新角色一律匹配不上。
+     *
+     * <p>可见性为包级（不是 private）：{@code DispatchRoleAliasTest} 要读值集合，
+     * 断言「{@link #ASSIGNABLE_ROLES} 里每个角色都有映射」—— 两处漏一处，测试就红。
      */
-    private static final java.util.Map<String, String> ROLE_ALIASES = java.util.Map.ofEntries(
+    static final java.util.Map<String, String> ROLE_ALIASES = java.util.Map.ofEntries(
             java.util.Map.entry("zhulong", "烛龙"),
             java.util.Map.entry("baize", "白泽"),
             java.util.Map.entry("gezhu", "阁主"),
@@ -77,6 +80,9 @@ public class DispatchService {
             java.util.Map.entry("qiongqi", "穷奇"),
             java.util.Map.entry("luwu", "陆吾"),
             java.util.Map.entry("taotie", "饕餮"),
+            // 2026-11-19 W-20261119-000010：应龙是第 12 个角色，加角色时漏了这张表，
+            // 派单按 role=yinglong 查「指派给谁」一直落空（W-20261119-000007 卡在待接单）。
+            java.util.Map.entry("yinglong", "应龙"),
             java.util.Map.entry("yuege", "越哥"),
             java.util.Map.entry("human", "越哥"));
 
@@ -779,7 +785,7 @@ public class DispatchService {
      */
     public static final List<String> ASSIGNABLE_ROLES = List.of(
             "白泽", "烛龙", "貔貅", "睚眦", "麒麟", "凤凰",
-            "重明鸟", "九尾狐", "帝江", "穷奇", "陆吾", "饕餮");
+            "重明鸟", "九尾狐", "帝江", "穷奇", "陆吾", "饕餮", "应龙");
 
     /**
      * 审核通过：REVIEWING → READY。
