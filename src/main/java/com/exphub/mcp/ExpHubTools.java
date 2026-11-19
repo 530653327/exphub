@@ -6214,7 +6214,9 @@ public class ExpHubTools {
             @ToolParam(description = "可选。只看某个单号的详情（含最近几轮 item）", required = false) String orderNo,
             @ToolParam(description = "可选。状态过滤：DRAFT/REVIEWING/READY/RUNNING/CONFIRMING/VERIFYING/DONE/CANCELLED；不传=全部", required = false) String status,
             @ToolParam(description = "可选。按角色过滤：指派给我或我创建的。不传=用当前角色的身份头", required = false) String role,
-            @ToolParam(description = "可选。返回条数，默认 20，上限 50", required = false) Integer limit,
+            @ToolParam(description = "可选。返回条数，默认 20，上限 50。"
+                    + "⚠️ **本工具没有 offset**：超过 limit 的看不到下一页；"
+                    + "满 limit 时回执会明写「还有多少张未显示」，请用 status / orderNo 收窄，别把「显示了 N 张」当成全部。", required = false) Integer limit,
             @ToolParam(description = "可选。详情里带回多少轮 item。"
                     + "不传 = 3（同一条会话里模型自己记得之前干了什么，不用全塞）；"
                     + "传 **-1 = 全部**（接手、会话重启、要全量复盘时用）；"
@@ -6308,12 +6310,36 @@ public class ExpHubTools {
             for (com.exphub.entity.DispatchHeader h : list) {
                 sb.append(renderDispatchHeader(h)).append("\n\n");
             }
+            // 2026-11-19：limit 是硬截断、没有 offset。返回满 limit 时必须自己说「还有多少张没显示」——
+            // 否则调用方会把「50 张」当成全部（后台原来那版就是这么静默丢单的）。
+            // 只在满 limit 时才多查一次 count：哨兵 20 秒一轮的轮询绝大多数时候只回 0~2 张，不该为它加一次计数。
+            if (list.size() >= lim) {
+                long total = dispatchService.count(r, status, null, null, callerApiKey());
+                sb.append(dispatchMoreHint(list.size(), total, lim));
+            }
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.dispatchList: FAILED", e);
             callLogService.incrementFailCalls();
             return "查单失败: " + e.getClass().getSimpleName() + " - " + e.getMessage();
         }
+    }
+
+    /**
+     * 「还有更多」提示（2026-11-19）。
+     *
+     * <p>为什么单独抽出来：这段文字是**回执里唯一能说明「你看到的不是全部」的地方**，
+     * 措辞错了比不加更糟 —— 说「还有更多」却不给数字，读者没法判断该收窄还是调大 limit。
+     * 所以数字必须来自真实 count()，且「没有 offset」这句不能省，否则下一个 AI 会一直调大 limit 想翻页。
+     *
+     * @return total &gt; shown 时的提示；否则空串（**没差额就一个字都不许印**）
+     */
+    static String dispatchMoreHint(int shown, long total, int lim) {
+        if (total <= shown) return "";
+        return "——\n⚠️ 本次显示 " + shown + " 张 / 共 " + total + " 张（limit=" + lim + "）。另有 "
+                + (total - shown) + " 张未显示 —— 本工具**没有 offset，看不到下一页**；"
+                + "请用 status / orderNo 收窄，或调大 limit（上限 "
+                + com.exphub.service.DispatchService.MAX_PAGE_SIZE + "）。\n";
     }
 
     @Tool(name = "dispatch_claim",
