@@ -26,11 +26,28 @@ package com.exphub.service;
  */
 public final class ToolPollPolicy {
 
-    /** 被按行排除轮询的工具名 */
+    /** 被按行排除轮询的工具名（已于 2026-11-16 随信箱功能下线，这里只为挡历史行） */
     public static final String MAIL_START = "mail_start";
 
     /**
-     * SQL 片段：**保留**「不是哨兵轮询」的行（也就是把 mail_start 的 is_poll=1/NULL 排掉）。
+     * 整体不计入统计的工具名（2026-11-19 越哥）。
+     *
+     * <p>与 {@link #MAIL_START} 的区别：mail_start 只能**按行**排（同一工具里还混着真实读信）；
+     * dispatch_list 的每次调用都没有判断价值，所以是**整体**排除 —— 新调用由
+     * {@link ToolTelemetryPolicy} 挡在写埋点之前，这里是挡开关上线前的**历史行**。
+     */
+    public static final String DISPATCH_LIST = "dispatch_list";
+
+    /**
+     * SQL 片段：**保留**「算进统计」的行。
+     *
+     * <p>三条口径合在一起：
+     * <ul>
+     *   <li>{@code mail_start}：只留 {@code is_poll=0}（真实读信），轮询与迁移前未分类都排掉；</li>
+     *   <li>{@code dispatch_list}：整体排掉（历史行仍在表里，但新埋点已经不写了，
+     *       这个数会随窗口推移自然降到 0）；</li>
+     *   <li>其余工具与业务行（{@code tool_name IS NULL}）一律保留。</li>
+     * </ul>
      *
      * <p>必须是编译期常量，MyBatis {@code @Select} 注解里才能拼接。
      *
@@ -41,7 +58,9 @@ public final class ToolPollPolicy {
      * 先把 {@code tool_name IS NULL} 放最前面短路。
      */
     public static final String EXCLUDE_POLL_SQL =
-            "(tool_name IS NULL OR tool_name <> '" + MAIL_START + "' OR is_poll = 0)";
+            "(tool_name IS NULL"
+                    + " OR tool_name NOT IN ('" + MAIL_START + "', '" + DISPATCH_LIST + "')"
+                    + " OR (tool_name = '" + MAIL_START + "' AND is_poll = 0))";
 
     private ToolPollPolicy() {
     }
@@ -51,6 +70,11 @@ public final class ToolPollPolicy {
         return MAIL_START.equals(toolName);
     }
 
+    /** 这个工具是否**整体**不计入统计（目前只有 dispatch_list） */
+    public static boolean isStatsExcludedTool(String toolName) {
+        return DISPATCH_LIST.equals(toolName);
+    }
+
     /**
      * 页面与 MCP 工具共用的口径说明。**同一句话只在这里生成** ——
      * 两处各写一份，迟早出现「页面说排除 19 万、工具说 0」。
@@ -58,9 +82,12 @@ public final class ToolPollPolicy {
      * @param polls        窗口内明确标记为轮询（is_poll=1）的调用数
      * @param realCalls    窗口内明确标记为真实读信（is_poll=0）的调用数
      * @param unclassified 窗口内 deploy 前历史未分类（is_poll IS NULL）的调用数，也计入排除
+     * @param dispatchCalls 窗口内 dispatch_list 的**历史**埋点数（2026-11-19 起不再写新行）
+     * @param dispatchLastAt 窗口内 dispatch_list 最后一次调用时间（已格式化为 MM-dd HH:mm），没有则空
      * @param days         统计窗口天数
      */
-    public static String explain(long polls, long realCalls, long unclassified, int days) {
+    public static String explain(long polls, long realCalls, long unclassified,
+                                 long dispatchCalls, String dispatchLastAt, int days) {
         StringBuilder sb = new StringBuilder();
         long excluded = polls + unclassified;
         sb.append("近 ").append(days).append(" 天已排除 mail_start 调用 ").append(excluded).append(" 次");
@@ -73,6 +100,19 @@ public final class ToolPollPolicy {
             }
         }
         sb.append("；真实读信 ").append(realCalls).append(" 次仍计入。");
+
+        // dispatch_list：整体不计统计。这个数是**历史行**，会随窗口推移归零 ——
+        // 不写清这一点，读的人会以为「怎么还在排除」。
+        sb.append(" dispatch_list 整体不计统计：");
+        if (dispatchCalls > 0) {
+            sb.append("窗口内历史埋点 ").append(dispatchCalls).append(" 次");
+            if (dispatchLastAt != null && !dispatchLastAt.isBlank()) {
+                sb.append("（最后一次 ").append(dispatchLastAt).append("）");
+            }
+            sb.append("；2026-11-19 起不再写新埋点，所以这个数会随时间降到 0，不是漏统计。");
+        } else {
+            sb.append("窗口内已无历史埋点（2026-11-19 起不再写新行）。");
+        }
         return sb.toString();
     }
 }

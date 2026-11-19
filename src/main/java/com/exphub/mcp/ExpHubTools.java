@@ -82,6 +82,10 @@ public class ExpHubTools {
     @Autowired
     private McpToolRegistry mcpToolRegistry;
 
+    /** 「哪些工具不写埋点」的口径（2026-11-19 越哥：dispatch_list 指标太高）。 */
+    @Autowired(required = false)
+    private com.exphub.service.ToolTelemetryPolicy telemetryPolicy;
+
     @Autowired
     private ProjectService projectService;
 
@@ -2658,7 +2662,7 @@ public class ExpHubTools {
      * <p>关键一项是 <b>从未被调用的已注册工具</b>：注册表 + 埋点两边一减就知道哪些工具从来没被用过 ——
      * 这是精简的第一手依据，比「我觉得这个没人用」可靠。
      */
-    @Tool(name = "get_tool_stats", description = "【只读】工具调用统计：总览、使用榜、每日趋势、**从未被调用的工具清单**。数据来自 call_logs，只统计不修改。**历史 mail_start 哨兵轮询记录已按行排除**（该工具已于 2026-11-16 随信箱功能下线），回执会报排除数。")
+    @Tool(name = "get_tool_stats", description = "【只读】工具调用统计：总览、使用榜、每日趋势、**从未被调用的工具清单**。数据来自 call_logs，只统计不修改。**mail_start 历史哨兵轮询按行排除、dispatch_list 自 2026-11-19 起整条不写埋点**（两者都不在任何统计里，回执会报排除数），所以榜上看到的是「其余工具」的真实对比。")
     public String getToolStats(
             @ToolParam(description = "可选。统计最近几天，默认 7，上限 90", required = false) Integer days,
             @ToolParam(description = "可选。使用榜最多列几个工具，默认 20，上限 50", required = false) Integer limit) {
@@ -2684,8 +2688,16 @@ public class ExpHubTools {
             long polls = pollStats == null ? 0L : num(firstNonNull(pollStats, "polls", "POLLS"));
             long realCalls = pollStats == null ? 0L : num(firstNonNull(pollStats, "realCalls", "REALCALLS"));
             long unclassified = pollStats == null ? 0L : num(firstNonNull(pollStats, "unclassified", "UNCLASSIFIED"));
+            Map<String, Object> excludedStats = callLogService.getStatsExcludedToolStats(d);
+            long dispatchCalls = excludedStats == null ? 0L : num(firstNonNull(excludedStats, "calls", "CALLS"));
+            Object lastAt = excludedStats == null ? null : firstNonNull(excludedStats, "lastCallAt", "LASTCALLAT");
+            String dispatchLastAt = lastAt == null ? "" : String.valueOf(lastAt);
+            if (dispatchLastAt.length() >= 16) {
+                // "2026-11-19 15:08:33.0" -> "11-19 15:08"
+                dispatchLastAt = dispatchLastAt.substring(5, 16);
+            }
             sb.append("**统计排除**: ")
-              .append(ToolPollPolicy.explain(polls, realCalls, unclassified, d))
+              .append(ToolPollPolicy.explain(polls, realCalls, unclassified, dispatchCalls, dispatchLastAt, d))
               .append("\n");
 
             java.util.Set<String> called = new java.util.LinkedHashSet<>();
@@ -2695,9 +2707,12 @@ public class ExpHubTools {
             }
             java.util.List<String> neverCalled = new java.util.ArrayList<>();
             for (String t : registered.keySet()) {
-                // 历史 mail_start 调用量极大，只是按口径不计入统计；列进「从未被调用」会直接误导精简决策
-                // （工具已于 2026-11-16 下线，这片排除逻辑只用于挡历史脏数据）
-                if (ToolPollPolicy.isPollExcludedTool(t)) continue;
+                // 不计统计的工具不许进「从未被调用」：
+                // mail_start 是历史调用量最大的（只按下线后的口径排除），
+                // dispatch_list 从 2026-11-19 起干脆不写埋点 —— 它每回合都在被调，
+                // 列成「精简候选」是彻底的误导。
+                if (ToolPollPolicy.isPollExcludedTool(t) || ToolPollPolicy.isStatsExcludedTool(t)) continue;
+                if (telemetryPolicy != null && telemetryPolicy.isSkipped(t)) continue;
                 if (!called.contains(t)) neverCalled.add(t);
             }
             sb.append("\n**从未被调用（近 ").append(d).append(" 天，共 ")
@@ -2748,7 +2763,9 @@ public class ExpHubTools {
             sb.append("\n⚠️ 口径：`action='TOOL'` 由工具调用切面写入；**没有经过 MCP 的调用不会出现在这里**。"
                     + "「有调用的工具数」按近 ").append(d).append(" 天算，总数按注册表算 —— 两个数不同源，别相减去推别的结论。")
               .append("mail_start 已于 2026-11-16 下线，历史轮询记录按行排除，既不在使用榜、也不在「从未被调用」清单里；")
-              .append("它的真实读信仍计入上面的总调用与成功率。\n");
+              .append("它的真实读信仍计入上面的总调用与成功率。")
+              .append("dispatch_list 自 2026-11-19 起**整条不写埋点**（每回合都调，7 天 4.5 万次会把其它工具压成噪音），")
+              .append("所以它既不占榜也不进「从未被调用」；想知道哨兵还在不在开工，看派单列表，不看这里。\n");
             return sb.toString();
         } catch (Exception e) {
             log.error("ExpHubTools.getToolStats: FAILED", e);

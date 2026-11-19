@@ -473,6 +473,11 @@ public class CallLogService {
         return callLogMapper.getMailStartPollStats(days);
     }
 
+    /** 整体不计统计的工具（dispatch_list）在窗口内剩余的历史埋点数与最后调用时间 */
+    public Map<String, Object> getStatsExcludedToolStats(int days) {
+        return callLogMapper.getStatsExcludedToolStats(days);
+    }
+
     public List<Map<String, Object>> getAssistantRanking(int limit) {
         return getTopAssistants(limit);
     }

@@ -37,6 +37,13 @@ public class ToolCallAspect {
     @Autowired
     private CallLogService callLogService;
 
+    /**
+     * 「哪些工具不写埋点」的口径（2026-11-19 越哥：dispatch_list 指标太高，把其它工具压成噪音）。
+     * {@code required=false}：单测里不注入时按「全都写」处理。
+     */
+    @Autowired(required = false)
+    private com.exphub.service.ToolTelemetryPolicy telemetryPolicy;
+
     @Around("execution(public * com.exphub.mcp.ExpHubTools.*(..))")
     public Object aroundToolCall(ProceedingJoinPoint pjp) throws Throwable {
         long start = System.currentTimeMillis();
@@ -53,13 +60,26 @@ public class ToolCallAspect {
             throw e;
         } finally {
             try {
-                if (toolName != null) {
+                if (toolName != null && !skipTelemetry(toolName)) {
                     callLogService.logToolCall(toolName, success, System.currentTimeMillis() - start, isPoll);
                 }
             } catch (Exception ignored) {
                 // 埋点失败不影响工具返回；只留 debug，避免刷 error 日志
                 log.debug("ToolCallAspect: 埋点写入失败 tool={} err={}", toolName, ignored.getMessage());
             }
+        }
+    }
+
+    /** 不写埋点的判断；策略缺失/异常一律按「写」处理（宁可多记一行，也不静默丢数据）。 */
+    private boolean skipTelemetry(String toolName) {
+        if (telemetryPolicy == null) {
+            return false;
+        }
+        try {
+            return telemetryPolicy.isSkipped(toolName);
+        } catch (Exception e) {
+            log.debug("ToolCallAspect: 判断是否跳过埋点失败 tool={} err={}", toolName, e.getMessage());
+            return false;
         }
     }
 

@@ -111,4 +111,15 @@ public interface CallLogMapper extends BaseMapper<CallLog> {
             "FROM call_logs WHERE action = 'TOOL' AND tool_name = '" + ToolPollPolicy.MAIL_START + "' " +
             "AND created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY)")
     Map<String, Object> getMailStartPollStats(@Param("days") int days);
+
+    /**
+     * 整体不计统计的工具（{@link ToolPollPolicy#DISPATCH_LIST}）在窗口内还剩多少**历史**埋点。
+     *
+     * <p>2026-11-19 起这个工具不再写新行（{@link com.exphub.service.ToolTelemetryPolicy}），
+     * 所以这个数只会随时间下降；回执拿它说明「排除的是历史存量，不是漏统计」。
+     */
+    @Select("SELECT COUNT(*) AS calls, MAX(created_at) AS lastCallAt " +
+            "FROM call_logs WHERE action = 'TOOL' AND tool_name = '" + ToolPollPolicy.DISPATCH_LIST + "' " +
+            "AND created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY)")
+    Map<String, Object> getStatsExcludedToolStats(@Param("days") int days);
 }

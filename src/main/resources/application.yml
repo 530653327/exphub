@@ -95,7 +95,17 @@ exphub:
   #         失败重试 2 次、同一轮去重 10 分钟、每小时 20 封/每天 100 封（超限累计进下一封）；
   #         缺 EXPHUB_MAIL_HOST/USER/PASS/TO 任一项 = 未配置：启动不报错、发信跳过，派单主流程照跑。
   #         ⚠️ 不配 spring.mail.*（避免自动配置建 bean 的启动依赖），凭证只写 /etc/exphub/.env，日志零回显。
-  version: 2.5.7
+  # 2.5.8 = dispatch_list 不再写调用埋点（越哥 2026-11-19）：它 7 天被调 4.5 万次，占「排除历史信箱轮询后」
+  #         全部工具调用的 82%，其它工具在榜上只剩 1% 以下，成功率/占比/趋势的对比全部失去意义。
+  #         新调用在切面层就不写 call_logs（不是写了再排除）；历史行由 ToolPollPolicy.EXCLUDE_POLL_SQL
+  #         排除，回执写明「窗口内历史埋点 N 次，会随时间降到 0」；它也不进「从未被调用」清单。
+  #         开关：exphub.tool-stats.skip-telemetry（空串 = 恢复该工具的埋点）。
+  version: 2.5.8
+  # 工具统计口径（2026-11-19 加）
+  tool-stats:
+    # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，
+    # 不需要改代码；置空 = 恢复埋点。加工具名之前先问一句：它的**每一次**调用都不携带判断价值吗？
+    skip-telemetry: ${EXPHUB_TOOL_SKIP_TELEMETRY:dispatch_list}
   mcp:
     # 2026-11-17 停用 SSE。越哥：「那个没有重连功能，用起来不方便」。
     # 背景：SSE 有会话概念，服务一重启会话就失效（sse_session_not_found），

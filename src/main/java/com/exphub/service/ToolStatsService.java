@@ -33,6 +33,9 @@ public class ToolStatsService {
     @Autowired
     private McpToolRegistry toolRegistry;
 
+    @Autowired(required = false)
+    private ToolTelemetryPolicy telemetryPolicy;
+
     /**
      * 看板全量数据。
      *
@@ -55,15 +58,15 @@ public class ToolStatsService {
         overview.put("registrySize", registrySize);
         overview.put("zeroTools", Math.max(0, registrySize - activeTools));
         overview.put("successRate", total > 0 ? Math.round(successCalls * 1000.0 / total) / 10.0 : 0.0);
-        // 注册表里有、但按口径整体不计统计的工具（目前仅 mail_start）。
+        // 注册表里有、但按口径整体不计统计的工具（mail_start 历史轮询 / dispatch_list 不写埋点）。
         // 不单独说清楚的话，「有过调用 x / 注册 y」会被读成「有工具零调用」，而零调用清单里又没有它。
-        int pollExcludedTools = 0;
+        int statsExcludedTools = 0;
         for (String t : toolRegistry.getTools().keySet()) {
-            if (ToolPollPolicy.isPollExcludedTool(t)) {
-                pollExcludedTools++;
+            if (ToolPollPolicy.isPollExcludedTool(t) || ToolPollPolicy.isStatsExcludedTool(t)) {
+                statsExcludedTools++;
             }
         }
-        overview.put("pollExcludedTools", pollExcludedTools);
+        overview.put("statsExcludedTools", statsExcludedTools);
 
         // 2. 工具使用榜（窗口内）
         List<Map<String, Object>> ranking = callLogMapper.getToolRanking(days);
@@ -97,9 +100,11 @@ public class ToolStatsService {
         // 3. 零调用工具（注册表 - 实际调用）
         List<Map<String, Object>> zeroTools = new ArrayList<>();
         for (Map.Entry<String, String> entry : toolRegistry.getTools().entrySet()) {
-            // 按行排除轮询的工具整体不进使用榜，也不该被当成「零调用」——
-            // 它恰恰是调用量最大的工具，列进精简候选会误导。
-            if (ToolPollPolicy.isPollExcludedTool(entry.getKey())) {
+            // 按口径不计统计的工具整体不进使用榜，也不该被当成「零调用」——
+            // mail_start 是历史上调用量最大的、dispatch_list 是每回合都调的，
+            // 把它们列进精简候选会直接把人带偏。不写埋点后 dispatch_list 更会「看起来零调用」。
+            if (ToolPollPolicy.isPollExcludedTool(entry.getKey())
+                    || ToolPollPolicy.isStatsExcludedTool(entry.getKey())) {
                 continue;
             }
             if (!called.contains(entry.getKey())) {
@@ -121,7 +126,7 @@ public class ToolStatsService {
             }
         }
 
-        // 5. 被排除的轮询调用（页面与 get_tool_stats 共用同一句话）
+        // 5. 被排除的调用（页面与 get_tool_stats 共用同一句话）
         Map<String, Object> excluded = callLogMapper.getMailStartPollStats(days);
         if (excluded == null) {
             excluded = new HashMap<>();
@@ -129,12 +134,26 @@ public class ToolStatsService {
         long polls = toLong(excluded.get("polls"));
         long realCalls = toLong(excluded.get("realCalls"));
         long unclassified = toLong(excluded.get("unclassified"));
+
+        Map<String, Object> statsExcluded = callLogMapper.getStatsExcludedToolStats(days);
+        long dispatchCalls = statsExcluded == null ? 0L : toLong(statsExcluded.get("calls"));
+        String dispatchLastAt = formatTime(statsExcluded == null ? null : statsExcluded.get("lastCallAt"));
+        if ("-".equals(dispatchLastAt)) {
+            dispatchLastAt = "";
+        }
+
         excluded.put("polls", polls);
         excluded.put("realCalls", realCalls);
         excluded.put("unclassified", unclassified);
+        excluded.put("dispatchListCalls", dispatchCalls);
+        excluded.put("dispatchListLastAt", dispatchLastAt);
+        excluded.put("skipTelemetry", telemetryPolicy == null
+                ? List.<String>of()
+                : telemetryPolicy.skipped());
         excluded.put("since", LocalDateTime.now().minusDays(days)
                 .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
-        excluded.put("text", ToolPollPolicy.explain(polls, realCalls, unclassified, days));
+        excluded.put("text", ToolPollPolicy.explain(polls, realCalls, unclassified,
+                dispatchCalls, dispatchLastAt, days));
 
         out.put("overview", overview);
         out.put("ranking", ranking);
