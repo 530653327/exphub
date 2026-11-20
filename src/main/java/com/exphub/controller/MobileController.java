@@ -241,13 +241,14 @@ public class MobileController {
                                  @RequestParam(required = false) Boolean spend,
                                  @RequestParam(required = false) Long projectId,
                                  @RequestParam(required = false) String version,
+                                 @RequestParam(required = false) String milestone,
                                  RedirectAttributes ra) {
         Map<String, Boolean> auths = authsMap(modifyCode, commit, push, release, dataWrite,
                 migration, credential, prodConfig, securityGroup, firewall, spend);
 
         DispatchService.Outcome out = dispatchService.create(
                 DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
-                assignee, title, description, priority, projectId, auths, null, version);
+                assignee, title, description, priority, projectId, auths, null, version, milestone);
         if (!out.ok() || out.header() == null) {
             ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
             return "redirect:/m/dispatch/new";

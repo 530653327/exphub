@@ -93,6 +93,15 @@ public class DispatchHeader {
      * 与当时建单的依据可能不是一回事，审核的人就没法判断这个号当初为什么这么给。
      */
     private String versionBasis;
+
+    /**
+     * 里程碑（2026-11-20 W-20261120-000026，越哥定的燃尽图口径）。
+     *
+     * <p>一单挂一个，可选；空 = 独立单，不归任何里程碑。老单不回填。
+     * 燃尽图按这个字段精确匹配聚合，迁移脚本里加了索引。建单后不提供修改入口
+     * （与授权位一致：同一件事的单归属不能中途换族）。
+     */
+    private String milestone;
     private Long projectId;
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;

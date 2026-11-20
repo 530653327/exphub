@@ -143,6 +143,33 @@ public class DispatchService {
     public Outcome create(String creator, String origin, String assignee, String title, String description,
                           Integer priority, Long projectId, java.util.Map<String, Boolean> auths,
                           String apiKey, String version) {
+        return create(creator, origin, assignee, title, description,
+                priority, projectId, auths, apiKey, version, null);
+    }
+
+    /** 里程碑字符上限：与 DDL 的 VARCHAR(64) 对齐，按 Unicode 码点计（emoji 算 1 个）。 */
+    public static final int MAX_MILESTONE_CHARS = 64;
+
+    /**
+     * 建单（带里程碑，W-20261120-000026）。milestone 可空：空串等同独立单。
+     *
+     * <p><b>超长明拒，绝不静默截断</b>：把「里程碑A很长…」截成 64 字可能与另一单截成同一串，
+     * 于是两张不相干的单被聚合到同一张燃尽图上 —— 静默修正把错误伪装成正常，比直接失败糟。
+     * 收到什么、为什么拒，全部回显给调用方。
+     */
+    @Transactional
+    public Outcome create(String creator, String origin, String assignee, String title, String description,
+                          Integer priority, Long projectId, java.util.Map<String, Boolean> auths,
+                          String apiKey, String version, String milestone) {
+        String ms = milestone == null ? null : milestone.trim();
+        int msChars = ms == null ? 0 : ms.codePointCount(0, ms.length());
+        if (msChars > MAX_MILESTONE_CHARS) {
+            String shown = ms.length() <= 80 ? ms : ms.substring(0, 80) + "…";
+            return Outcome.fail("里程碑超过 " + MAX_MILESTONE_CHARS + " 字符（收到 " + msChars
+                    + "，内容：" + shown + "）—— 已拒绝建单，不会静默截断"
+                    + "（截断会把两个不同里程碑拼成同一个，燃尽图数据串味）");
+        }
+        if (ms != null && ms.isEmpty()) ms = null;
         creator = canonicalRole(creator);
         assignee = canonicalRole(assignee);
         if (creator == null || creator.isBlank()) return Outcome.fail("创建人不能为空");
@@ -182,6 +209,7 @@ public class DispatchService {
         h.setAssignee(assignee.trim());
         h.setPriority(priority == null ? 3 : priority);
         h.setProjectId(projectId);
+        h.setMilestone(ms);
         // 版本号：只有勾了「发版」才有意义。没填就按「基准末尾 +1」自动算；
         // 算不出来就明拒，不许静默给一个 1.0.0（W-20261119-000006 就是错号被静默接受）。
         boolean willRelease = auths != null && Boolean.TRUE.equals(auths.get("release"));
@@ -219,7 +247,7 @@ public class DispatchService {
         // 审核通过是后续单独一条 REVIEW_PASS —— 不要混成一条，否则流水里看不到「谁建的、谁审的」。
         recordEvent(h.getOrderNo(), DispatchEvent.EV_CREATE, null, DispatchHeader.ST_REVIEWING,
                 h.getCreator(), human ? DispatchEvent.ACTOR_HUMAN : DispatchEvent.ACTOR_AI,
-                null, h.getCreatedAt());
+                ms == null ? null : "里程碑：" + ms, h.getCreatedAt());
         log.info("DispatchService.create: order={}, origin={}, creator={}, assignee={}, ownerKey={}",
                 h.getOrderNo(), h.getOrigin(), h.getCreator(), h.getAssignee(), maskKey(h.getApiKey()));
         String versionNote = willRelease
@@ -443,7 +471,51 @@ public class DispatchService {
         return c == null ? 0L : c;
     }
 
+    /**
+     * 里程碑下的全部单（按建单先后）。空/空白里程碑返回空表，
+     * **绝不退化成「不加 WHERE 查全部」** —— 那是燃尽图最危险的错：漏传参数却返回全库。
+     */
+    public List<DispatchHeader> byMilestone(String milestone) {
+        if (milestone == null || milestone.isBlank()) return List.of();
+        return headerMapper.selectList(new QueryWrapper<DispatchHeader>()
+                .eq("milestone", milestone.trim()).orderByAsc("id"));
+    }
+
+    /** 与 {@link #byMilestone} 同一口径的分页与计数（右栏「展开里程碑看单头」用）。 */
+    public long countByMilestone(String milestone) {
+        return countByMilestone(milestone, null);
+    }
+
+    public long countByMilestone(String milestone, String status) {
+        if (milestone == null || milestone.isBlank()) return 0L;
+        QueryWrapper<DispatchHeader> q = new QueryWrapper<DispatchHeader>().eq("milestone", milestone.trim());
+        applyStatus(q, status);
+        Long c = headerMapper.selectCount(q);
+        return c == null ? 0L : c;
+    }
+
+    public List<DispatchHeader> listByMilestone(String milestone, int limit, int offset) {
+        return listByMilestone(milestone, null, limit, offset);
+    }
+
+    public List<DispatchHeader> listByMilestone(String milestone, String status, int limit, int offset) {
+        if (milestone == null || milestone.isBlank()) return List.of();
+        QueryWrapper<DispatchHeader> q = new QueryWrapper<DispatchHeader>()
+                .eq("milestone", milestone.trim()).orderByAsc("id");
+        applyStatus(q, status);
+        String page = limitClause(limit, offset);
+        if (page != null) q.last(page);
+        return headerMapper.selectList(q);
+    }
+
     /** 列表与统计共用的过滤条件（不含排序、不含分页）。 */
+    /** 状态过滤唯一出口：列表/计数/里程碑筛选共用，不许各拼一份（否则页头与翻页口径会漂）。 */
+    static void applyStatus(QueryWrapper<DispatchHeader> q, String status) {
+        if (status != null && !status.isBlank()) {
+            q.eq("status", status.trim().toUpperCase(java.util.Locale.ROOT));
+        }
+    }
+
     static QueryWrapper<DispatchHeader> buildFilter(String role, String status, String orderNo,
                                                     String keyword, String apiKey) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<>();
@@ -452,9 +524,7 @@ public class DispatchService {
         if (orderNo != null && !orderNo.isBlank()) {
             q.eq("order_no", orderNo.trim());
         }
-        if (status != null && !status.isBlank()) {
-            q.eq("status", status.trim().toUpperCase(java.util.Locale.ROOT));
-        }
+        applyStatus(q, status);
         if (role != null && !role.isBlank()) {
             String r = role.trim();
             q.and(w -> w.eq("assignee", r).or().eq("creator", r));

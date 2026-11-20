@@ -81,12 +81,13 @@ class DispatchReadTokenInterceptorTest {
     }
 
     @Test
-    @DisplayName("两个只读接口只有 @GetMapping，没有任何写方法注解")
+    @DisplayName("三个只读接口只有 @GetMapping，没有任何写方法注解")
     void controllerIsReadOnly() throws Exception {
         String src = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/exphub/controller/DispatchApiController.java")), StandardCharsets.UTF_8)
                 .replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
-        assertEquals(2, countOccurrences(src, "@GetMapping"), "应该正好两个 GET 接口");
+        assertEquals(3, countOccurrences(src, "@GetMapping"),
+                "应该正好三个 GET 接口（events/orders/burndown）—— burndown 是 026 新增的只读聚合接口");
         for (String write : new String[]{"@PostMapping", "@PutMapping", "@DeleteMapping", "@PatchMapping"}) {
             assertFalse(src.contains(write), "只读接口里出现了写方法 " + write);
         }

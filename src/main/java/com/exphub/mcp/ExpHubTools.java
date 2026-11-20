@@ -6187,7 +6187,10 @@ public class ExpHubTools {
             @ToolParam(description = "授权：花钱", required = false) Boolean allowSpend,
             @ToolParam(description = "可选。发版版本号。**只有勾了发版（allowRelease）才有意义**；"
                     + "不填会自动取号：按项目当前版本（或项目历史发版单里数值最大的一版）末尾数字 +1。"
-                    + "**没有项目又没填版本号会被明确拒绝**——系统不会静默给 1.0.0。", required = false) String version) {
+                    + "**没有项目又没填版本号会被明确拒绝**——系统不会静默给 1.0.0。", required = false) String version,
+            @ToolParam(description = "可选。里程碑（最多 64 字符）：把几个哨兵分散做的同一件事串起来，燃尽图按它聚合。"
+                    + "不传 = 独立单，不归任何里程碑（老单也不回填）。超 64 字符会被明确拒绝，不会静默截断。",
+                    required = false) String milestone) {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) {
@@ -6209,7 +6212,7 @@ public class ExpHubTools {
 
             com.exphub.service.DispatchService.Outcome out = dispatchService.create(
                     me, com.exphub.entity.DispatchHeader.ORIGIN_AI, assignee, title, description,
-                    priority, projectId, auths, callerApiKey(), version);
+                    priority, projectId, auths, callerApiKey(), version, milestone);
             if (!out.ok()) return "❌ " + out.message();
 
             com.exphub.entity.DispatchHeader h = out.header();
@@ -6219,6 +6222,9 @@ public class ExpHubTools {
             sb.append("**标题**: ").append(h.getTitle()).append("\n");
             sb.append("**指派**: ").append(h.getAssignee()).append("\n");
             sb.append("**授权位**: ").append(grantedAuths(h));
+            if (h.getMilestone() != null && !h.getMilestone().isBlank()) {
+                sb.append("\n**里程碑**: ").append(h.getMilestone());
+            }
             if (h.getVersion() != null && !h.getVersion().isBlank()) {
                 sb.append("\n**发版版本号**: ").append(h.getVersion());
                 if (h.getVersionBasis() != null && !h.getVersionBasis().isBlank()) {

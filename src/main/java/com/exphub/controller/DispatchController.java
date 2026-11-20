@@ -153,6 +153,7 @@ public class DispatchController extends BaseController {
                          @RequestParam(required = false) Boolean spend,
                          @RequestParam(required = false) Long projectId,
                          @RequestParam(required = false) String version,
+                         @RequestParam(required = false) String milestone,
                          RedirectAttributes ra) {
         Map<String, Boolean> auths = new LinkedHashMap<>();
         auths.put("modifyCode", modifyCode);
@@ -169,7 +170,7 @@ public class DispatchController extends BaseController {
 
         DispatchService.Outcome out = dispatchService.create(
                 DispatchService.HUMAN_OPERATOR, DispatchHeader.ORIGIN_HUMAN,
-                assignee, title, description, priority, projectId, auths, null, version);
+                assignee, title, description, priority, projectId, auths, null, version, milestone);
         if (!out.ok() || out.header() == null) {
             ra.addFlashAttribute("error", out.ok() ? "建单未返回单号" : out.message());
             return "redirect:/dispatch/new";
