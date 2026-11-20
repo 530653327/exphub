@@ -44,6 +44,10 @@ public class SecurityConfig {
                 // 公开 API：登录注册、版本信息、分享、模板列表（与 WebMvcConfig 的
                 // ApiKeyInterceptor excludePathPatterns 保持一致）
                 .requestMatchers("/api/auth/**", "/api/info", "/api/share/**", "/api/templates/**").permitAll()
+                // W-20261120-000025：派单只读 JSON 接口用专用 X-Dispatch-Token 鉴权（DispatchReadTokenInterceptor），
+                // 不依赖 session，也不能被这里的 authenticated() 挡成 302 登录页。
+                // 与 WebMvcConfig 的 ApiKeyInterceptor excludePathPatterns 三处口径必须一致。
+                .requestMatchers("/api/dispatch/**").permitAll()
                 // 其余后台 API 必须 Session 登录
                 // ⚠️ 历史上这里写的是 /api/** permitAll，与 ApiKeyInterceptor「要求 Session」的口径不一致，
                 // 靠拦截器兜住了；现在两层口径统一为「需登录」，避免将来拦截器放行时出现裸奔

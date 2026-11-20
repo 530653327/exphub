@@ -138,6 +138,15 @@ exphub:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，
     # 不需要改代码；置空 = 恢复埋点。加工具名之前先问一句：它的**每一次**调用都不携带判断价值吗？
     skip-telemetry: ${EXPHUB_TOOL_SKIP_TELEMETRY:dispatch_list}
+
+  # 派单只读 JSON API（W-20261120-000025）：/api/dispatch/events 与 /api/dispatch/orders
+  # 给忆阁右栏看操作流水用。专用只读 token，不复用 MCP 那把能写全库的 Key。
+  # ⚠️ 真值写在服务器 /etc/exphub/.env（EXPHUB_DISPATCH_READ_TOKEN）；这里默认空 = 未配置 = 一律 401（fail-closed）。
+  # ⚠️ 不要把 token 硬编码进代码、写进日志或贴进任何经验/回执。
+  dispatch:
+    read-api-token: ${EXPHUB_DISPATCH_READ_TOKEN:}
+    # 历史事件回填开关：默认 false，绝不因应用启动就改历史数据。要回填时显式置 true 跑一次。
+    event-backfill-on-start: ${EXPHUB_DISPATCH_BACKFILL_ON_START:false}
   mcp:
     # 2026-11-17 停用 SSE。越哥：「那个没有重连功能，用起来不方便」。
     # 背景：SSE 有会话概念，服务一重启会话就失效（sse_session_not_found），

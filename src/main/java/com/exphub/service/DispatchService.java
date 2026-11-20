@@ -3,6 +3,7 @@ package com.exphub.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.exphub.entity.DispatchHeader;
+import com.exphub.entity.DispatchEvent;
 import com.exphub.entity.DispatchItem;
 import com.exphub.mapper.DispatchHeaderMapper;
 import com.exphub.mapper.DispatchItemMapper;
@@ -104,6 +105,10 @@ public class DispatchService {
 
     @Autowired
     private DispatchItemMapper itemMapper;
+
+    /** 派单操作流水（W-20261120-000025）：只在状态转移成功后追加，绝不 update/delete。 */
+    @Autowired
+    private com.exphub.mapper.DispatchEventMapper eventMapper;
 
     /**
      * 项目（发版取号要读 current_version）。
@@ -210,6 +215,11 @@ public class DispatchService {
         h.setAuthSpend(flag(a, "spend"));
 
         headerMapper.insert(h);
+        // W-20261120-000025：建单事件。AI 建单落 REVIEWING 也是 CREATE（to=REVIEWING），
+        // 审核通过是后续单独一条 REVIEW_PASS —— 不要混成一条，否则流水里看不到「谁建的、谁审的」。
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_CREATE, null, DispatchHeader.ST_REVIEWING,
+                h.getCreator(), human ? DispatchEvent.ACTOR_HUMAN : DispatchEvent.ACTOR_AI,
+                null, h.getCreatedAt());
         log.info("DispatchService.create: order={}, origin={}, creator={}, assignee={}, ownerKey={}",
                 h.getOrderNo(), h.getOrigin(), h.getCreator(), h.getAssignee(), maskKey(h.getApiKey()));
         String versionNote = willRelease
@@ -553,6 +563,8 @@ public class DispatchService {
         if (rows == 0) {
             return Outcome.fail("认领失败：这张单刚被别人接走或状态已变，请重新查一次。");
         }
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_CLAIM, DispatchHeader.ST_READY,
+                DispatchHeader.ST_RUNNING, role.trim(), DispatchEvent.ACTOR_AI, null, now);
 
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, false, null, "认领开工",
                 DispatchItem.ST_RUNNING);
@@ -586,6 +598,8 @@ public class DispatchService {
 
         String body = (question == null ? "" : question)
                 + "\n\n**我的建议方案**：" + proposal;
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_NEED_CONFIRM, DispatchHeader.ST_RUNNING,
+                DispatchHeader.ST_CONFIRMING, role.trim(), DispatchEvent.ACTOR_AI, body, now);
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_CONFIRM, true, "需要确认", body,
                 DispatchItem.ST_DONE);
         return Outcome.success("已把球传给「" + ballOwnerLabel(h) + "」，等待确认。item " + it.getItemNo(), get(orderNo), it);
@@ -619,6 +633,8 @@ public class DispatchService {
                 .set("status", DispatchHeader.ST_RUNNING)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，回复未生效，请重新查一次。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_REPLY, DispatchHeader.ST_CONFIRMING,
+                DispatchHeader.ST_RUNNING, actor.trim(), DispatchEvent.ACTOR_AI, text, now);
 
         DispatchItem it = newItem(h, actor.trim(), DispatchItem.CMD_EXEC, false, "继续执行", text,
                 DispatchItem.ST_RUNNING);
@@ -661,6 +677,8 @@ public class DispatchService {
                 .set("status", DispatchHeader.ST_VERIFYING)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，提交验收未生效，请重新查一次。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_SUBMIT_ACCEPT, DispatchHeader.ST_RUNNING,
+                DispatchHeader.ST_VERIFYING, role.trim(), DispatchEvent.ACTOR_AI, concl, now);
 
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, concl, body,
                 DispatchItem.ST_DONE);
@@ -710,6 +728,8 @@ public class DispatchService {
                 .set("status", DispatchHeader.ST_CONFIRMING)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，终止未生效，请重新查一次。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_TERMINATE, DispatchHeader.ST_RUNNING,
+                DispatchHeader.ST_CONFIRMING, role.trim(), DispatchEvent.ACTOR_AI, reason, now);
 
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_TERMINATE, true,
                 "已终止本轮", reason == null ? "" : reason, DispatchItem.ST_DONE);
@@ -787,6 +807,30 @@ public class DispatchService {
         return it;
     }
 
+    /**
+     * 追加一条操作流水，必须与状态 UPDATE 在**同一事务**里（调用方都标了 @Transactional）。
+     *
+     * <p><b>为什么不 try-catch 吞掉</b>：事件是审计事实，不是「邮件通知」那种可降级的副作用。
+     * 派单明确要「状态变了事件没写、或事件写了状态没变」都不允许 —— 所以事件写失败必须让事务回滚，
+     * 与状态变更要么全成、要么全不成（这点和 {@link #publishVerifying} 的邮件恰好相反）。
+     *
+     * <p>eventMapper 为 null（手工构造、没注入的单测）时安静跳过 —— 不影响既有只测状态转移的单测。
+     */
+    private void recordEvent(String orderNo, String eventType, String fromStatus, String toStatus,
+                             String actor, String actorType, String note, LocalDateTime at) {
+        if (eventMapper == null) return;
+        DispatchEvent e = new DispatchEvent();
+        e.setOrderNo(orderNo);
+        e.setEventType(eventType);
+        e.setFromStatus(fromStatus);
+        e.setToStatus(toStatus);
+        e.setActor(actor);
+        e.setActorType(actorType);
+        e.setNote(note == null || note.isBlank() ? null : note);
+        e.setCreatedAt(at == null ? LocalDateTime.now() : at);
+        eventMapper.insert(e);
+    }
+
     /** 「待确认」时球在谁手里：人工单给越哥，AI 单给创建人（阁主）。 */
     public String ballOwnerLabel(DispatchHeader h) {
         if (DispatchHeader.ORIGIN_HUMAN.equals(h.getOrigin())) return "越哥";
@@ -851,6 +895,8 @@ public class DispatchService {
                 .set("updated_at", now)
                 .set("remark", note == null || note.isBlank() ? h.getRemark() : note));
         if (rows == 0) return Outcome.fail("状态已变化，审核未生效，请刷新重试。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_REVIEW_PASS, DispatchHeader.ST_REVIEWING,
+                DispatchHeader.ST_READY, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, note, now);
         log.info("DispatchService.approve: order={} 已审核通过 → READY", orderNo);
         return Outcome.success("已审核通过，单子进入「待接单」，哨兵可以接了。", get(orderNo), null);
     }
@@ -874,6 +920,8 @@ public class DispatchService {
                 .set("cancel_reason", "审核驳回：" + why)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，驳回未生效，请刷新重试。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_REVIEW_REJECT, DispatchHeader.ST_REVIEWING,
+                DispatchHeader.ST_CANCELLED, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, why, now);
         return Outcome.success("已驳回，单子已取消。要重提请新建一张。", get(orderNo), null);
     }
 
@@ -895,6 +943,8 @@ public class DispatchService {
                 .set("verify_note", note == null || note.isBlank() ? "验收通过" : note)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，验收未生效，请刷新重试。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_ACCEPT_PASS, DispatchHeader.ST_VERIFYING,
+                DispatchHeader.ST_DONE, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, note, now);
         closeOpenItem(h, HUMAN_OPERATOR, "验收通过", DispatchItem.ST_DONE);
         rememberProjectVersion(h);
         log.info("DispatchService.verifyPass: order={} 验收通过 → DONE", orderNo);
@@ -961,6 +1011,8 @@ public class DispatchService {
                 .set("verify_note", reason)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，驳回未生效，请刷新重试。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_ACCEPT_REJECT, DispatchHeader.ST_VERIFYING,
+                DispatchHeader.ST_RUNNING, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, reason, now);
 
         DispatchItem it = newItem(h, HUMAN_OPERATOR, DispatchItem.CMD_EXEC, false,
                 "验收驳回", reason, DispatchItem.ST_RUNNING);
@@ -983,6 +1035,9 @@ public class DispatchService {
                 .set("cancel_reason", (reason == null || reason.isBlank()) ? "人工取消" : reason)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，取消失未生效，请刷新重试。");
+        String cancelNote = (reason == null || reason.isBlank()) ? "人工取消" : reason;
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_CANCEL, h.getStatus(),
+                DispatchHeader.ST_CANCELLED, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, cancelNote, now);
         closeOpenItem(h, HUMAN_OPERATOR, "整单取消", DispatchItem.ST_ERROR);
         log.info("DispatchService.cancel: order={} 已取消", orderNo);
         return Outcome.success("整单已取消，后面没有任何动作了。", get(orderNo), null);
@@ -1008,6 +1063,8 @@ public class DispatchService {
                 .set("status", DispatchHeader.ST_RUNNING)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，回复未生效，请刷新重试。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_REPLY, DispatchHeader.ST_CONFIRMING,
+                DispatchHeader.ST_RUNNING, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, text, now);
 
         DispatchItem it = newItem(h, HUMAN_OPERATOR, DispatchItem.CMD_EXEC, false, "继续执行",
                 text == null ? "" : text, DispatchItem.ST_RUNNING);
