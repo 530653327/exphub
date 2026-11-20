@@ -31,7 +31,11 @@
         <span>已退出登录</span>
     </div>
 
-    <form th:action="@{/login}" method="post">
+    <!-- 防重复提交（派单 W-20261120-000020）：与 PC 登录页同因。双击登录按钮会在
+         成功登录后（CSRF token 已轮换 + session id 已换）再发一个带旧 token 的 POST，
+         被 CsrfFilter 拒为 403，转发 /error 显示 Whitelabel。移动端更易误触双击。 -->
+    <form th:action="@{/login}" method="post"
+          onsubmit="if(window.__loginSent)return false;window.__loginSent=true;var b=this.querySelector('button[type=submit]');if(b){b.disabled=true;b.textContent='登录中…';}return true;">
         <label class="input input-lg flex items-center gap-2 w-full mb-3">
             <svg class="w-4 h-4 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4S18.3 16.4 19.5 20"/></svg>
             <input type="text" name="username" placeholder="用户名" autocomplete="username"

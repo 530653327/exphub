@@ -123,7 +123,12 @@
             已成功退出登录
         </div>
 
-        <form th:action="@{/login}" method="post">
+        <!-- 防重复提交（派单 W-20261120-000020）：双击/连击登录按钮会在成功登录后
+             再发一个带旧 CSRF token 的 POST —— 认证成功后 token 已被轮换，旧 token
+             被 CsrfFilter 在认证前拒为 403，转发 /error 后显示 Whitelabel Error Page。
+             第一次提交即置标志并禁用按钮，后续 submit 一律拦下。整页跳转会重置标志。 -->
+        <form th:action="@{/login}" method="post"
+              onsubmit="if(window.__loginSent)return false;window.__loginSent=true;var b=this.querySelector('button[type=submit]');if(b){b.disabled=true;b.textContent='登录中…';}return true;">
             <div class="form-group mb-3">
                 <input type="text" name="username" class="form-control" placeholder="用户名" required autofocus>
             </div>
