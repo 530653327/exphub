@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/head :: head('操作流水 - 经验阁 ExpHub')}"/>
+    <style>
+    /* 操作流水：控制台日志样式，角色 / 单号 / 状态各占一列、各上一色。
+       色值与派单列表的状态 chip 同组（见 dispatch/list.html），不另造一套。 */
+    .log-table {font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12.5px;}
+    .log-table td {vertical-align: middle !important; white-space: nowrap;}
+    .log-table .cell-note {white-space: normal; min-width: 220px; color: var(--text-mute);}
+    .log-table .mono-no {color: var(--brand); font-weight:600;}
+    .actor-badge {display:inline-block; padding:1px 8px; border-radius:10px; font-size:11.5px;}
+    .actor-HUMAN {background:#eef2ff; color:#4338ca;}
+    .actor-AI {background:#f5f3ff; color:#6d28d9;}
+    .log-meta {color: var(--text-mute); font-size:12px;}
+    .arrow {color: var(--text-mute); margin:0 4px;}
+    .filter-bar .form-control, .filter-bar select {font-size:13px;}
+    </style>
+</head>
+<body>
+    <div th:replace="~{fragments/sidebar :: nav('dispatch-events')}"></div>
+
+    <div class="main-content">
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-stream"></i>派单操作流水</h4>
+                <div class="page-sub">
+                    共 <strong th:text="${total}">0</strong> 条动作 ·
+                    第 <b th:text="${from}">0</b>–<b th:text="${to}">0</b> 条
+                    <span>（按发生时间正序，最新在底 · 默认最近 200 条）</span>
+                </div>
+            </div>
+            <div class="page-actions">
+                <a th:href="@{/dispatch/burndown}" class="btn btn-outline-secondary"><i class="fas fa-chart-line mr-1"></i>燃尽图</a>
+                <a th:href="@{/dispatch}" class="btn btn-outline-secondary"><i class="fas fa-arrow-left mr-1"></i>派单列表</a>
+            </div>
+        </div>
+
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <!-- 筛选：单号 / 状态 / 角色。三样都带进翻页链接，翻页不重置筛选。 -->
+        <form method="get" th:action="@{/dispatch/events}" class="filter-bar card list-card mb-3">
+            <div class="card-body d-flex flex-wrap" style="gap:10px; align-items:end;">
+                <div style="min-width:200px;">
+                    <label class="log-meta mb-1">单号</label>
+                    <select name="orderNo" class="form-control">
+                        <option value="">全部单号</option>
+                        <option th:each="no : ${orderNos}" th:value="${no}" th:text="${no}"
+                                th:selected="${no == orderNo}"></option>
+                    </select>
+                </div>
+                <div style="min-width:150px;">
+                    <label class="log-meta mb-1">转移后状态</label>
+                    <select name="toStatus" class="form-control">
+                        <option value="">全部状态</option>
+                        <option th:each="e : ${statusLabels}" th:value="${e.key}" th:text="${e.value}"
+                                th:selected="${e.key == toStatus}"></option>
+                    </select>
+                </div>
+                <div style="min-width:160px;">
+                    <label class="log-meta mb-1">操作人（含模糊）</label>
+                    <input type="text" name="actor" class="form-control" th:value="${actor}" placeholder="角色名">
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-search mr-1"></i>筛选</button>
+                    <a th:href="@{/dispatch/events}" class="btn btn-outline-secondary">清空</a>
+                </div>
+            </div>
+        </form>
+
+        <div class="card list-card">
+            <div class="card-body p-0">
+                <table class="table table-hover log-table">
+                    <thead>
+                        <tr>
+                            <th style="width:150px">发生时间</th>
+                            <th style="width:110px">操作人</th>
+                            <th style="width:180px">单号</th>
+                            <th style="width:110px">动作</th>
+                            <th style="width:170px">状态转移</th>
+                            <th>备注</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="e : ${events}">
+                            <td class="cell-mute" th:text="${e.createdAt != null ? #temporals.format(e.createdAt, 'yyyy-MM-dd HH:mm:ss') : ''}"></td>
+                            <td>
+                                <span class="actor-badge" th:classappend="'actor-' + ${e.actorType}"
+                                      th:text="${e.actor}"></span>
+                                <span class="log-meta" th:text="'（' + ${actorTypeLabels[e.actorType]} + '）'"></span>
+                            </td>
+                            <td>
+                                <a class="mono-no" th:href="@{'/dispatch/' + ${e.orderNo}}" th:text="${e.orderNo}"></a>
+                            </td>
+                            <td th:text="${eventTypeLabels[e.eventType]} ?: ${e.eventType}"></td>
+                            <td>
+                                <span th:if="${e.fromStatus != null}" class="st" th:classappend="'st-' + ${e.fromStatus}"
+                                      th:text="${statusLabels[e.fromStatus]} ?: ${e.fromStatus}"></span>
+                                <span class="arrow" th:if="${e.fromStatus != null}">→</span>
+                                <span class="st" th:classappend="'st-' + ${e.toStatus}"
+                                      th:text="${statusLabels[e.toStatus]} ?: ${e.toStatus}"></span>
+                            </td>
+                            <td class="cell-note" th:text="${e.note != null ? e.note : ''}"></td>
+                        </tr>
+                        <tr th:if="${events.isEmpty()}">
+                            <td colspan="6" class="empty-state">
+                                <i class="fas fa-stream"></i>
+                                <p>还没有流水记录</p>
+                                <p class="empty-hint">派单每次状态转移会写一条事件。跑过历史回填或新建单后这里就会有数据。</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center justify-content-between mt-3 flex-wrap" style="gap:10px;">
+            <div class="page-sub">第 <b th:text="${from}">0</b>–<b th:text="${to}">0</b> 条 / 共 <b th:text="${total}">0</b> 条</div>
+            <div class="btn-group">
+                <a class="btn btn-sm btn-outline-secondary" th:classappend="${page <= 1} ? 'disabled'"
+                   th:href="@{/dispatch/events(page=${page - 1}, orderNo=${orderNo}, toStatus=${toStatus}, actor=${actor})}">上一页</a>
+                <span class="btn btn-sm btn-outline-secondary disabled" th:text="|${page} / ${totalPages}|"></span>
+                <a class="btn btn-sm btn-outline-secondary" th:classappend="${page >= totalPages} ? 'disabled'"
+                   th:href="@{/dispatch/events(page=${page + 1}, orderNo=${orderNo}, toStatus=${toStatus}, actor=${actor})}">下一页</a>
+            </div>
+        </div>
+    </div>
+
+    <script th:src="@{/lib/jquery/jquery.min.js}"></script>
+    <script th:src="@{/lib/bootstrap/bootstrap.bundle.min.js}"></script>
+</body>
+</html>

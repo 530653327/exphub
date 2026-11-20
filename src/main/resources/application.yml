@@ -132,7 +132,11 @@ exphub:
   # 2.5.16 = 后台项目列表加分页 + 关键词搜索（W-20261120-000005）：名称 / 编码 / 别名三列 OR
   #          模糊匹配，分页走 MyBatis-Plus Page；页码窗口从 PageController 上提到 BaseController 共用，
   #          新增 ProjectListTest（SQL 条件 / 分页口径）+ projects/list 渲染守卫。
-  version: 2.5.16
+  # 2.5.17 = 上线 025 事件表 + 026 里程碑/燃尽图（W-20261120-000028）：执行两个迁移
+  #          （dispatch_event 建表 / dispatch_header 加 milestone），配置只读 token，
+  #          历史事件回填一次；后台新增 /dispatch/events（操作流水）+ /dispatch/burndown
+  #          （燃尽图，服务端 SVG 无外链）两页并并入导航。
+  version: 2.5.17
   # 工具统计口径（2026-11-19 加）
   tool-stats:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，

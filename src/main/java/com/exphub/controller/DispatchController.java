@@ -1,7 +1,12 @@
 package com.exphub.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.exphub.entity.DispatchEvent;
 import com.exphub.entity.DispatchHeader;
 import com.exphub.entity.DispatchItem;
+import com.exphub.mapper.DispatchEventMapper;
+import com.exphub.mapper.DispatchHeaderMapper;
+import com.exphub.service.DispatchBurndownService;
 import com.exphub.service.DispatchService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
@@ -10,7 +15,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,8 +43,23 @@ public class DispatchController extends BaseController {
     @Autowired
     private com.exphub.service.ProjectService projectService;
 
+    /** 操作流水页直接读事件表（只读 select，运行期业务代码不调 update/delete）。 */
+    @Autowired
+    private DispatchEventMapper eventMapper;
+
+    /** 里程碑下拉：从单头取 distinct milestone。 */
+    @Autowired
+    private DispatchHeaderMapper headerMapper;
+
+    /** 燃尽图聚合，与 /api/dispatch/burndown 同一份口径（同一 service，不另算一遍）。 */
+    @Autowired
+    private DispatchBurndownService burndownService;
+
     /** 每页多少张。上限是 {@link DispatchService#MAX_PAGE_SIZE}，这里只决定「一屏能读多少」。 */
     private static final int PAGE_SIZE = 20;
+
+    /** 流水页每页条数。单子要求「默认最近 200 条」，控制台日志翻页稳定靠 created_at + id。 */
+    private static final int EVENT_PAGE_SIZE = 200;
 
     /** 列表：按状态筛选 + 关键词模糊搜索 + 翻页，顶部显示各状态张数。 */
     @GetMapping
@@ -275,6 +298,160 @@ public class DispatchController extends BaseController {
         return "redirect:/dispatch/" + orderNo;
     }
 
+    // ==================== 操作流水 / 燃尽图（W-20261120-000028 后台页）====================
+
+    /**
+     * 操作流水页：控制台日志样式，角色 / 单号 / 状态分字段上色，可筛可翻。
+     *
+     * <p>数据与 {@link DispatchApiController#events} 同源（同一张 dispatch_event 表、同样的
+     * created_at + id 兜底排序），只是这里走后台 Session 直接渲染，不经只读 token —— 后台只有越哥用，
+     * 因此含 origin=HUMAN 的后台人工单（与 MCP 视角的隔离规则无关）。
+     *
+     * <p>按单子要求「时间正序、最新滚到底、默认最近 200 条」：先用倒序取最近一页（page=1 即最近 200 条），
+     * 再在内存里反排成正序显示，这样最新动作在页底。翻页越往后翻越早，按 created_at + id 兜底稳定。
+     */
+    @GetMapping("/events")
+    public String events(@RequestParam(required = false) String orderNo,
+                         @RequestParam(required = false) String toStatus,
+                         @RequestParam(required = false) String actor,
+                         @RequestParam(defaultValue = "1") int page,
+                         Model model) {
+        QueryWrapper<DispatchEvent> q = new QueryWrapper<>();
+        if (orderNo != null && !orderNo.isBlank()) q.eq("order_no", orderNo.trim());
+        if (toStatus != null && !toStatus.isBlank()) q.eq("to_status", toStatus.trim());
+        if (actor != null && !actor.isBlank()) q.like("actor", actor.trim());
+
+        Long cnt = eventMapper.selectCount(q);
+        long total = cnt == null ? 0L : cnt;
+        DispatchService.PageWindow w = DispatchService.pageWindow(total, page, EVENT_PAGE_SIZE);
+        if (w.page() != page) {
+            UriComponentsBuilder b = UriComponentsBuilder.fromPath("/dispatch/events")
+                    .queryParam("page", w.page());
+            if (orderNo != null && !orderNo.isBlank()) b.queryParam("orderNo", orderNo.trim());
+            if (toStatus != null && !toStatus.isBlank()) b.queryParam("toStatus", toStatus.trim());
+            if (actor != null && !actor.isBlank()) b.queryParam("actor", actor.trim());
+            return "redirect:" + b.build().encode().toUriString();
+        }
+        q.orderByDesc("created_at").orderByDesc("id").last("LIMIT " + w.offset() + "," + w.size());
+        List<DispatchEvent> rows = new ArrayList<>(eventMapper.selectList(q));
+        Collections.reverse(rows); // 取到的是最近一页的倒序，反排成正序显示（老的在上、最新在底）
+
+        List<String> orderNos = headerMapper
+                .selectList(new QueryWrapper<DispatchHeader>().select("order_no").orderByDesc("id"))
+                .stream().map(DispatchHeader::getOrderNo).filter(java.util.Objects::nonNull).toList();
+
+        model.addAttribute("events", rows);
+        model.addAttribute("orderNos", orderNos);
+        model.addAttribute("orderNo", orderNo == null ? "" : orderNo.trim());
+        model.addAttribute("toStatus", toStatus == null ? "" : toStatus.trim());
+        model.addAttribute("actor", actor == null ? "" : actor.trim());
+        model.addAttribute("statusLabels", statusLabels());
+        model.addAttribute("eventTypeLabels", eventTypeLabels());
+        model.addAttribute("actorTypeLabels", actorTypeLabels());
+        model.addAttribute("total", w.total());
+        model.addAttribute("page", w.page());
+        model.addAttribute("totalPages", w.totalPages());
+        model.addAttribute("from", w.from());
+        model.addAttribute("to", w.to());
+        model.addAttribute("size", w.size());
+        model.addAttribute("active", "dispatch-events");
+        return "dispatch/events";
+    }
+
+    /**
+     * 燃尽图页：里程碑下拉 + 服务端内联 SVG 阶梯线图，取消单不进分母，禁外链 CDN。
+     *
+     * <p>口径与 {@link DispatchApiController#burndown} 共用 {@link DispatchBurndownService}：
+     * 纵轴 = 未完成单数（不搞工时）；图用已算好的 series 在服务端拼 points，前端零 JS 库、零外链。
+     */
+    @GetMapping("/burndown")
+    public String burndown(@RequestParam(required = false) String milestone,
+                           @RequestParam(required = false) String from,
+                           @RequestParam(required = false) String to,
+                           Model model) {
+        List<String> milestones = headerMapper.selectList(new QueryWrapper<DispatchHeader>()
+                        .select("DISTINCT milestone").isNotNull("milestone").ne("milestone", ""))
+                .stream().map(DispatchHeader::getMilestone)
+                .filter(java.util.Objects::nonNull).sorted().toList();
+        model.addAttribute("milestones", milestones);
+        model.addAttribute("statusLabels", statusLabels());
+        model.addAttribute("milestoneOrders", List.of());
+        model.addAttribute("milestone", milestone == null ? "" : milestone.trim());
+        model.addAttribute("from", from == null ? "" : from.trim());
+        model.addAttribute("to", to == null ? "" : to.trim());
+        model.addAttribute("active", "dispatch-burndown");
+
+        if (milestone == null || milestone.isBlank()) {
+            model.addAttribute("chart", null);
+            return "dispatch/burndown";
+        }
+        try {
+            LocalDate fd = (from == null || from.isBlank()) ? null : LocalDate.parse(from.trim());
+            LocalDate td = (to == null || to.isBlank()) ? null : LocalDate.parse(to.trim());
+            DispatchBurndownService.Result r = burndownService.compute(milestone, fd, td);
+            model.addAttribute("result", r);
+            model.addAttribute("chart", buildChart(r));
+            // 图下方列出该里程碑下的单（单号 / 标题 / 状态，可点进详情）
+            model.addAttribute("milestoneOrders", dispatchService.byMilestone(milestone.trim()));
+        } catch (DateTimeParseException e) {
+            model.addAttribute("error", "from / to 必须是 yyyy-MM-dd（收到 from=" + from + ", to=" + to + "）");
+        } catch (DispatchBurndownService.InvalidInput e) {
+            model.addAttribute("error", e.getMessage());
+        }
+        return "dispatch/burndown";
+    }
+
+    /** 把天序列拼成纯 SVG 折线（阶梯）所需坐标；无 JS 库、无外链，模板直接输出 points。 */
+    static Map<String, Object> buildChart(DispatchBurndownService.Result r) {
+        List<DispatchBurndownService.DayPoint> s = r.series();
+        final int W = 900, H = 320, L = 48, R = 16, T = 20, B = 42;
+        final int plotW = W - L - R, plotH = H - T - B;
+        long yMax = 1;
+        for (DispatchBurndownService.DayPoint p : s) yMax = Math.max(yMax, p.remaining());
+        final int n = s.size();
+        final long max = yMax;
+        java.util.function.IntUnaryOperator px = i -> n <= 1 ? L : L + (int) Math.round((double) i * plotW / (n - 1));
+        java.util.function.LongUnaryOperator py = v -> T + plotH - (int) Math.round((double) v * plotH / max);
+
+        StringBuilder pts = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            long cy = py.applyAsLong(s.get(i).remaining());
+            if (i == 0) {
+                pts.append(px.applyAsInt(i)).append(',').append(cy);
+            } else {
+                pts.append(' ').append(px.applyAsInt(i)).append(',').append(py.applyAsLong(s.get(i - 1).remaining()));
+                pts.append(' ').append(px.applyAsInt(i)).append(',').append(cy);
+            }
+        }
+        List<Map<String, Object>> yTicks = new ArrayList<>();
+        long step = Math.max(1, (max + 4) / 5);
+        for (long v = 0; v <= max; v += step) {
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("y", py.applyAsLong(v));
+            t.put("label", v);
+            yTicks.add(t);
+        }
+        List<Map<String, Object>> xLabels = new ArrayList<>();
+        int stride = Math.max(1, (int) Math.ceil(n / 8.0));
+        for (int i = 0; i < n; i += stride) {
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("x", px.applyAsInt(i));
+            t.put("label", s.get(i).date().substring(5));
+            xLabels.add(t);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("points", pts.toString());
+        m.put("yTicks", yTicks);
+        m.put("xLabels", xLabels);
+        m.put("w", W);
+        m.put("h", H);
+        m.put("plotLeft", L);
+        m.put("plotRight", W - R);
+        m.put("plotBottom", T + plotH);
+        m.put("yMax", max);
+        return m;
+    }
+
     // ==================== 页面辅助 ====================
 
     /** 状态码 → 中文，模板里直接 ${labels[o.status]} 取。 */
@@ -285,6 +462,30 @@ public class DispatchController extends BaseController {
                 DispatchHeader.ST_VERIFYING, DispatchHeader.ST_DONE, DispatchHeader.ST_CANCELLED)) {
             m.put(st, DispatchService.statusLabel(st));
         }
+        return m;
+    }
+
+    /** 11 类事件 → 中文，流水页筛选用。 */
+    private Map<String, String> eventTypeLabels() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put(DispatchEvent.EV_CREATE, "建单");
+        m.put(DispatchEvent.EV_REVIEW_PASS, "审核通过");
+        m.put(DispatchEvent.EV_REVIEW_REJECT, "审核驳回");
+        m.put(DispatchEvent.EV_CLAIM, "认领");
+        m.put(DispatchEvent.EV_NEED_CONFIRM, "请求确认");
+        m.put(DispatchEvent.EV_REPLY, "回复");
+        m.put(DispatchEvent.EV_SUBMIT_ACCEPT, "提交验收");
+        m.put(DispatchEvent.EV_ACCEPT_PASS, "验收通过");
+        m.put(DispatchEvent.EV_ACCEPT_REJECT, "验收驳回");
+        m.put(DispatchEvent.EV_CANCEL, "取消");
+        m.put(DispatchEvent.EV_TERMINATE, "终止本轮");
+        return m;
+    }
+
+    private Map<String, String> actorTypeLabels() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put(DispatchEvent.ACTOR_HUMAN, "人");
+        m.put(DispatchEvent.ACTOR_AI, "助手");
         return m;
     }
 

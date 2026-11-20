@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/head :: head('燃尽图 - 经验阁 ExpHub')}"/>
+    <style>
+    /* 燃尽图：服务端内联 SVG 阶梯线，零 JS 库、零外链 CDN（离线也能看）。
+       纵轴 = 未完成单数（不含工时）；取消单已从分母剔除。 */
+    .chart-card {padding:8px 4px;}
+    .chart-card svg {width:100%; height:auto; display:block;}
+    .grid-line {stroke: var(--line-strong); stroke-width:1;}
+    .axis-text {fill: var(--text-mute); font-size:12px;}
+    .step-line {fill:none; stroke: var(--brand); stroke-width:2.5; stroke-linejoin:round;}
+    .kpi {display:flex; gap:14px; flex-wrap:wrap;}
+    .kpi .kpi-item {flex:1; min-width:120px; border:1px solid var(--line-strong); border-radius:8px; padding:10px 14px;}
+    .kpi .kpi-num {font-size:26px; font-weight:700; line-height:1.2;}
+    .kpi .kpi-label {color: var(--text-mute); font-size:12px;}
+    .kpi .kpi-num.brand {color: var(--brand);}
+    .kpi .kpi-num.ok {color:#047857;}
+    .kpi .kpi-num.warn {color:#b45309;}
+    .hint {color: var(--text-mute); font-size:12px; line-height:1.7;}
+    </style>
+</head>
+<body>
+    <div th:replace="~{fragments/sidebar :: nav('dispatch-burndown')}"></div>
+
+    <div class="main-content">
+        <div class="topbar page-head">
+            <div class="page-title-wrap">
+                <h4 class="page-title"><i class="fas fa-chart-line"></i>派单燃尽图</h4>
+                <div class="page-sub">纵轴 = 未完成单数 · 取消单从分母剔除 · 里程碑为空的单不上图</div>
+            </div>
+            <div class="page-actions">
+                <a th:href="@{/dispatch/events}" class="btn btn-outline-secondary"><i class="fas fa-stream mr-1"></i>操作流水</a>
+                <a th:href="@{/dispatch}" class="btn btn-outline-secondary"><i class="fas fa-arrow-left mr-1"></i>派单列表</a>
+            </div>
+        </div>
+
+        <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+        <!-- 里程碑下拉 + 可选日期区间，GET 提交，链接可分享。 -->
+        <form method="get" th:action="@{/dispatch/burndown}" class="card list-card mb-3">
+            <div class="card-body d-flex flex-wrap" style="gap:10px; align-items:end;">
+                <div style="min-width:240px;">
+                    <label class="hint mb-1">里程碑 <span th:if="${milestones.isEmpty()}">（库里还没有带里程碑的单）</span></label>
+                    <select name="milestone" class="form-control" th:disabled="${milestones.isEmpty()}">
+                        <option value="">请选择里程碑…</option>
+                        <option th:each="ms : ${milestones}" th:value="${ms}" th:text="${ms}"
+                                th:selected="${ms == milestone}"></option>
+                    </select>
+                </div>
+                <div style="min-width:150px;">
+                    <label class="hint mb-1">起（可选 yyyy-MM-dd）</label>
+                    <input type="text" name="from" class="form-control" th:value="${from}" placeholder="留空=最早建单日">
+                </div>
+                <div style="min-width:150px;">
+                    <label class="hint mb-1">止（可选 yyyy-MM-dd）</label>
+                    <input type="text" name="to" class="form-control" th:value="${to}" placeholder="留空=今天">
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button type="submit" class="btn btn-primary" th:disabled="${milestones.isEmpty()}">
+                        <i class="fas fa-sync mr-1"></i>查看
+                    </button>
+                    <a th:href="@{/dispatch/burndown}" class="btn btn-outline-secondary">清空</a>
+                </div>
+            </div>
+        </form>
+
+        <th:block th:if="${result != null}">
+            <div class="kpi mb-3">
+                <div class="kpi-item">
+                    <div class="kpi-num brand" th:text="${result.total}">0</div>
+                    <div class="kpi-label">里程碑下总单数（已剔除取消）</div>
+                </div>
+                <div class="kpi-item">
+                    <div class="kpi-num ok" th:text="${result.done}">0</div>
+                    <div class="kpi-label">已完成</div>
+                </div>
+                <div class="kpi-item">
+                    <div class="kpi-num warn" th:text="${result.remaining}">0</div>
+                    <div class="kpi-label">未完成</div>
+                </div>
+                <div class="kpi-item">
+                    <div class="kpi-num" th:text="${result.timeFallbackCount}">0</div>
+                    <div class="kpi-label">缺事件时间、用单头真实时间兜底的单数</div>
+                </div>
+            </div>
+
+            <div class="card list-card chart-card">
+                <div class="page-sub mb-2" th:text="|里程碑：${result.milestone}　区间：${result.from} ~ ${result.to}（共 ${#lists.size(result.series)} 天）|"></div>
+                <th:block th:if="${chart != null}">
+                    <svg th:attr="viewBox='0 0 ' + ${chart.w} + ' ' + ${chart.h}" role="img" aria-label="燃尽图阶梯线">
+                        <!-- 横向网格 + y 轴刻度 -->
+                        <th:block th:each="tick : ${chart.yTicks}">
+                            <line class="grid-line"
+                                  th:attr="x1=${chart.plotLeft}, y1=${tick.y}, x2=${chart.plotRight}, y2=${tick.y}"></line>
+                            <text class="axis-text" text-anchor="end"
+                                  th:attr="x=${chart.plotLeft - 8}, y=${tick.y + 4}" th:text="${tick.label}"></text>
+                        </th:block>
+                        <!-- x 轴日期标签（抽样，避免挤成一团） -->
+                        <th:block th:each="lab : ${chart.xLabels}">
+                            <text class="axis-text" text-anchor="middle"
+                                  th:attr="x=${lab.x}, y=${chart.plotBottom + 20}" th:text="${lab.label}"></text>
+                        </th:block>
+                        <!-- 阶梯线：同一天水平走，跨天垂直降/升 -->
+                        <polyline class="step-line" th:attr="points=${chart.points}"></polyline>
+                    </svg>
+                </th:block>
+                <div th:if="${chart == null}" class="empty-state">
+                    <i class="fas fa-chart-line"></i>
+                    <p>该里程碑下还没有可画的数据</p>
+                </div>
+                <div class="hint mt-2">
+                    口径：每天结束时的未完成单数（非 DONE、非 CANCELLED）。当天建当天完成，当天结束时算完成、不计入未完成时点。
+                    完成 / 取消日优先取事件流水时间，缺事件才退回单头真实时间（不编 now）；上方「兜底单数」>0 时留意末点与汇总是否自洽。
+                    大单做几天图上可能是平的，要看谁在什么时候动了状态，去「操作流水」页查。
+                </div>
+            </div>
+
+            <!-- 图下方列出该里程碑下的单（取消单也在列，只是不进图的分母），可点进详情 -->
+            <div class="card list-card mt-3">
+                <div class="card-body p-0">
+                    <div class="page-sub p-3 mb-0">
+                        该里程碑下的单：共 <b th:text="${#lists.size(milestoneOrders)}">0</b> 张
+                        <span>（已取消的单照列，但不计入图上的未完成数）</span>
+                    </div>
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th style="width:180px">单号</th>
+                                <th>标题</th>
+                                <th style="width:100px">状态</th>
+                                <th style="width:90px">指派</th>
+                                <th style="width:130px">更新时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="o : ${milestoneOrders}">
+                                <td><a th:href="@{'/dispatch/' + ${o.orderNo}}" th:text="${o.orderNo}" style="font-family:monospace"></a></td>
+                                <td th:text="${o.title}"></td>
+                                <td><span class="st" th:classappend="'st-' + ${o.status}"
+                                          th:text="${statusLabels[o.status]} ?: ${o.status}"></span></td>
+                                <td th:text="${o.assignee}"></td>
+                                <td class="cell-mute" th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt, 'MM-dd HH:mm') : ''}"></td>
+                            </tr>
+                            <tr th:if="${milestoneOrders.isEmpty()}">
+                                <td colspan="5" class="empty-state">该里程碑下没有单</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </th:block>
+
+        <div th:if="${result == null and error == null}" class="card list-card empty-state">
+            <i class="fas fa-chart-line"></i>
+            <p th:if="${milestones.isEmpty()}">库里还没有带里程碑的派单</p>
+            <p th:unless="${milestones.isEmpty()}">从上方选一个里程碑，查看它的燃尽图</p>
+            <p class="empty-hint">里程碑在建单时填写，一单挂一个；老单不补，空值的独立单不进任何里程碑。</p>
+        </div>
+    </div>
+
+    <script th:src="@{/lib/jquery/jquery.min.js}"></script>
+    <script th:src="@{/lib/bootstrap/bootstrap.bundle.min.js}"></script>
+</body>
+</html>
