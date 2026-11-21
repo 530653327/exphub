@@ -115,6 +115,9 @@ class MobileTemplateRenderTest {
         ctx.setVariable("totalPages", 3);
         ctx.setVariable("from", 11);
         ctx.setVariable("to", 20);
+        // 里程碑筛选（W-20261121-000010）：Controller 必然给这两个，缺一个模板 ${milestones.isEmpty()} 就炸
+        ctx.setVariable("milestone", "");
+        ctx.setVariable("milestones", List.of("M1", "M2"));
         // 每页条数：翻页条（fragments/dispatch-pager）读这两个
         ctx.setVariable("size", 10);
         ctx.setVariable("pageSizes", DispatchService.PAGE_SIZE_CHOICES);
@@ -207,6 +210,21 @@ class MobileTemplateRenderTest {
         // 关键词模糊搜索：输入框 + 后端读得到的参数名，两者缺一就搜不了
         assertTrue(html.contains("name=\"keyword\""), "派单列表没有搜索输入框（name=keyword）");
         assertTrue(html.contains("<form"), "搜索必须能在手机键盘上直接提交（缺 GET 表单）");
+
+        // 里程碑下拉 + chip 带住 milestone（W-20261121-000010）
+        assertTrue(html.contains("name=\"milestone\""), "派单列表没有里程碑下拉（name=milestone）");
+        assertTrue(html.contains("全部里程碑"), "里程碑下拉缺「全部」选项");
+        assertTrue(html.contains("value=\"M1\""), "里程碑下拉没渲染出库里的 M1");
+        WebContext withMs = context();
+        withMs.setVariable("milestone", "M1");
+        assertTrue(engine().process("m/dispatch", withMs).contains("milestone=M1"),
+                "切状态 chip 会丢掉 milestone");
+        // 验收标准 8：库里没有任何里程碑时，手机下拉为空也要正常渲染（disabled 分支），不能 500
+        WebContext emptyMs = context();
+        emptyMs.setVariable("milestones", List.of());
+        String emptyHtml = engine().process("m/dispatch", emptyMs);
+        assertTrue(emptyHtml.contains("全部里程碑"), "无里程碑数据时手机下拉仍要正常渲染");
+        assertTrue(emptyHtml.contains("disabled"), "无里程碑时手机下拉应置灰");
     }
 
     @Test
@@ -215,6 +233,7 @@ class MobileTemplateRenderTest {
         WebContext c = context();
         c.setVariable("status", "DONE");
         c.setVariable("keyword", "七色");
+        c.setVariable("milestone", "M1");
 
         String html = engine().process("m/dispatch", c);
         assertTrue(html.contains("上一页"), "手机派单列表没有上一页入口");
@@ -222,6 +241,7 @@ class MobileTemplateRenderTest {
         assertTrue(html.contains("page=1") && html.contains("page=3"),
                 "翻页链接没指向相邻页 —— 点一下可能原地不动");
         assertTrue(html.contains("status=DONE"), "翻页链接丢了 status：一翻页筛选就被清空");
+        assertTrue(html.contains("milestone=M1"), "翻页链接丢了 milestone：一翻页里程碑筛选就被清空");
         // 每页条数：链接要带 size，界面上要能看见选择器（数据不足一页时靠它验证翻页）
         assertTrue(html.contains("size=10"), "翻页链接丢了 size：一翻页每页条数被打回默认");
         assertTrue(html.contains("/m/dispatch?page=1") || html.contains("page=1&amp;size"),

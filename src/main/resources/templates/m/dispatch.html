@@ -26,35 +26,47 @@
         <div class="flex-1 min-w-0 pre-wrap text-sm" th:text="${error}"></div>
     </div>
 
-    <!-- 搜索：手机键盘按下「搜索」即提交，状态筛选跟着一起带上，不清空 -->
-    <form method="get" th:action="@{/m/dispatch}" class="flex gap-2 mb-2">
+    <!-- 搜索 + 里程碑下拉：同一个 GET 表单，status/keyword/milestone 三条件一起提交（W-20261121-000010） -->
+    <form method="get" th:action="@{/m/dispatch}" class="mb-2">
         <input type="hidden" name="status" th:value="${status}">
-        <input type="search" name="keyword" th:value="${keyword}"
-               class="input w-full bg-base-100 border-base-300"
-               placeholder="搜单号 / 标题 / 内容 / 派给谁">
-        <button type="submit" class="btn btn-sm btn-primary shrink-0">搜</button>
-        <a th:if="${keyword != null and keyword != ''}" th:href="@{/m/dispatch(status=${status})}"
-           class="btn btn-sm btn-ghost bg-base-200 shrink-0">清空</a>
+        <div class="flex gap-2">
+            <input type="search" name="keyword" th:value="${keyword}"
+                   class="input w-full bg-base-100 border-base-300"
+                   placeholder="搜单号 / 标题 / 内容 / 派给谁">
+            <button type="submit" class="btn btn-sm btn-primary shrink-0">搜</button>
+        </div>
+        <div class="flex gap-2 mt-2">
+            <select name="milestone" class="select select-sm select-bordered w-full bg-base-100 border-base-300"
+                    th:disabled="${milestones.isEmpty()}">
+                <option value="">全部里程碑</option>
+                <option th:each="ms : ${milestones}" th:value="${ms}" th:text="${ms}"
+                        th:selected="${ms == milestone}"></option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary shrink-0">筛</button>
+            <a th:if="${(keyword != null and keyword != '') or (milestone != null and milestone != '')}"
+               th:href="@{/m/dispatch(status=${status})}"
+               class="btn btn-sm btn-ghost bg-base-200 shrink-0">清空</a>
+        </div>
     </form>
 
     <!-- 状态筛选：横向可滑。手机窄，八个按钮平铺会挤成两行小字（2026-11-17 补已完成/已取消） -->
     <div class="hscroll flex gap-2 mb-3 -mx-4 px-4">
         <a class="btn btn-sm shrink-0" th:classappend="${status == null or status == ''} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(keyword=${keyword})}">全部</a>
+           th:href="@{/m/dispatch(keyword=${keyword}, milestone=${milestone})}">全部</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'REVIEWING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='REVIEWING', keyword=${keyword})}">待审核</a>
+           th:href="@{/m/dispatch(status='REVIEWING', keyword=${keyword}, milestone=${milestone})}">待审核</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'READY'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='READY', keyword=${keyword})}">待接单</a>
+           th:href="@{/m/dispatch(status='READY', keyword=${keyword}, milestone=${milestone})}">待接单</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'RUNNING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='RUNNING', keyword=${keyword})}">进行中</a>
+           th:href="@{/m/dispatch(status='RUNNING', keyword=${keyword}, milestone=${milestone})}">进行中</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'CONFIRMING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='CONFIRMING', keyword=${keyword})}">待确认</a>
+           th:href="@{/m/dispatch(status='CONFIRMING', keyword=${keyword}, milestone=${milestone})}">待确认</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'VERIFYING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='VERIFYING', keyword=${keyword})}">待验收</a>
+           th:href="@{/m/dispatch(status='VERIFYING', keyword=${keyword}, milestone=${milestone})}">待验收</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'DONE'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='DONE', keyword=${keyword})}">已完成</a>
+           th:href="@{/m/dispatch(status='DONE', keyword=${keyword}, milestone=${milestone})}">已完成</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'CANCELLED'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='CANCELLED', keyword=${keyword})}">已取消</a>
+           th:href="@{/m/dispatch(status='CANCELLED', keyword=${keyword}, milestone=${milestone})}">已取消</a>
     </div>
 
     <div class="flex flex-col gap-2">
@@ -75,6 +87,8 @@
                 </div>
                 <div class="flex flex-wrap gap-1.5 mt-2">
                     <span class="badge badge-sm badge-ghost" th:text="${o.origin == 'HUMAN' ? '人工' : 'AI'}">来源</span>
+                    <span class="badge badge-sm badge-accent badge-soft" th:if="${o.milestone != null and o.milestone != ''}"
+                          th:text="'◈ ' + ${o.milestone}">里程碑</span>
                     <span class="badge badge-sm badge-ghost" th:text="'→ ' + ${o.assignee}">指派</span>
                     <span class="badge badge-sm badge-ghost" th:if="${o.accepter != null}" th:text="'接了 ' + ${o.accepter}">接单</span>
                     <span class="badge badge-sm badge-error badge-soft" th:if="${o.priority != null and o.priority == 1}">高优</span>

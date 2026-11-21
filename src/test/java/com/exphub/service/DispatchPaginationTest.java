@@ -103,8 +103,9 @@ class DispatchPaginationTest {
     void listAndCountShareOneFilter() throws IOException {
         String src = Files.readString(SERVICE, StandardCharsets.UTF_8);
 
-        assertEquals(2, countOccurrences(src, "buildFilter(role, status, orderNo, keyword, apiKey)"),
-                "list 与 count 必须都调 buildFilter；多一份就说明有人又手抄了一遍 WHERE");
+        // 6 参 buildFilter（多了 milestone）必须被 list 与 count 各调一次；多一份就说明有人又手抄了一遍 WHERE
+        assertEquals(2, countOccurrences(src, "buildFilter(role, status, orderNo, keyword, milestone, apiKey)"),
+                "list 与 count 必须都调同一个 6 参 buildFilter；多一份就说明有人又手抄了一遍 WHERE");
         // 反向守卫：Key 隔离与状态条件各自只允许出现在 buildFilter 里一次
         assertEquals(1, countOccurrences(src, "q.eq(\"api_key\", apiKey)"),
                 "Key 条件不只出现在 buildFilter 里 —— 说明列表那边又手抄了一套过滤");
@@ -153,10 +154,10 @@ class DispatchPaginationTest {
         // 两个片段都必须给出「每页 N 张」的入口，否则「有没有分页」无法当场验证
         assertEquals(2, countOccurrences(pager, "${pageSizes}"), "两个端各缺一个每页条数选择器");
         assertEquals(2, countOccurrences(pager, "size=${s}"), "两个端的每页条数链接都要带 size");
-        // 翻页链接必须带 size/status/keyword —— 少一个，翻页就等于重置筛选
+        // 翻页链接必须带 size/status/keyword/milestone —— 少一个，翻页就等于重置筛选（W-20261121-000010 补 milestone）
         assertEquals(2, countOccurrences(pager,
-                        "page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}"),
-                "下一页链接没带全参数");
+                        "page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone}"),
+                "下一页链接没带全参数（含 milestone）");
 
         // 两个页面都必须真的引用这个片段，否则「抽出来但没人用」= 页面还是旧的
         assertTrue(Files.readString(PC_LIST, StandardCharsets.UTF_8)

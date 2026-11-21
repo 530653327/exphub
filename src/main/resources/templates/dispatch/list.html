@@ -38,43 +38,49 @@
         <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
         <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
 
-        <!-- 筛选条：搜索 + 八个状态（原来 7 个按钮全塞在页头右侧，窄屏会被挤到换行；
-             2026-11-17 补上「已完成 / 已取消」，并加了关键词模糊搜索） -->
+        <!-- 筛选条：搜索 + 里程碑下拉 + 八个状态（2026-11-21 补里程碑筛选 W-20261121-000010） -->
         <div class="toolbar">
-            <form method="get" th:action="@{/dispatch}" class="d-flex" style="gap:8px;flex:1;min-width:260px;max-width:420px;">
+            <form method="get" th:action="@{/dispatch}" class="d-flex" style="gap:8px;flex:1;min-width:280px;max-width:560px;">
                 <input type="hidden" name="status" th:value="${status}">
-                <div class="input-group">
+                <div class="input-group" style="max-width:260px;">
                     <input type="text" class="form-control" name="keyword" th:value="${keyword}"
                            placeholder="搜单号 / 标题 / 内容 / 派给谁">
                     <div class="input-group-append">
                         <button class="btn btn-outline-secondary" type="submit"><i class="fas fa-search"></i></button>
                     </div>
                 </div>
-                <a th:if="${keyword != null and keyword != ''}"
+                <select name="milestone" class="form-control" style="max-width:180px;"
+                        th:disabled="${milestones.isEmpty()}"
+                        th:title="${milestones.isEmpty()} ? '库里还没有带里程碑的单' : '按里程碑筛选'">
+                    <option value="">全部里程碑</option>
+                    <option th:each="ms : ${milestones}" th:value="${ms}" th:text="${ms}"
+                            th:selected="${ms == milestone}"></option>
+                </select>
+                <a th:if="${(keyword != null and keyword != '') or (milestone != null and milestone != '')}"
                    th:href="@{/dispatch(status=${status})}" class="btn btn-outline-secondary">清空</a>
             </form>
 
-            <a th:href="@{/dispatch(keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == null or status == ''} ? 'active'">全部</a>
-            <a th:href="@{/dispatch(status='REVIEWING', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='REVIEWING', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'REVIEWING'} ? 'active'">
                 <i class="dot" style="background:#b45309"></i>待审核</a>
-            <a th:href="@{/dispatch(status='READY', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='READY', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'READY'} ? 'active'">
                 <i class="dot" style="background:#1d4ed8"></i>待接单</a>
-            <a th:href="@{/dispatch(status='RUNNING', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='RUNNING', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'RUNNING'} ? 'active'">
                 <i class="dot" style="background:#0e7490"></i>进行中</a>
-            <a th:href="@{/dispatch(status='CONFIRMING', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='CONFIRMING', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'CONFIRMING'} ? 'active'">
                 <i class="dot" style="background:#6d28d9"></i>待确认</a>
-            <a th:href="@{/dispatch(status='VERIFYING', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='VERIFYING', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'VERIFYING'} ? 'active'">
                 <i class="dot" style="background:#b91c1c"></i>待验收</a>
-            <a th:href="@{/dispatch(status='DONE', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='DONE', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'DONE'} ? 'active'">
                 <i class="dot" style="background:#047857"></i>已完成</a>
-            <a th:href="@{/dispatch(status='CANCELLED', keyword=${keyword})}" class="btn chip"
+            <a th:href="@{/dispatch(status='CANCELLED', keyword=${keyword}, milestone=${milestone})}" class="btn chip"
                th:classappend="${status == 'CANCELLED'} ? 'active'">
                 <i class="dot" style="background:#94a3b8"></i>已取消</a>
         </div>
@@ -86,6 +92,7 @@
                         <tr>
                             <th style="width:190px">单号</th>
                             <th>标题</th>
+                            <th style="width:110px">里程碑</th>
                             <th style="width:90px">状态</th>
                             <th style="width:70px">来源</th>
                             <th style="width:90px">指派</th>
@@ -98,6 +105,8 @@
                         <tr th:each="o : ${orders}">
                             <td><a th:href="@{'/dispatch/' + ${o.orderNo}}" th:text="${o.orderNo}" style="font-family:monospace"></a></td>
                             <td th:text="${o.title}"></td>
+                            <td th:text="${o.milestone != null and o.milestone != '' ? o.milestone : '—'}"
+                                th:title="${o.milestone != null and o.milestone != '' ? o.milestone : '独立单（无里程碑）'}"></td>
                             <td><span class="st" th:classappend="'st-' + ${o.status}" th:text="${labels[o.status]}"></span></td>
                             <td>
                                 <span th:if="${o.origin == 'HUMAN'}" class="text-primary">人工</span>
@@ -109,7 +118,7 @@
                             <td class="cell-mute" th:text="${o.updatedAt != null ? #temporals.format(o.updatedAt, 'MM-dd HH:mm') : ''}"></td>
                         </tr>
                         <tr th:if="${orders.isEmpty()}">
-                            <td colspan="8" class="empty-state">
+                            <td colspan="9" class="empty-state">
                                 <i class="fas fa-inbox"></i>
                                 <p th:if="${keyword != null and keyword != ''}">没搜到含「<span th:text="${keyword}"></span>」的单</p>
                                 <p th:unless="${keyword != null and keyword != ''}">还没有任何单</p>

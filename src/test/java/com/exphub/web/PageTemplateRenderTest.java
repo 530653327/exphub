@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * PC 页面「能渲染」守卫（2026-11-08 加）。
@@ -128,6 +129,10 @@ class PageTemplateRenderTest {
     // ==================== 派单列表（2026-11-17 补已完成/已取消 + 关键词搜索）====================
 
     private static WebContext dispatchContext(String status, String keyword) {
+        return dispatchContext(status, keyword, "");
+    }
+
+    private static WebContext dispatchContext(String status, String keyword, String milestone) {
         MockServletContext servletContext = new MockServletContext();
         MockHttpServletRequest request = new MockHttpServletRequest(servletContext);
         request.setContextPath(CTX_PATH);
@@ -157,6 +162,8 @@ class PageTemplateRenderTest {
         ctx.setVariable("status", status);
         // Controller 会把 null 归一成空串，这里照做，保证测的是线上真实形态
         ctx.setVariable("keyword", keyword == null ? "" : keyword);
+        ctx.setVariable("milestone", milestone == null ? "" : milestone);
+        ctx.setVariable("milestones", List.of("M1", "M2"));
         ctx.setVariable("counts", counts);
         ctx.setVariable("labels", labels);
         // 2026-11-19 分页新增的字段，Controller 必然会给 —— 少一个线上就是 500
@@ -256,6 +263,46 @@ class PageTemplateRenderTest {
         // 状态筛选必须跟关键词一起留在链接里，否则点一下「已取消」就把搜索词丢了
         assertTrue(searched.contains("keyword=%E4%B8%83%E8%89%B2") || searched.contains("keyword=七色"),
                 "状态筛选链接没有带上 keyword，切状态会丢搜索条件");
+    }
+
+    @Test
+    @DisplayName("派单列表：里程碑列 + 下拉都要在，空值显示占位而不是 null，切 chip 不丢 milestone")
+    void dispatchListShowsMilestoneAndKeepsItOnChips() {
+        SpringTemplateEngine engine = engine();
+
+        String html = engine.process("dispatch/list", dispatchContext("DONE", "派单", "M1"));
+        assertTrue(html.contains("里程碑"), "表头缺「里程碑」列");
+        assertTrue(html.contains("name=\"milestone\""), "缺里程碑下拉（name=milestone）");
+        assertTrue(html.contains("全部里程碑"), "下拉缺「全部里程碑」选项");
+        assertTrue(html.contains("value=\"M1\""), "下拉没渲染出库里的里程碑 M1");
+        // 三个条件同时生效：切状态 chip 时 milestone 必须留着
+        assertTrue(html.contains("milestone=M1"), "状态 chip 链接丢了 milestone：切一下状态里程碑就没了");
+        assertTrue(html.contains("status=DONE"), "状态 chip 链接丢了 status");
+
+        // 空值（milestone=NULL 的老单）显示占位，不是 null / 空白
+        WebContext withRows = dispatchContext(null, "", "");
+        com.exphub.entity.DispatchHeader withMs = new com.exphub.entity.DispatchHeader();
+        withMs.setOrderNo("W-20261121-000001");
+        withMs.setTitle("带里程碑的单");
+        withMs.setStatus("RUNNING");
+        withMs.setMilestone("M2");
+        com.exphub.entity.DispatchHeader noMs = new com.exphub.entity.DispatchHeader();
+        noMs.setOrderNo("W-20261121-000002");
+        noMs.setTitle("独立单");
+        noMs.setStatus("RUNNING");
+        noMs.setMilestone(null);
+        withRows.setVariable("orders", List.of(withMs, noMs));
+        String rowsHtml = engine.process("dispatch/list", withRows);
+        assertTrue(rowsHtml.contains("M2"), "有里程碑的单没显示里程碑值");
+        assertTrue(rowsHtml.contains("独立单（无里程碑）"), "空里程碑没有显示占位文案");
+        assertFalse(rowsHtml.contains(">null<"), "页面把 null 直接印出来了");
+
+        // 验收标准 8：库里没有任何里程碑时，下拉为空也要正常渲染（disabled 分支），不能 500
+        WebContext emptyMs = dispatchContext(null, "", "");
+        emptyMs.setVariable("milestones", List.of());
+        String emptyHtml = engine.process("dispatch/list", emptyMs);
+        assertTrue(emptyHtml.contains("全部里程碑"), "无里程碑数据时下拉仍要正常渲染");
+        assertTrue(emptyHtml.contains("disabled"), "无里程碑时下拉应置灰，而不是给一个点不动的空下拉");
     }
 
     // ==================== 仪表盘派单统计（2026-11-20 W-20261120-000001）====================

@@ -346,13 +346,13 @@ public class DispatchService {
      * @param role 只看与我有关的：我指派的（assignee）或我创建的（creator）；null=不限
      */
     public List<DispatchHeader> list(String role, String status, String orderNo, int limit, String apiKey) {
-        return list(role, status, orderNo, null, limit, 0, apiKey);
+        return list(role, status, orderNo, null, null, limit, 0, apiKey);
     }
 
     /** 带偏移量的重载（后台翻页用，不搜关键词）。 */
     public List<DispatchHeader> list(String role, String status, String orderNo,
                                      int limit, int offset, String apiKey) {
-        return list(role, status, orderNo, null, limit, offset, apiKey);
+        return list(role, status, orderNo, null, null, limit, offset, apiKey);
     }
 
     /**
@@ -368,18 +368,26 @@ public class DispatchService {
      */
     public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
                                      int limit, String apiKey) {
-        return list(role, status, orderNo, keyword, limit, 0, apiKey);
+        return list(role, status, orderNo, keyword, null, limit, 0, apiKey);
+    }
+
+    /** 带分页的重载（后台派单列表用），不含里程碑。 */
+    public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
+                                     int limit, int offset, String apiKey) {
+        return list(role, status, orderNo, keyword, null, limit, offset, apiKey);
     }
 
     /**
-     * 列单 + 搜索 + 分页（2026-11-19 加，后台派单列表原来一次最多 50 张、无翻页）。
+     * 列单 + 搜索 + 里程碑筛选 + 分页（2026-11-21 加，后台派单列表要按里程碑筛）。
+     *
+     * <p>里程碑与状态、关键词是「且」的关系；milestone 空 = 不过滤（「全部」含未填里程碑的老单）。
      *
      * @param limit  每页条数；<=0 表示不限条数（MCP 传 0 就是要不截断）；上限 {@link #MAX_PAGE_SIZE}
      * @param offset 跳过前 N 条，从 0 开始；越界不报错，返回空列表
      */
     public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
-                                     int limit, int offset, String apiKey) {
-        QueryWrapper<DispatchHeader> q = buildFilter(role, status, orderNo, keyword, apiKey);
+                                     String milestone, int limit, int offset, String apiKey) {
+        QueryWrapper<DispatchHeader> q = buildFilter(role, status, orderNo, keyword, milestone, apiKey);
         applyOrder(q, status);
         String page = limitClause(limit, offset);
         if (page != null) q.last(page);
@@ -467,8 +475,27 @@ public class DispatchService {
      * 迟早出现「页头说 51 张、翻到底只有 3 页」这种对不上的数（2026-11-19 之前的实际形状）。
      */
     public long count(String role, String status, String orderNo, String keyword, String apiKey) {
-        Long c = headerMapper.selectCount(buildFilter(role, status, orderNo, keyword, apiKey));
+        return count(role, status, orderNo, keyword, null, apiKey);
+    }
+
+    /** 与带里程碑的 {@link #list} 同一套过滤条件的总数；页头「共 N 张」与翻页都读它，口径不漂。 */
+    public long count(String role, String status, String orderNo, String keyword,
+                      String milestone, String apiKey) {
+        Long c = headerMapper.selectCount(buildFilter(role, status, orderNo, keyword, milestone, apiKey));
         return c == null ? 0L : c;
+    }
+
+    /**
+     * 库里已有的全部里程碑名：去重、去空、按名称排序。
+     * 派单列表页下拉与燃尽图页下拉共用这一个数据源，避免两处 distinct 口径漂移；
+     * 只查 milestone 一列，不拉整表正文。
+     */
+    public List<String> distinctMilestones() {
+        return headerMapper.selectList(new QueryWrapper<DispatchHeader>()
+                        .select("DISTINCT milestone")
+                        .isNotNull("milestone").ne("milestone", ""))
+                .stream().map(DispatchHeader::getMilestone)
+                .filter(java.util.Objects::nonNull).sorted().toList();
     }
 
     /**
@@ -518,6 +545,12 @@ public class DispatchService {
 
     static QueryWrapper<DispatchHeader> buildFilter(String role, String status, String orderNo,
                                                     String keyword, String apiKey) {
+        return buildFilter(role, status, orderNo, keyword, null, apiKey);
+    }
+
+    /** 列表与统计共用的过滤条件（含里程碑），不含排序、不含分页。 */
+    static QueryWrapper<DispatchHeader> buildFilter(String role, String status, String orderNo,
+                                                    String keyword, String milestone, String apiKey) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<>();
         // Key 隔离：null = 后台视角（看全部）；非 null = 只看这个 Key 的
         if (apiKey != null) q.eq("api_key", apiKey);
@@ -530,6 +563,7 @@ public class DispatchService {
             q.and(w -> w.eq("assignee", r).or().eq("creator", r));
         }
         applyKeyword(q, keyword);
+        applyMilestone(q, milestone);
         return q;
     }
 
@@ -556,6 +590,16 @@ public class DispatchService {
                     .like("assignee", k).or().like("creator", k).or()
                     .like("accepter", k).or().like("description", k));
         }
+    }
+
+    /**
+     * 里程碑筛选条件**唯一出口**：空/空白不加条件（「全部」要把 NULL 老单一起算进来）。
+     * 非空按完整值精确匹配（eq），与 status / keyword 天然是「且」关系，
+     * 不在 controller 或模板里另拼一份 —— 两处各写一份迟早口径漂移。
+     */
+    static void applyMilestone(QueryWrapper<DispatchHeader> q, String milestone) {
+        if (milestone == null || milestone.isBlank()) return;
+        q.eq("milestone", milestone.trim());
     }
 
     /**

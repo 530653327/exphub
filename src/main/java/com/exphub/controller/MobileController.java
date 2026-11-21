@@ -113,6 +113,7 @@ public class MobileController {
     @GetMapping("/dispatch")
     public String dispatchList(@RequestParam(required = false) String status,
                                @RequestParam(required = false) String keyword,
+                               @RequestParam(required = false) String milestone,
                                @RequestParam(required = false) Integer size,
                                @RequestParam(defaultValue = "1") int page,
                                HttpSession session, Model model) {
@@ -121,26 +122,31 @@ public class MobileController {
         model.addAttribute("activeTab", "dispatch");
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用，与 PC 端一致）
         int pageSize = DispatchService.normalizePageSize(size, MOBILE_PAGE_SIZE);
-        long total = dispatchService.count(null, status, null, keyword, null);
+        long total = dispatchService.count(null, status, null, keyword, milestone, null);
         DispatchService.PageWindow w = DispatchService.pageWindow(total, page, pageSize);
         if (w.page() != page) {
             // 页码越界重定向到合法页，别让地址栏说的和内容不一致
             String kw = (keyword == null || keyword.isBlank()) ? null : keyword;
             String st = (status == null || status.isBlank()) ? null : status;
+            String ms = (milestone == null || milestone.isBlank()) ? null : milestone;
             UriComponentsBuilder b = UriComponentsBuilder.fromPath("/m/dispatch")
                     .queryParam("page", w.page())
                     .queryParamIfPresent("status", Optional.ofNullable(st))
-                    .queryParamIfPresent("keyword", Optional.ofNullable(kw));
+                    .queryParamIfPresent("keyword", Optional.ofNullable(kw))
+                    .queryParamIfPresent("milestone", Optional.ofNullable(ms));
             if (pageSize != MOBILE_PAGE_SIZE) {
                 b.queryParam("size", pageSize);
             }
             return "redirect:" + b.build().encode().toUriString();
         }
         List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
-                w.size(), w.offset(), null);
+                milestone, w.size(), w.offset(), null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
+        model.addAttribute("milestone", milestone == null ? "" : milestone.trim());
+        // 下拉数据源与 PC 列表页、燃尽图页共用同一个方法（W-20261121-000010）
+        model.addAttribute("milestones", dispatchService.distinctMilestones());
         model.addAttribute("counts", dispatchService.countByStatus());
         model.addAttribute("labels", statusLabels());
         model.addAttribute("total", w.total());

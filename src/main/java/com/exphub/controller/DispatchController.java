@@ -61,16 +61,17 @@ public class DispatchController extends BaseController {
     /** 流水页每页条数。单子要求「默认最近 200 条」，控制台日志翻页稳定靠 created_at + id。 */
     private static final int EVENT_PAGE_SIZE = 200;
 
-    /** 列表：按状态筛选 + 关键词模糊搜索 + 翻页，顶部显示各状态张数。 */
+    /** 列表：按状态筛选 + 关键词搜索 + 里程碑筛选 + 翻页，顶部显示各状态张数。 */
     @GetMapping
     public String list(@RequestParam(required = false) String status,
                        @RequestParam(required = false) String keyword,
+                       @RequestParam(required = false) String milestone,
                        @RequestParam(required = false) Integer size,
                        @RequestParam(defaultValue = "1") int page,
                        Model model) {
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用）
         int pageSize = DispatchService.normalizePageSize(size, PAGE_SIZE);
-        long total = dispatchService.count(null, status, null, keyword, null);
+        long total = dispatchService.count(null, status, null, keyword, milestone, null);
         DispatchService.PageWindow w = DispatchService.pageWindow(total, page, pageSize);
         // 页码越界就重定向到合法的 URL，而不是「URL 说第 9 页、内容其实是第 3 页」。
         // 静默截断会让地址栏和内容互相矛盾，翻页时再点上一页就像跳了一下。
@@ -78,17 +79,21 @@ public class DispatchController extends BaseController {
             UriComponentsBuilder b = UriComponentsBuilder.fromPath("/dispatch")
                     .queryParam("page", w.page())
                     .queryParamIfPresent("status", Optional.ofNullable(blankToNull(status)))
-                    .queryParamIfPresent("keyword", Optional.ofNullable(blankToNull(keyword)));
+                    .queryParamIfPresent("keyword", Optional.ofNullable(blankToNull(keyword)))
+                    .queryParamIfPresent("milestone", Optional.ofNullable(blankToNull(milestone)));
             if (pageSize != PAGE_SIZE) {
                 b.queryParam("size", pageSize);
             }
             return "redirect:" + b.build().encode().toUriString();
         }
         List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
-                w.size(), w.offset(), null);
+                milestone, w.size(), w.offset(), null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
+        model.addAttribute("milestone", milestone == null ? "" : milestone.trim());
+        // 下拉数据源与燃尽图页共用同一个方法（W-20261121-000010），避免两处 distinct 口径漂移
+        model.addAttribute("milestones", dispatchService.distinctMilestones());
         model.addAttribute("counts", dispatchService.countByStatus());
         model.addAttribute("labels", statusLabels());
         // 页头与页码读的都是 count()，与列表同源 —— 不许用 orders.size() 顶替总数
@@ -369,10 +374,8 @@ public class DispatchController extends BaseController {
                            @RequestParam(required = false) String from,
                            @RequestParam(required = false) String to,
                            Model model) {
-        List<String> milestones = headerMapper.selectList(new QueryWrapper<DispatchHeader>()
-                        .select("DISTINCT milestone").isNotNull("milestone").ne("milestone", ""))
-                .stream().map(DispatchHeader::getMilestone)
-                .filter(java.util.Objects::nonNull).sorted().toList();
+        // 下拉数据源与派单列表页共用同一个方法（W-20261121-000010），不再各自 distinct 一份
+        List<String> milestones = dispatchService.distinctMilestones();
         model.addAttribute("milestones", milestones);
         model.addAttribute("statusLabels", statusLabels());
         model.addAttribute("milestoneOrders", List.of());

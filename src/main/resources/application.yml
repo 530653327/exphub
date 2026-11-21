@@ -136,7 +136,10 @@ exphub:
   #          （dispatch_event 建表 / dispatch_header 加 milestone），配置只读 token，
   #          历史事件回填一次；后台新增 /dispatch/events（操作流水）+ /dispatch/burndown
   #          （燃尽图，服务端 SVG 无外链）两页并并入导航。
-  version: 2.5.17
+  # 2.5.18 = 派单列表补里程碑列 + 里程碑筛选（W-20261121-000010）：PC/手机两列表页显示里程碑列、
+  #          加里程碑下拉筛选，与 status chip + keyword 三者和筛选；buildFilter/applyMilestone 单一出口，
+  #          distinctMilestones 方法给列表页与燃尽图页共用；空值显示占位、不进任何里程碑筛选但进「全部」。
+  version: 2.5.18
   # 工具统计口径（2026-11-19 加）
   tool-stats:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，

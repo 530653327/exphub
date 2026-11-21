@@ -72,6 +72,7 @@ class DispatchPagerRenderTest {
         ctx.setVariable("pageSizes", PAGE_SIZES);
         ctx.setVariable("status", null);
         ctx.setVariable("keyword", null);
+        ctx.setVariable("milestone", null);
         ctx.setVariable("orders", List.of());
         return ctx;
     }
@@ -125,6 +126,17 @@ class DispatchPagerRenderTest {
         assertTrue(html.contains("/m/dispatch?page=2&size=10"),
                 "手机端下一页链接没带 size：" + html);
         assertTrue(text.contains("每页"), "手机端没有每页条数入口：" + text);
+    }
+
+    @Test
+    @DisplayName("里程碑筛选在翻页时必须带住 —— PC 与手机两个端都不能丢")
+    void pagerKeepsMilestone() {
+        Context ctx = model(2, 3, 41, 21, 40, 20);
+        ctx.setVariable("milestone", "M1");
+        String pc = render("pc", ctx);
+        assertTrue(pc.contains("milestone=M1"), "PC 翻页链接丢了 milestone：一翻页里程碑筛选就被清空");
+        String mobile = render("m", ctx);
+        assertTrue(mobile.contains("milestone=M1"), "手机翻页链接丢了 milestone");
     }
 
     /**
