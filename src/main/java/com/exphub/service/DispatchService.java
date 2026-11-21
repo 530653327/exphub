@@ -394,6 +394,16 @@ public class DispatchService {
         return headerMapper.selectList(q);
     }
 
+    /** 带发版态筛选的重载（后台列表页发版下拉用），与 {@link #list} 同一套条件，只多一个 release_flag。 */
+    public List<DispatchHeader> list(String role, String status, String orderNo, String keyword,
+                                     String milestone, String releaseFlag, int limit, int offset, String apiKey) {
+        QueryWrapper<DispatchHeader> q = buildFilter(role, status, orderNo, keyword, milestone, releaseFlag, apiKey);
+        applyOrder(q, status);
+        String page = limitClause(limit, offset);
+        if (page != null) q.last(page);
+        return headerMapper.selectList(q);
+    }
+
     /**
      * 这个查询是不是「只看待接单」。归一规则与 {@link #buildFilter} 一致（trim + 忽略大小写）。
      */
@@ -485,6 +495,13 @@ public class DispatchService {
         return c == null ? 0L : c;
     }
 
+    /** 与带发版态筛选的 {@link #list} 同源的总数（页头「共 N 张」与翻页都读它）。 */
+    public long count(String role, String status, String orderNo, String keyword,
+                      String milestone, String releaseFlag, String apiKey) {
+        Long c = headerMapper.selectCount(buildFilter(role, status, orderNo, keyword, milestone, releaseFlag, apiKey));
+        return c == null ? 0L : c;
+    }
+
     /**
      * 库里已有的全部里程碑名：去重、去空、按名称排序。
      * 派单列表页下拉与燃尽图页下拉共用这一个数据源，避免两处 distinct 口径漂移；
@@ -551,6 +568,12 @@ public class DispatchService {
     /** 列表与统计共用的过滤条件（含里程碑），不含排序、不含分页。 */
     static QueryWrapper<DispatchHeader> buildFilter(String role, String status, String orderNo,
                                                     String keyword, String milestone, String apiKey) {
+        return buildFilter(role, status, orderNo, keyword, milestone, null, apiKey);
+    }
+
+    /** 带发版态的过滤条件唯一出口；旧 6 参签名委托到这里，保证筛选口径只有一份。 */
+    static QueryWrapper<DispatchHeader> buildFilter(String role, String status, String orderNo,
+                                                     String keyword, String milestone, String releaseFlag, String apiKey) {
         QueryWrapper<DispatchHeader> q = new QueryWrapper<>();
         // Key 隔离：null = 后台视角（看全部）；非 null = 只看这个 Key 的
         if (apiKey != null) q.eq("api_key", apiKey);
@@ -564,6 +587,7 @@ public class DispatchService {
         }
         applyKeyword(q, keyword);
         applyMilestone(q, milestone);
+        applyReleaseFlag(q, releaseFlag);
         return q;
     }
 
@@ -600,6 +624,20 @@ public class DispatchService {
     static void applyMilestone(QueryWrapper<DispatchHeader> q, String milestone) {
         if (milestone == null || milestone.isBlank()) return;
         q.eq("milestone", milestone.trim());
+    }
+
+    /** 未标记筛选用这个值（四态里「未标记」对应 NULL 或空串）。 */
+    public static final String RF_UNMARKED_FILTER = "UNMARKED";
+
+    /** 发版态筛选唯一出口：空 = 不过滤；UNMARKED 单筛未标记；其余精确匹配；与状态/关键词天然「且」。 */
+    static void applyReleaseFlag(QueryWrapper<DispatchHeader> q, String releaseFlag) {
+        if (releaseFlag == null || releaseFlag.isBlank()) return;
+        String f = releaseFlag.trim().toUpperCase(java.util.Locale.ROOT);
+        if (RF_UNMARKED_FILTER.equals(f)) {
+            q.and(w -> w.isNull("release_flag").or().eq("release_flag", ""));
+        } else {
+            q.eq("release_flag", f);
+        }
     }
 
     /**
@@ -849,6 +887,93 @@ public class DispatchService {
                 "已终止本轮", reason == null ? "" : reason, DispatchItem.ST_DONE);
         return Outcome.success("本轮已终止，header 已进「待确认」等通知（单子没有结束）。item " + it.getItemNo(),
                 get(orderNo), it);
+    }
+
+    // ==================== 发版标记 release_flag（W-20261121-000014，与九态状态机正交）====================
+
+    /** release_flag 四态归一：null/空白统一成空串（= 未标记），其余 trim + 大写。 */
+    public static String normalizeReleaseFlag(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        return raw.trim().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /** 四态中文标签：列表/回执/详情共用一处，避免各端文案漂移。 */
+    public static String releaseFlagLabel(String raw) {
+        String f = normalizeReleaseFlag(raw);
+        return switch (f) {
+            case DispatchHeader.RF_NEED -> "需发版";
+            case DispatchHeader.RF_RELEASED -> "已发版";
+            case DispatchHeader.RF_NONE -> "无需发版";
+            default -> "未标记";
+        };
+    }
+
+    /**
+     * AI 侧写发版标记：只有 NEED / NONE 两个目标态能过，RELEASED 与清空一律拒绝。
+     *
+     * <p><b>权限分离硬闸门</b>（W-20261121-000014 红线）：MCP 的 dispatch_act(mark_release)
+     * 只能走到这里，物理上没有任何路径能让 AI 写 RELEASED —— 发版是越哥点头的事，
+     * 状态不能由 AI 自己宣布完成。目标态白名单在 Service 层强制，不靠调用方自觉，
+     * 也不接受枚举外的值（静默修正会把上游错误伪装成正常）。
+     */
+    @Transactional
+    public Outcome markReleaseFlagAi(String orderNo, String targetFlag, String reason, String role, String apiKey) {
+        String flag = normalizeReleaseFlag(targetFlag);
+        boolean allowed = DispatchHeader.RF_NEED.equals(flag) || DispatchHeader.RF_NONE.equals(flag);
+        if (!allowed) {
+            String got = targetFlag == null ? "(null)" : targetFlag;
+            return Outcome.fail("AI 只能标记「需发版 NEED」或「无需发版 NONE」，收到「" + got
+                    + "」已拒绝。已发版 RELEASED 只能由越哥在后台点「已发布」按钮写，AI 不能自己宣布发版完成。");
+        }
+        role = canonicalRole(role);
+        if (role == null || role.isBlank()) return Outcome.fail("无法确定你是谁（角色头未配置？）。");
+        DispatchHeader h = getForApi(orderNo, apiKey);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo + "（或不属于你）。");
+        return applyReleaseFlag(h, flag, reason, role.trim(), DispatchEvent.ACTOR_AI);
+    }
+
+    /**
+     * 后台侧写发版标记（越哥）：四态都能写，含 RELEASED 与清空回未标记。
+     *
+     * <p>只由后台 Controller 调，没有 MCP 入口 —— 与审核/验收同一套物理隔离。
+     * 标错了要能救，所以允许越哥手工改回 NONE / 未标记。
+     */
+    @Transactional
+    public Outcome markReleaseFlagHuman(String orderNo, String targetFlag, String reason) {
+        String flag = normalizeReleaseFlag(targetFlag);
+        boolean allowed = flag.isEmpty()
+                || DispatchHeader.RF_NEED.equals(flag)
+                || DispatchHeader.RF_RELEASED.equals(flag)
+                || DispatchHeader.RF_NONE.equals(flag);
+        if (!allowed) {
+            String got = targetFlag == null ? "(null)" : targetFlag;
+            return Outcome.fail("发版标记只能是 未标记 / NEED / RELEASED / NONE，收到「" + got + "」已拒绝。");
+        }
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo + "。");
+        return applyReleaseFlag(h, flag, reason, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN);
+    }
+
+    /** 两个写入口共用的落地：同事务写 header + 一条 RELEASE_FLAG 事件。 */
+    private Outcome applyReleaseFlag(DispatchHeader h, String flag, String reason,
+                                     String actor, String actorType) {
+        String old = normalizeReleaseFlag(h.getReleaseFlag());
+        LocalDateTime now = LocalDateTime.now();
+        // 清空用 set(col,null)：MyBatis-Plus 默认忽略实体里的 null，UpdateWrapper.set 会显式写 NULL
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .set("release_flag", flag.isEmpty() ? null : flag)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("发版标记未生效，请刷新重试。");
+        String note = (reason == null || reason.isBlank()) ? null
+                : "发版标记 " + (old.isEmpty() ? "未标记" : old) + " → " + (flag.isEmpty() ? "未标记" : flag) + "；" + reason.trim();
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_RELEASE_FLAG,
+                old.isEmpty() ? null : old, flag.isEmpty() ? null : flag,
+                actor, actorType, note, now);
+        log.info("DispatchService.releaseFlag: order={} {}→{} by {} ({})",
+                h.getOrderNo(), old, flag, actor, actorType);
+        return Outcome.success("发版标记已由「" + releaseFlagLabel(old) + "」改为「" + releaseFlagLabel(flag)
+                + "」。", get(h.getOrderNo()), null);
     }
 
     // ==================== 内部工具 ====================

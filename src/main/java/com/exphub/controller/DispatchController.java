@@ -66,12 +66,13 @@ public class DispatchController extends BaseController {
     public String list(@RequestParam(required = false) String status,
                        @RequestParam(required = false) String keyword,
                        @RequestParam(required = false) String milestone,
+                       @RequestParam(required = false) String releaseFlag,
                        @RequestParam(required = false) Integer size,
                        @RequestParam(defaultValue = "1") int page,
                        Model model) {
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用）
         int pageSize = DispatchService.normalizePageSize(size, PAGE_SIZE);
-        long total = dispatchService.count(null, status, null, keyword, milestone, null);
+        long total = dispatchService.count(null, status, null, keyword, milestone, releaseFlag, null);
         DispatchService.PageWindow w = DispatchService.pageWindow(total, page, pageSize);
         // 页码越界就重定向到合法的 URL，而不是「URL 说第 9 页、内容其实是第 3 页」。
         // 静默截断会让地址栏和内容互相矛盾，翻页时再点上一页就像跳了一下。
@@ -80,18 +81,20 @@ public class DispatchController extends BaseController {
                     .queryParam("page", w.page())
                     .queryParamIfPresent("status", Optional.ofNullable(blankToNull(status)))
                     .queryParamIfPresent("keyword", Optional.ofNullable(blankToNull(keyword)))
-                    .queryParamIfPresent("milestone", Optional.ofNullable(blankToNull(milestone)));
+                    .queryParamIfPresent("milestone", Optional.ofNullable(blankToNull(milestone)))
+                    .queryParamIfPresent("releaseFlag", Optional.ofNullable(blankToNull(releaseFlag)));
             if (pageSize != PAGE_SIZE) {
                 b.queryParam("size", pageSize);
             }
             return "redirect:" + b.build().encode().toUriString();
         }
         List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
-                milestone, w.size(), w.offset(), null);
+                milestone, releaseFlag, w.size(), w.offset(), null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
         model.addAttribute("milestone", milestone == null ? "" : milestone.trim());
+        model.addAttribute("releaseFlag", releaseFlag == null ? "" : releaseFlag.trim());
         // 下拉数据源与燃尽图页共用同一个方法（W-20261121-000010），避免两处 distinct 口径漂移
         model.addAttribute("milestones", dispatchService.distinctMilestones());
         model.addAttribute("counts", dispatchService.countByStatus());
@@ -128,6 +131,7 @@ public class DispatchController extends BaseController {
         model.addAttribute("suggestedVersion", dispatchService.suggestVersion(h.getProjectId()));
         model.addAttribute("versionHint", dispatchService.suggestVersionInfo(h.getProjectId()));
         model.addAttribute("ballOwner", DispatchService.statusLabel(h.getStatus()));
+        model.addAttribute("releaseFlagLabel", DispatchService.releaseFlagLabel(h.getReleaseFlag()));
         model.addAttribute("active", "dispatch");
         return "dispatch/detail";
     }
@@ -300,6 +304,21 @@ public class DispatchController extends BaseController {
                          @RequestParam(required = false) String reason,
                          RedirectAttributes ra) {
         flash(ra, dispatchService.cancel(orderNo, reason));
+        return "redirect:/dispatch/" + orderNo;
+    }
+
+    /**
+     * 标记发版（W-20261121-000014）：发版标记唯一的 RELEASED 写入口。
+     *
+     * <p><b>越哥后台专用</b>，没有 MCP 入口 —— AI 只能写 NEED/NONE，RELEASED 只能人按。
+     * 「已发布」按钮传 RELEASED，手工救回传 NONE / 未标记（空串），都在 Service 白名单内。
+     */
+    @PostMapping("/release-flag")
+    public String releaseFlag(@RequestParam String orderNo,
+                              @RequestParam(required = false) String releaseFlag,
+                              @RequestParam(required = false) String reason,
+                              RedirectAttributes ra) {
+        flash(ra, dispatchService.markReleaseFlagHuman(orderNo, releaseFlag, reason));
         return "redirect:/dispatch/" + orderNo;
     }
 
@@ -482,6 +501,7 @@ public class DispatchController extends BaseController {
         m.put(DispatchEvent.EV_ACCEPT_REJECT, "验收驳回");
         m.put(DispatchEvent.EV_CANCEL, "取消");
         m.put(DispatchEvent.EV_TERMINATE, "终止本轮");
+        m.put(DispatchEvent.EV_RELEASE_FLAG, "发版标记");
         return m;
     }
 

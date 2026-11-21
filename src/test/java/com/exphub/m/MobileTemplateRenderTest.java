@@ -118,6 +118,9 @@ class MobileTemplateRenderTest {
         // 里程碑筛选（W-20261121-000010）：Controller 必然给这两个，缺一个模板 ${milestones.isEmpty()} 就炸
         ctx.setVariable("milestone", "");
         ctx.setVariable("milestones", List.of("M1", "M2"));
+        // 发版标记筛选（W-20261121-000014）：Controller 必然给，缺了 @{/m/dispatch(...releaseFlag=${releaseFlag})} 会渲染失败
+        ctx.setVariable("releaseFlag", "");
+        ctx.setVariable("releaseFlagLabel", "未标记");
         // 每页条数：翻页条（fragments/dispatch-pager）读这两个
         ctx.setVariable("size", 10);
         ctx.setVariable("pageSizes", DispatchService.PAGE_SIZE_CHOICES);

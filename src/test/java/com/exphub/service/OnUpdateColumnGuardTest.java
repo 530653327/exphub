@@ -153,7 +153,9 @@ class OnUpdateColumnGuardTest {
         // 2026-11-16 信箱功能整体移除（越哥要求）：4 个信箱 migration 脚本已删，
         //   其中 migration_20261109b 的这 3 条 UPDATE 随之消失，条数 11 → 8。
         //   这次变**少**是删功能的预期结果，不是解析退化。
-        assertEquals(8, seen,
+        // 2026-11-21 W-20261121-000014：migration_20261121a 加 1 条历史回填 UPDATE
+        //   （W-20261121-000010 的 release_flag=RELEASED，带 version 双条件幂等），条数 8 → 9。
+        assertEquals(9, seen,
                 "扫到的 UPDATE 条数变了（实际 " + seen + "）。新增脚本请同步这个数字；"
                         + "数字变**少**通常意味着分号/注释解析退化，守卫会在没人察觉的情况下失效");
     }

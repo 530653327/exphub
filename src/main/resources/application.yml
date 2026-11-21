@@ -139,7 +139,11 @@ exphub:
   # 2.5.18 = 派单列表补里程碑列 + 里程碑筛选（W-20261121-000010）：PC/手机两列表页显示里程碑列、
   #          加里程碑下拉筛选，与 status chip + keyword 三者和筛选；buildFilter/applyMilestone 单一出口，
   #          distinctMilestones 方法给列表页与燃尽图页共用；空值显示占位、不进任何里程碑筛选但进「全部」。
-  version: 2.5.18
+  # 2.5.19 = 派单发版标记 release_flag 四态（W-20261121-000014）：dispatch_header 加列（与九态状态机正交），
+  #          AI 侧 MCP dispatch_act(mark_release) 只能写 NEED/NONE、RELEASED 只能后台按钮写（Service 双写入口硬隔离），
+  #          后台/手机列表加发版列+下拉筛选、详情加「已发布」按钮，dispatch_event 增 RELEASE_FLAG 事件，
+  #          orders/events 只读接口与 dispatch_list 文本回执带发版态；历史仅 W-20261121-000010 有线上实证回填 RELEASED。
+  version: 2.5.19
   # 工具统计口径（2026-11-19 加）
   tool-stats:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，

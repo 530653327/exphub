@@ -114,6 +114,7 @@ public class MobileController {
     public String dispatchList(@RequestParam(required = false) String status,
                                @RequestParam(required = false) String keyword,
                                @RequestParam(required = false) String milestone,
+                               @RequestParam(required = false) String releaseFlag,
                                @RequestParam(required = false) Integer size,
                                @RequestParam(defaultValue = "1") int page,
                                HttpSession session, Model model) {
@@ -122,7 +123,7 @@ public class MobileController {
         model.addAttribute("activeTab", "dispatch");
         // apiKey 传 null = 后台视角，看全部（后台只有越哥一个人用，与 PC 端一致）
         int pageSize = DispatchService.normalizePageSize(size, MOBILE_PAGE_SIZE);
-        long total = dispatchService.count(null, status, null, keyword, milestone, null);
+        long total = dispatchService.count(null, status, null, keyword, milestone, releaseFlag, null);
         DispatchService.PageWindow w = DispatchService.pageWindow(total, page, pageSize);
         if (w.page() != page) {
             // 页码越界重定向到合法页，别让地址栏说的和内容不一致
@@ -133,18 +134,21 @@ public class MobileController {
                     .queryParam("page", w.page())
                     .queryParamIfPresent("status", Optional.ofNullable(st))
                     .queryParamIfPresent("keyword", Optional.ofNullable(kw))
-                    .queryParamIfPresent("milestone", Optional.ofNullable(ms));
+                    .queryParamIfPresent("milestone", Optional.ofNullable(ms))
+                    .queryParamIfPresent("releaseFlag", Optional.ofNullable(
+                            (releaseFlag == null || releaseFlag.isBlank()) ? null : releaseFlag));
             if (pageSize != MOBILE_PAGE_SIZE) {
                 b.queryParam("size", pageSize);
             }
             return "redirect:" + b.build().encode().toUriString();
         }
         List<DispatchHeader> orders = dispatchService.list(null, status, null, keyword,
-                milestone, w.size(), w.offset(), null);
+                milestone, releaseFlag, w.size(), w.offset(), null);
         model.addAttribute("orders", orders);
         model.addAttribute("status", status);
         model.addAttribute("keyword", keyword == null ? "" : keyword.trim());
         model.addAttribute("milestone", milestone == null ? "" : milestone.trim());
+        model.addAttribute("releaseFlag", releaseFlag == null ? "" : releaseFlag.trim());
         // 下拉数据源与 PC 列表页、燃尽图页共用同一个方法（W-20261121-000010）
         model.addAttribute("milestones", dispatchService.distinctMilestones());
         model.addAttribute("counts", dispatchService.countByStatus());
@@ -192,6 +196,7 @@ public class MobileController {
         model.addAttribute("suggestedVersion", dispatchService.suggestVersion(h.getProjectId()));
         model.addAttribute("versionHint", dispatchService.suggestVersionInfo(h.getProjectId()));
         model.addAttribute("ballOwner", dispatchService.ballOwnerLabel(h));
+        model.addAttribute("releaseFlagLabel", DispatchService.releaseFlagLabel(h.getReleaseFlag()));
         return "m/dispatch-detail";
     }
 
@@ -203,13 +208,14 @@ public class MobileController {
      * 这里只是转发 —— 状态对不对、该不该拒，一律由 service 决。
      *
      * <p>参数：approve/verify-pass 用 text（备注），reject-review/verify-reject/cancel 用 reason，
-     * reply 用 text。
+     * reply 用 text；release-flag 用 releaseFlag（目标态）+ reason（理由）。
      */
     @PostMapping("/dispatch/act")
     public String dispatchAct(@RequestParam String orderNo,
                               @RequestParam String action,
                               @RequestParam(required = false) String text,
                               @RequestParam(required = false) String reason,
+                              @RequestParam(required = false) String releaseFlag,
                               RedirectAttributes ra) {
         DispatchService.Outcome out = switch (action) {
             case "approve" -> dispatchService.approve(orderNo, text);
@@ -218,6 +224,7 @@ public class MobileController {
             case "verify-reject" -> dispatchService.verifyReject(orderNo, reason);
             case "reply" -> dispatchService.humanReply(orderNo, text);
             case "cancel" -> dispatchService.cancel(orderNo, reason);
+            case "release-flag" -> dispatchService.markReleaseFlagHuman(orderNo, releaseFlag, reason);
             default -> null;
         };
         if (out == null) {

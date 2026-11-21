@@ -30,15 +30,15 @@
     <div class="d-flex align-items-center flex-wrap" style="gap:8px;">
         <div class="btn-group">
             <a class="btn btn-sm btn-outline-secondary" th:classappend="${page <= 1} ? 'disabled'"
-               th:href="@{/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone})}">上一页</a>
+               th:href="@{/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">上一页</a>
             <span class="btn btn-sm btn-outline-secondary disabled" th:text="|${page} / ${totalPages}|"></span>
             <a class="btn btn-sm btn-outline-secondary" th:classappend="${page >= totalPages} ? 'disabled'"
-               th:href="@{/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone})}">下一页</a>
+               th:href="@{/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">下一页</a>
         </div>
         <div class="btn-group" th:if="${pageSizes != null}">
             <a th:each="s : ${pageSizes}" class="btn btn-sm btn-outline-secondary"
                th:classappend="${s == size} ? 'active'"
-               th:href="@{/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword}, milestone=${milestone})}"
+               th:href="@{/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}"
                th:text="|${s} 张/页|">20 张/页</a>
         </div>
     </div>
@@ -49,20 +49,20 @@
     <div class="flex items-center justify-between mt-3 gap-2">
         <a class="btn btn-sm shrink-0"
            th:classappend="${page <= 1} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone})}">上一页</a>
+           th:href="@{/m/dispatch(page=${page - 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">上一页</a>
         <div class="text-[11px] opacity-50 tnum text-center leading-tight">
             <div th:text="|${page} / ${totalPages} 页|"></div>
             <div th:text="|第 ${from}–${to} 张 / 共 ${total} 张|"></div>
         </div>
         <a class="btn btn-sm shrink-0"
            th:classappend="${page >= totalPages} ? 'btn-disabled' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone})}">下一页</a>
+           th:href="@{/m/dispatch(page=${page + 1}, size=${size}, status=${status}, keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">下一页</a>
     </div>
     <div class="flex items-center justify-center gap-1.5 mt-2" th:if="${pageSizes != null}">
         <span class="text-[11px] opacity-50">每页</span>
         <a th:each="s : ${pageSizes}" class="btn btn-xs"
            th:classappend="${s == size} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword}, milestone=${milestone})}"
+           th:href="@{/m/dispatch(page=1, size=${s}, status=${status}, keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}"
            th:text="${s}">10</a>
     </div>
 </div>

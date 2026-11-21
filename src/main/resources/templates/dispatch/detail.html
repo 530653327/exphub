@@ -94,6 +94,33 @@
                 </form>
 
                 <hr>
+                <!-- 发版标记（W-20261121-000014）：与九态状态机正交。RELEASED 只有这里（后台）能写 -->
+                <div class="mb-1" style="font-size:0.88rem;color:var(--text-mute)">
+                    <b>发版标记</b>　当前：<span class="rf" th:classappend="'rf-' + ${order.releaseFlag != null and order.releaseFlag != '' ? order.releaseFlag : 'NONE_MARK'}"
+                                                th:text="${releaseFlagLabel}">未标记</span>
+                    <span class="text-muted" style="font-size:0.8rem">—— 已发版只能你在后台点，AI 侧只能标需发版/无需发版</span>
+                </div>
+                <div class="d-flex flex-wrap" style="gap:6px;align-items:center">
+                    <form th:action="@{/dispatch/release-flag}" method="post" th:if="${order.releaseFlag == null or order.releaseFlag != 'RELEASED'}"
+                          onsubmit="return confirm('点「已发布」= 标记 RELEASED（已发版）。确认这一版确实上线了？')">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <input type="hidden" name="releaseFlag" value="RELEASED">
+                        <input type="text" name="reason" class="form-control form-control-sm d-inline-block" style="width:200px" placeholder="理由（可选，如：2.5.19 已上线）">
+                        <button type="submit" class="btn btn-sm btn-success">已发布 → RELEASED</button>
+                    </form>
+                    <form th:action="@{/dispatch/release-flag}" method="post">
+                        <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                        <select name="releaseFlag" class="form-control form-control-sm d-inline-block" style="width:auto">
+                            <option value="" th:selected="${order.releaseFlag == null or order.releaseFlag == ''}">未标记</option>
+                            <option value="NEED" th:selected="${order.releaseFlag == 'NEED'}">需发版</option>
+                            <option value="NONE" th:selected="${order.releaseFlag == 'NONE'}">无需发版</option>
+                        </select>
+                        <input type="text" name="reason" class="form-control form-control-sm d-inline-block" style="width:160px" placeholder="理由（可选）">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary">改标记</button>
+                    </form>
+                </div>
+
+                <hr>
                 <div class="mb-1" style="font-size:0.88rem;color:var(--text-mute)"><b>内容描述</b>（审核看的就是这一段）</div>
                 <div class="desc" th:text="${order.description}"></div>
 

@@ -1350,6 +1350,13 @@ textarea.form-control {
 .st-CANCELLED { background: transparent; box-shadow: inset 0 0 0 1px currentColor; color: #94a3b8; }
 .st-DRAFT     { background: transparent; box-shadow: inset 0 0 0 1px currentColor; color: #94a3b8; }
 
+/* 发版标记四态（W-20261121-000014）：未标记灰 / 需发版橙 / 已发版绿 / 无需发版淡灰 */
+.rf { display:inline-block; padding:2px 8px; border-radius:999px; font-size:0.8rem; line-height:1.4; white-space:nowrap; }
+.rf-NONE_MARK { background: transparent; box-shadow: inset 0 0 0 1px currentColor; color:#94a3b8; }
+.rf-NEED      { background:#fef3c7; color:#b45309; }
+.rf-RELEASED  { background:#d1fae5; color:#047857; }
+.rf-NONE      { background:#f1f5f9; color:#64748b; }
+
 .chip {
     display: inline-block;
     margin: 0 6px 6px 0;

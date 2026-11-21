@@ -129,6 +129,36 @@
         </div>
     </div>
 
+    <!-- 发版标记（W-20261121-000014）：RELEASED 只有这里（后台）能点 -->
+    <div class="text-xs font-medium opacity-55 px-1 mb-1.5">发版标记
+        <span class="badge badge-sm tnum" th:classappend="'rf-' + ${order.releaseFlag != null and order.releaseFlag != '' ? order.releaseFlag : 'NONE_MARK'}"
+              th:text="${releaseFlagLabel}">未标记</span>
+    </div>
+    <div class="card bg-base-200 shadow-sm mb-3">
+        <div class="card-body p-3.5 gap-0">
+            <div class="text-[11px] opacity-50 leading-relaxed mb-2">已发版只能你在后台点，AI 侧只能标需发版 / 无需发版。</div>
+            <form th:action="@{/m/dispatch/act}" method="post" th:if="${order.releaseFlag != 'RELEASED'}"
+                  onsubmit="return confirm('标记 RELEASED（已发版）？确认这一版确实上线了')">
+                <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                <input type="hidden" name="action" value="release-flag">
+                <input type="hidden" name="releaseFlag" value="RELEASED">
+                <input class="input w-full bg-base-100 border-base-300" type="text" name="reason" placeholder="理由（可选，如：2.5.19 已上线）">
+                <button type="submit" class="btn btn-success w-full mt-2.5">已发布 → RELEASED</button>
+            </form>
+            <form th:action="@{/m/dispatch/act}" method="post" class="mt-3 pt-3 border-t border-base-300">
+                <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                <input type="hidden" name="action" value="release-flag">
+                <select name="releaseFlag" class="select select-sm select-bordered w-full bg-base-100 border-base-300">
+                    <option value="" th:selected="${order.releaseFlag == null or order.releaseFlag == ''}">未标记</option>
+                    <option value="NEED" th:selected="${order.releaseFlag == 'NEED'}">需发版</option>
+                    <option value="NONE" th:selected="${order.releaseFlag == 'NONE'}">无需发版</option>
+                </select>
+                <input class="input w-full bg-base-100 border-base-300 mt-2" type="text" name="reason" placeholder="理由（可选）">
+                <button type="submit" class="btn btn-outline w-full mt-2.5">改标记</button>
+            </form>
+        </div>
+    </div>
+
     <!-- ==================== 我要做什么 ==================== -->
     <div class="text-xs font-medium opacity-55 px-1 mt-5 mb-1.5">我要做什么</div>
 

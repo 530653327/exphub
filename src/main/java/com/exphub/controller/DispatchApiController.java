@@ -81,6 +81,10 @@ public class DispatchApiController {
             m.put("actor_type", e.getActorType());
             m.put("note", e.getNote());
             m.put("created_at", e.getCreatedAt() == null ? null : e.getCreatedAt().format(TS));
+            // 发版标记变更事件：把目标态单独提成 release_flag 字段，方便只读消费方直接取
+            if (DispatchEvent.EV_RELEASE_FLAG.equals(e.getEventType())) {
+                m.put("release_flag", e.getToStatus() == null ? "" : e.getToStatus());
+            }
             data.add(m);
         }
         return envelope(total == null ? 0 : total, lim, off, data);
@@ -117,6 +121,7 @@ public class DispatchApiController {
             m.put("creator", h.getCreator());
             m.put("origin", h.getOrigin());
             m.put("milestone", h.getMilestone());
+            m.put("release_flag", h.getReleaseFlag() == null ? "" : h.getReleaseFlag());
             m.put("created_at", h.getCreatedAt() == null ? null : h.getCreatedAt().format(TS));
             m.put("updated_at", h.getUpdatedAt() == null ? null : h.getUpdatedAt().format(TS));
             data.add(m);

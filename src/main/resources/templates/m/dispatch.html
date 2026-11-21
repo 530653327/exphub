@@ -42,9 +42,16 @@
                 <option th:each="ms : ${milestones}" th:value="${ms}" th:text="${ms}"
                         th:selected="${ms == milestone}"></option>
             </select>
+            <select name="releaseFlag" class="select select-sm select-bordered w-full bg-base-100 border-base-300">
+                <option value="">全部发版</option>
+                <option value="NEED" th:selected="${releaseFlag == 'NEED'}">需发版</option>
+                <option value="RELEASED" th:selected="${releaseFlag == 'RELEASED'}">已发版</option>
+                <option value="NONE" th:selected="${releaseFlag == 'NONE'}">无需发版</option>
+                <option value="UNMARKED" th:selected="${releaseFlag == 'UNMARKED'}">未标记</option>
+            </select>
             <button type="submit" class="btn btn-sm btn-primary shrink-0">筛</button>
-            <a th:if="${(keyword != null and keyword != '') or (milestone != null and milestone != '')}"
-               th:href="@{/m/dispatch(status=${status})}"
+            <a th:if="${(keyword != null and keyword != '') or (milestone != null and milestone != '') or (releaseFlag != null and releaseFlag != '')}"
+               th:href="@{/m/dispatch(status=${status}, releaseFlag=${releaseFlag})}"
                class="btn btn-sm btn-ghost bg-base-200 shrink-0">清空</a>
         </div>
     </form>
@@ -52,21 +59,21 @@
     <!-- 状态筛选：横向可滑。手机窄，八个按钮平铺会挤成两行小字（2026-11-17 补已完成/已取消） -->
     <div class="hscroll flex gap-2 mb-3 -mx-4 px-4">
         <a class="btn btn-sm shrink-0" th:classappend="${status == null or status == ''} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(keyword=${keyword}, milestone=${milestone})}">全部</a>
+           th:href="@{/m/dispatch(keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">全部</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'REVIEWING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='REVIEWING', keyword=${keyword}, milestone=${milestone})}">待审核</a>
+           th:href="@{/m/dispatch(status='REVIEWING', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">待审核</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'READY'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='READY', keyword=${keyword}, milestone=${milestone})}">待接单</a>
+           th:href="@{/m/dispatch(status='READY', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">待接单</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'RUNNING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='RUNNING', keyword=${keyword}, milestone=${milestone})}">进行中</a>
+           th:href="@{/m/dispatch(status='RUNNING', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">进行中</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'CONFIRMING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='CONFIRMING', keyword=${keyword}, milestone=${milestone})}">待确认</a>
+           th:href="@{/m/dispatch(status='CONFIRMING', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">待确认</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'VERIFYING'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='VERIFYING', keyword=${keyword}, milestone=${milestone})}">待验收</a>
+           th:href="@{/m/dispatch(status='VERIFYING', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">待验收</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'DONE'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='DONE', keyword=${keyword}, milestone=${milestone})}">已完成</a>
+           th:href="@{/m/dispatch(status='DONE', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">已完成</a>
         <a class="btn btn-sm shrink-0" th:classappend="${status == 'CANCELLED'} ? 'btn-primary' : 'btn-ghost bg-base-200'"
-           th:href="@{/m/dispatch(status='CANCELLED', keyword=${keyword}, milestone=${milestone})}">已取消</a>
+           th:href="@{/m/dispatch(status='CANCELLED', keyword=${keyword}, milestone=${milestone}, releaseFlag=${releaseFlag})}">已取消</a>
     </div>
 
     <div class="flex flex-col gap-2">
@@ -93,6 +100,8 @@
                     <span class="badge badge-sm badge-ghost" th:if="${o.accepter != null}" th:text="'接了 ' + ${o.accepter}">接单</span>
                     <span class="badge badge-sm badge-error badge-soft" th:if="${o.priority != null and o.priority == 1}">高优</span>
                     <span class="badge badge-sm badge-ghost tnum" th:if="${o.version != null and !o.version.isEmpty()}" th:text="${o.version}">版本</span>
+                    <span class="badge badge-sm tnum" th:classappend="'rf-' + ${o.releaseFlag != null and o.releaseFlag != '' ? o.releaseFlag : 'NONE_MARK'}"
+                          th:text="'发版 ' + ${T(com.exphub.service.DispatchService).releaseFlagLabel(o.releaseFlag)}">发版</span>
                 </div>
             </div>
         </a>

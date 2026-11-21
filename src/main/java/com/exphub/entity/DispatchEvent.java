@@ -36,6 +36,8 @@ public class DispatchEvent {
     public static final String EV_ACCEPT_REJECT = "ACCEPT_REJECT";
     public static final String EV_CANCEL = "CANCEL";
     public static final String EV_TERMINATE = "TERMINATE";
+    /** 发版标记变更（W-20261121-000014）：from/to_status 存旧/新 release_flag，note 存理由 */
+    public static final String EV_RELEASE_FLAG = "RELEASE_FLAG";
 
     // ===== actor_type：前端按这个区分人和助手 =====
     public static final String ACTOR_HUMAN = "HUMAN";

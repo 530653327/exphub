@@ -34,6 +34,16 @@ public class DispatchHeader {
     public static final String ORIGIN_HUMAN = "HUMAN";
     public static final String ORIGIN_AI = "AI";
 
+    // ===== 发版标记四态（2026-11-21 W-20261121-000014；与九态状态机完全正交）=====
+    /** 需发版：AI 侧（MCP）与后台都能写 */
+    public static final String RF_NEED = "NEED";
+    /** 已发版：只有越哥后台按钮能写，AI 任何路径都改不了 */
+    public static final String RF_RELEASED = "RELEASED";
+    /** 无需发版 */
+    public static final String RF_NONE = "NONE";
+    /** 未标记的库值：NULL 与空串都算（列可空，历史单默认 NULL） */
+    public static final String RF_UNMARKED = "";
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
@@ -103,6 +113,16 @@ public class DispatchHeader {
      */
     private String milestone;
     private Long projectId;
+
+    /**
+     * 发版标记（2026-11-21 W-20261121-000014）。与九态状态机正交，不进 status。
+     *
+     * <p>四态：NULL/'' = 未标记，{@link #RF_NEED} = 需发版，{@link #RF_RELEASED} = 已发版，
+     * {@link #RF_NONE} = 无需发版。<b>RELEASED 只有越哥后台按钮能写</b>，AI MCP 侧只能写 NEED/NONE。
+     * 权限分离在 DispatchService 的两条写入口，不靠调用方自觉。
+     */
+    private String releaseFlag;
+
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
 

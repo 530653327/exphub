@@ -6156,6 +6156,7 @@ public class ExpHubTools {
         }
         return "【" + h.getOrderNo() + "】" + h.getTitle()
                 + "\n   状态 " + com.exphub.service.DispatchService.statusLabel(h.getStatus())
+                + "｜发版 " + com.exphub.service.DispatchService.releaseFlagLabel(h.getReleaseFlag())
                 + "｜来源 " + (com.exphub.entity.DispatchHeader.ORIGIN_HUMAN.equals(h.getOrigin()) ? "人工" : "AI")
                 + "｜指派 " + h.getAssignee()
                 + (h.getAccepter() == null ? "" : "｜接单 " + h.getAccepter())
@@ -6291,6 +6292,7 @@ public class ExpHubTools {
                 if (h.getAccepter() != null) sb.append("（已接单：").append(h.getAccepter()).append("）");
                 sb.append("\n");
                 sb.append("**优先级**: ").append(h.getPriority()).append("\n");
+                sb.append("**发版标记**: ").append(com.exphub.service.DispatchService.releaseFlagLabel(h.getReleaseFlag())).append("\n");
                 sb.append("**授权位**: ").append(grantedAuths(h)).append("\n");
                 if (h.getVerifyNote() != null && !h.getVerifyNote().isBlank()) {
                     sb.append("**验收意见**: ").append(h.getVerifyNote()).append("\n");
@@ -6430,7 +6432,9 @@ public class ExpHubTools {
                       + "need_confirm（哨兵请求确认，进行中→待确认，必须带提问和建议方案）、"
                       + "submit_accept（哨兵提交验收，进行中→待验收，必须带结论）、"
                       + "terminate（终止本轮，item 结束 + 单子进待确认等通知，**不等于取消整单**）、"
-                      + "reply（只有 AI 单的创建人能回，待确认→进行中；人工单必须越哥在后台回，AI 不能代回）。"
+                      + "reply（只有 AI 单的创建人能回，待确认→进行中；人工单必须越哥在后台回，AI 不能代回）、"
+                      + "mark_release（标记发版，只能写 targetFlag=NEED/NONE 并填理由；"
+                      + "RELEASED 已发版只能越哥在后台点，AI 不能自己宣布发版完成）。"
                       + "注意：审核、验收通过/驳回、取消整单都只能越哥在后台做，这里没有这些动作。")
     public String dispatchAct(
             @ToolParam(description = "单号") String orderNo,
@@ -6440,7 +6444,10 @@ public class ExpHubTools {
             @ToolParam(description = "submit_accept 时必填：**结论＝对内容的总结**，一两句话说清做成没做成、关键数字，"
                     + "越哥只看这一行就判断通过还是驳回。**不要和 text 写一样**", required = false) String conclusion,
             @ToolParam(description = "submit_accept 时填**详细内容**（干了什么、改了哪些文件、怎么验证的，可以很长，"
-                    + "详细过程放这里）；terminate 时填原因；reply 时填回复正文", required = false) String text) {
+                    + "详细过程放这里）；terminate 时填原因；reply 时填回复正文", required = false) String text,
+            @ToolParam(description = "mark_release 时必填：目标发版态，只能 NEED（需发版）或 NONE（无需发版）。"
+                    + "RELEASED 已发版只能越哥在后台点，传了会被拒", required = false) String targetFlag,
+            @ToolParam(description = "mark_release 时必填：一句理由（记进发版变更流水，便于审计）", required = false) String reason) {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) return "❌ 无法确定你是谁（角色头未配置）。";
@@ -6450,11 +6457,12 @@ public class ExpHubTools {
                 case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion, text, callerApiKey());
                 case "terminate" -> dispatchService.terminate(orderNo, me, text, callerApiKey());
                 case "reply" -> dispatchService.reply(orderNo, me, text, callerApiKey());
+                case "mark_release" -> dispatchService.markReleaseFlagAi(orderNo, targetFlag, reason, me, callerApiKey());
                 default -> null;
             };
             if (out == null) {
-                return "❌ 不支持的动作「" + action + "」。可用：need_confirm / submit_accept / terminate / reply。\n"
-                     + "审核、验收、取消整单请走后台网页 —— 那不是 MCP 能做的事。";
+                return "❌ 不支持的动作「" + action + "」。可用：need_confirm / submit_accept / terminate / reply / mark_release。\n"
+                     + "审核、验收、取消整单、标记已发版 RELEASED 请走后台网页 —— 那不是 MCP 能做的事。";
             }
             if (!out.ok()) return "❌ " + out.message();
             StringBuilder sb = new StringBuilder();
