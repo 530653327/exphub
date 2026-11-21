@@ -367,8 +367,9 @@ class ToolDescriptionRedundancyTest {
         // 2026-11-20 W-20261120-000026：dispatch_create 新增 milestone 参数（加参数不加工具，红线 13），
         //            参数 213 → 214。里程碑把几个哨兵分散的同一件事串起来，燃尽图按它聚合；空=独立单。
         // 2026-11-21 W-20261121-000014：dispatch_act 新增 mark_release 动作，带 targetFlag + reason 两个参数
-        //            （加参数不加工具，红线 13），参数 214 → 216。RELEASED 只能后台写，AI 侧只能 NEED/NONE。
-        assertEquals(216, paramCount, "参数数变了（216 → " + paramCount + "），需要同步 README/门户/本断言");
+        //            （加参数不加工具，红线 13），参数 214 → 216。
+        // 2026-11-21 W-20261121-000017：mark_release 再加 evidence（RELEASED 必填发版证据），216 → 217。
+        assertEquals(217, paramCount, "参数数变了（217 → " + paramCount + "），需要同步 README/门户/本断言");
     }
 
     // ═══════════════════════════════════════════════════════════════

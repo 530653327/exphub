@@ -36,8 +36,10 @@ public class DispatchEvent {
     public static final String EV_ACCEPT_REJECT = "ACCEPT_REJECT";
     public static final String EV_CANCEL = "CANCEL";
     public static final String EV_TERMINATE = "TERMINATE";
-    /** 发版标记变更（W-20261121-000014）：from/to_status 存旧/新 release_flag，note 存理由 */
+    /** 发版标记变更：from/to_status 存旧/新 release_flag，note 存理由，evidence 存发版证据（W-20261121-000017） */
     public static final String EV_RELEASE_FLAG = "RELEASE_FLAG";
+    /** 发版证据核对打回：核对方发现 evidence 与 commit / 线上回读不一致，VERIFYING→RUNNING 并写原因（W-20261121-000018） */
+    public static final String EV_RELEASE_RECHECK = "RELEASE_RECHECK";
 
     // ===== actor_type：前端按这个区分人和助手 =====
     public static final String ACTOR_HUMAN = "HUMAN";
@@ -66,6 +68,14 @@ public class DispatchEvent {
 
     /** 可选：驳回理由 / 终止原因 / 结论摘要 */
     private String note;
+
+    /**
+     * 发版证据（W-20261121-000017）：AI 标 RELEASED 时必填，后台人工标可选。
+     *
+     * <p>存 commit sha / 线上版本回读 / health 状态等原文，供越哥在后台详情页一眼核对。
+     * 与 note 分开成列：note 存「旧→新；理由」，evidence 单独存证据，前端按字段展示。
+     */
+    private String evidence;
 
     /**
      * 事件发生时间。

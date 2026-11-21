@@ -101,7 +101,9 @@
                     <span class="badge badge-sm badge-error badge-soft" th:if="${o.priority != null and o.priority == 1}">高优</span>
                     <span class="badge badge-sm badge-ghost tnum" th:if="${o.version != null and !o.version.isEmpty()}" th:text="${o.version}">版本</span>
                     <span class="badge badge-sm tnum" th:classappend="'rf-' + ${o.releaseFlag != null and o.releaseFlag != '' ? o.releaseFlag : 'NONE_MARK'}"
-                          th:text="'发版 ' + ${T(com.exphub.service.DispatchService).releaseFlagLabel(o.releaseFlag)}">发版</span>
+                          th:text="${T(com.exphub.service.DispatchService).releaseFlagCellLabel(o.releaseFlag)}">发版</span>
+                    <span class="badge badge-sm badge-ghost" style="font-size:0.72rem"
+                          th:text="'怎么验：' + ${T(com.exphub.service.DispatchService).releaseVerifyHint(o.releaseFlag)}">怎么验</span>
                 </div>
             </div>
         </a>

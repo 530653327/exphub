@@ -21,9 +21,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * 派单发版标记 release_flag 守卫（W-20261121-000014）。盯住"读代码看不出来"的几件事：
- * ① AI 侧物理上写不了 RELEASED（权限分离硬闸门）；② 后台侧四态都能写；
- * ③ 枚举外的值明拒不静默修正；④ 同事务写事件；⑤ 筛选唯一出口。
+ * 派单发版标记守卫（W-20261121-000014 立 / W-20261121-000017 修正）。
+ * 盯住"读代码看不出来"的几件事：
+ * ① AI 写 RELEASED 必须有 evidence，空证据明拒且数据一行不动；② 证据原文随事件落库、actor_type=AI；
+ * ③ 后台四态都能写（含带证据）；④ 枚举外的值明拒不静默修正；⑤ 同事务写事件、清空 set NULL；
+ * ⑥ 筛选唯一出口；⑦ 九态状态机零改动 + 证据闸门源码守卫。
  */
 class DispatchReleaseFlagTest {
 
@@ -53,60 +55,47 @@ class DispatchReleaseFlagTest {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "itemMapper", mock(DispatchItemMapper.class));
         org.springframework.test.util.ReflectionTestUtils.setField(service, "eventMapper", eventMapper);
         when(headerMapper.update(any(), any(UpdateWrapper.class))).thenReturn(1);
-        when(headerMapper.selectOne(any(QueryWrapper.class))).thenAnswer(inv -> {
-            DispatchHeader h = order(null);
-            // get(orderNo) 会再次读库返回最新；这里固定返回以便断言 message
-            return h;
-        });
+        when(headerMapper.selectOne(any(QueryWrapper.class))).thenAnswer(inv -> order(null));
     }
 
     @Test
-    @DisplayName("AI 侧：NEED / NONE 能写，RELEASED 与清空一律拒 —— 红线：AI 不能宣布发版完成")
-    void aiCanOnlyWriteNeedOrNone() {
-        DispatchService.Outcome need = service.markReleaseFlagAi(
-                "W-20261121-000099", "NEED", "测出来要发版", "烛龙", "k");
-        assertTrue(need.ok(), need.message());
+    @DisplayName("RELEASED 空证据：null / 纯空白一律拒，且 header 一行不动、事件不写")
+    void releasedWithoutEvidenceRejectedAndNoWrite() {
+        DispatchService.Outcome nullEv = service.markReleaseFlagAi(
+                "W-20261121-000099", "RELEASED", "我自己宣布上线", null, "阁主", "k");
+        assertFalse(nullEv.ok(), "空证据必须拒");
+        assertTrue(nullEv.message().contains("证据"), nullEv.message());
+        assertTrue(nullEv.message().contains("必须"), nullEv.message());
+        assertTrue(nullEv.message().contains("数据未改动"), nullEv.message());
 
-        DispatchService.Outcome none = service.markReleaseFlagAi(
-                "W-20261121-000099", "NONE", "确认不用发版", "烛龙", "k");
-        assertTrue(none.ok(), none.message());
+        DispatchService.Outcome blankEv = service.markReleaseFlagAi(
+                "W-20261121-000099", "RELEASED", "我自己宣布上线", "   ", "阁主", "k");
+        assertFalse(blankEv.ok(), "纯空白证据必须拒");
 
-        DispatchService.Outcome released = service.markReleaseFlagAi(
-                "W-20261121-000099", "RELEASED", "我自己宣布上线", "烛龙", "k");
-        assertFalse(released.ok(), "AI 写 RELEASED 必须被拒");
-        assertTrue(released.message().contains("已发版"), released.message());
-        assertTrue(released.message().contains("后台"), released.message());
-
-        // 清空也不允许（AI 只能两态），且 lowercase 归一化后仍拒绝
-        assertFalse(service.markReleaseFlagAi("W-20261121-000099", "", "清空", "烛龙", "k").ok());
-        assertFalse(service.markReleaseFlagAi("W-20261121-000099", "released", "小写绕过", "烛龙", "k").ok());
+        // 拒绝发生在任何写库之前 —— 这就是验收标准「数据未变」
+        verify(headerMapper, never()).update(any(), any(UpdateWrapper.class));
+        verify(eventMapper, never()).insert(any(DispatchEvent.class));
     }
 
     @Test
-    @DisplayName("AI 侧：枚举外的值明拒并回显收到的原值（不静默修正）")
-    void aiRejectsUnknownFlagWithEcho() {
-        DispatchService.Outcome out = service.markReleaseFlagAi(
-                "W-20261121-000099", "DONE", "瞎写", "烛龙", "k");
-        assertFalse(out.ok());
-        assertTrue(out.message().contains("DONE"), "必须回显收到的值：" + out.message());
+    @DisplayName("AI：NEED / NONE 免证据可写（evidence 可选），不受影响")
+    void needNoneNeedNoEvidence() {
+        assertTrue(service.markReleaseFlagAi(
+                "W-20261121-000099", "NEED", "判断要发版", null, "烛龙", "k").ok());
+        assertTrue(service.markReleaseFlagAi(
+                "W-20261121-000099", "NONE", "确认不用发版", null, "烛龙", "k").ok());
+        // AI 仍不能清空标记（白名单只有三态）
+        assertFalse(service.markReleaseFlagAi(
+                "W-20261121-000099", "", "清空", null, "烛龙", "k").ok());
     }
 
     @Test
-    @DisplayName("后台侧：四态都能写，含 RELEASED 与清空回未标记；枚举外的值仍拒")
-    void humanCanWriteAllFourStates() {
-        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "RELEASED", "2.5.19 已上线").ok());
-        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "NEED", "标错救回").ok());
-        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "NONE", "不用发版").ok());
-        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "", "清空").ok());
-        assertFalse(service.markReleaseFlagHuman("W-20261121-000099", "BOGUS", "瞎写").ok());
-    }
-
-    @Test
-    @DisplayName("发版标记变更必须写一条 RELEASE_FLAG 事件，含操作人/actor_type/理由/新旧态")
-    void releaseFlagWritesEvent() {
+    @DisplayName("AI：带证据写 RELEASED 成功，事件 actor_type=AI、actor=角色、evidence 原文原样落库")
+    void releasedWithEvidenceWritesEventWithEvidence() {
         when(headerMapper.selectOne(any(QueryWrapper.class))).thenReturn(order("NEED"));
-        DispatchService.Outcome out = service.markReleaseFlagHuman(
-                "W-20261121-000099", "RELEASED", "已上线 2.5.19");
+        String ev = "commit 387cf14 / 线上 ping 回读 3.5.12 / health UP";
+        DispatchService.Outcome out = service.markReleaseFlagAi(
+                "W-20261121-000099", "RELEASED", "验收通过", ev, "阁主", "k");
         assertTrue(out.ok(), out.message());
 
         ArgumentCaptor<DispatchEvent> cap = ArgumentCaptor.forClass(DispatchEvent.class);
@@ -115,21 +104,54 @@ class DispatchReleaseFlagTest {
         assertEquals(DispatchEvent.EV_RELEASE_FLAG, e.getEventType());
         assertEquals("NEED", e.getFromStatus());
         assertEquals("RELEASED", e.getToStatus());
-        assertEquals(DispatchService.HUMAN_OPERATOR, e.getActor());
-        assertEquals(DispatchEvent.ACTOR_HUMAN, e.getActorType());
-        assertTrue(e.getNote().contains("已上线 2.5.19"), "note 要带理由：" + e.getNote());
+        assertEquals("阁主", e.getActor());
+        assertEquals(DispatchEvent.ACTOR_AI, e.getActorType());
+        assertEquals(ev, e.getEvidence(), "证据原文必须原样落库");
+        assertTrue(e.getNote().contains("验收通过"), "note 仍带理由：" + e.getNote());
         assertNotNull(e.getCreatedAt());
     }
 
     @Test
-    @DisplayName("AI 侧写的事件 actor_type=AI、actor=调用角色")
-    void aiEventActorIsAi() {
-        when(headerMapper.selectOne(any(QueryWrapper.class))).thenReturn(order(null));
-        service.markReleaseFlagAi("W-20261121-000099", "NEED", "判断要发版", "烛龙", "k");
+    @DisplayName("AI 侧枚举外的值明拒并回显收到的原值（不静默修正）")
+    void aiRejectsUnknownFlagWithEcho() {
+        DispatchService.Outcome out = service.markReleaseFlagAi(
+                "W-20261121-000099", "DONE", "瞎写", "some evidence", "烛龙", "k");
+        assertFalse(out.ok());
+        assertTrue(out.message().contains("DONE"), "必须回显收到的值：" + out.message());
+    }
+
+    @Test
+    @DisplayName("后台侧：四态都能写，含 RELEASED（可带证据）与清空回未标记；枚举外的值仍拒")
+    void humanCanWriteAllFourStates() {
+        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "RELEASED", "2.5.19 已上线").ok());
+        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "NEED", "标错救回").ok());
+        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "NONE", "不用发版").ok());
+        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "", "清空").ok());
+        assertFalse(service.markReleaseFlagHuman("W-20261121-000099", "BOGUS", "瞎写").ok());
+        // 带证据版（越哥手工点也已留痕）
+        assertTrue(service.markReleaseFlagHuman("W-20261121-000099", "RELEASED", "越哥手工点", "线上 3.5.12 已核对").ok());
+    }
+
+    @Test
+    @DisplayName("后台带证据写 RELEASED：事件 actor_type=HUMAN、evidence 原样落库")
+    void humanEvidenceEvent() {
+        when(headerMapper.selectOne(any(QueryWrapper.class))).thenReturn(order("NEED"));
+        service.markReleaseFlagHuman("W-20261121-000099", "RELEASED", "越哥核对", "线上 3.5.12 已核对");
+        ArgumentCaptor<DispatchEvent> cap = ArgumentCaptor.forClass(DispatchEvent.class);
+        verify(eventMapper, times(1)).insert(cap.capture());
+        assertEquals(DispatchEvent.ACTOR_HUMAN, cap.getValue().getActorType());
+        assertEquals("线上 3.5.12 已核对", cap.getValue().getEvidence());
+    }
+
+    @Test
+    @DisplayName("AI 侧 NEED 事件不伪造证据：evidence 为 null")
+    void aiEventActorIsAiWithoutEvidence() {
+        service.markReleaseFlagAi("W-20261121-000099", "NEED", "判断要发版", null, "烛龙", "k");
         ArgumentCaptor<DispatchEvent> cap = ArgumentCaptor.forClass(DispatchEvent.class);
         verify(eventMapper, times(1)).insert(cap.capture());
         assertEquals(DispatchEvent.ACTOR_AI, cap.getValue().getActorType());
         assertEquals("烛龙", cap.getValue().getActor());
+        assertNull(cap.getValue().getEvidence());
     }
 
     @Test
@@ -162,8 +184,18 @@ class DispatchReleaseFlagTest {
         assertTrue(src.contains("ST_REVIEWING"), "九态常量还在");
         assertTrue(src.contains("LIVE_STATUSES"), "取消用的状态集合还在");
         assertTrue(src.contains("guardAssigneeAndStatus"), "转移守卫还在");
-        // 发版标记的方法名独立存在，没有混进状态转移 switch
         assertTrue(src.contains("markReleaseFlagAi") && src.contains("markReleaseFlagHuman"));
+    }
+
+    @Test
+    @DisplayName("证据闸门源码守卫：RELEASED 分支必须做 evidence 空校验（防止回退成空口宣布发版）")
+    void releasedEvidenceGuardInSource() throws Exception {
+        String src = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/exphub/service/DispatchService.java")), StandardCharsets.UTF_8);
+        String body = stripComments(src);
+        assertTrue(body.contains("RF_RELEASED.equals(flag)"), "RELEASED 白名单还在");
+        assertTrue(body.contains("evidence == null || evidence.isBlank()"), "evidence 空校验还在");
+        assertTrue(body.contains("必须提供发版证据"), "空证据报错文案还在");
     }
 
     private static String stripComments(String s) {

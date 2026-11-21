@@ -84,6 +84,8 @@ public class DispatchApiController {
             // 发版标记变更事件：把目标态单独提成 release_flag 字段，方便只读消费方直接取
             if (DispatchEvent.EV_RELEASE_FLAG.equals(e.getEventType())) {
                 m.put("release_flag", e.getToStatus() == null ? "" : e.getToStatus());
+                // 发版证据原文：后台核对方据此比对 commit / 线上回读（W-20261121-000018）
+                m.put("evidence", e.getEvidence());
             }
             data.add(m);
         }

@@ -6430,39 +6430,45 @@ public class ExpHubTools {
     @Tool(name = "dispatch_act",
           description = "【派单】推进一张单的动作。**不在下列枚举里的转移一律拒**："
                       + "need_confirm（哨兵请求确认，进行中→待确认，必须带提问和建议方案）、"
-                      + "submit_accept（哨兵提交验收，进行中→待验收，必须带结论）、"
+                      + "submit_accept（哨兵提交验收，进行中→待验收，必须带结论 + 发版结论三选一："
+                      + "targetFlag=RELEASED 需 commit sha + 线上版本回读、NEED 需目标版本号 + 发版步骤、"
+                      + "NONE 需理由，evidence 按对应态必填；缺项直接拒收、单子不动）、"
                       + "terminate（终止本轮，item 结束 + 单子进待确认等通知，**不等于取消整单**）、"
                       + "reply（只有 AI 单的创建人能回，待确认→进行中；人工单必须越哥在后台回，AI 不能代回）、"
-                      + "mark_release（标记发版，只能写 targetFlag=NEED/NONE 并填理由；"
-                      + "RELEASED 已发版只能越哥在后台点，AI 不能自己宣布发版完成）。"
+                      + "mark_release（标记发版：targetFlag=NEED/NONE 随意写；写 RELEASED 必须同时传 evidence 发版证据，"
+                      + "如 commit sha / 线上版本回读 / health UP —— 空证据明拒、数据不动；证据随流水落库供后台核对）。"
                       + "注意：审核、验收通过/驳回、取消整单都只能越哥在后台做，这里没有这些动作。")
     public String dispatchAct(
             @ToolParam(description = "单号") String orderNo,
-            @ToolParam(description = "动作：need_confirm / submit_accept / terminate / reply") String action,
+            @ToolParam(description = "动作：need_confirm / submit_accept / terminate / reply / mark_release") String action,
             @ToolParam(description = "need_confirm 时必填：你要问什么") String question,
             @ToolParam(description = "need_confirm 时必填：**你自己的建议方案**（只抛问题不许过）", required = false) String proposal,
             @ToolParam(description = "submit_accept 时必填：**结论＝对内容的总结**，一两句话说清做成没做成、关键数字，"
                     + "越哥只看这一行就判断通过还是驳回。**不要和 text 写一样**", required = false) String conclusion,
             @ToolParam(description = "submit_accept 时填**详细内容**（干了什么、改了哪些文件、怎么验证的，可以很长，"
                     + "详细过程放这里）；terminate 时填原因；reply 时填回复正文", required = false) String text,
-            @ToolParam(description = "mark_release 时必填：目标发版态，只能 NEED（需发版）或 NONE（无需发版）。"
-                    + "RELEASED 已发版只能越哥在后台点，传了会被拒", required = false) String targetFlag,
-            @ToolParam(description = "mark_release 时必填：一句理由（记进发版变更流水，便于审计）", required = false) String reason) {
+            @ToolParam(description = "mark_release / submit_accept 时都要填：目标发版态 NEED（需发版）/ NONE（无需发版）/ RELEASED（已发版）。"
+                    + "NEED/NONE 的 evidence 可选；写 RELEASED 则 evidence 必填，空证据被拒", required = false) String targetFlag,
+            @ToolParam(description = "mark_release 时填：一句理由（记进发版变更流水，便于审计）", required = false) String reason,
+            @ToolParam(description = "mark_release 写 RELEASED / submit_accept 按所选结论时必填：发版证据原文，"
+                    + "如「commit 387cf14 / 线上 ping 回读 3.5.12 / health UP」；空或纯空白一律拒。"
+                    + "随 RELEASE_FLAG 事件落库供后台核对，NEED/NONE 可省略", required = false) String evidence) {
         try {
             String me = dispatchRole();
             if (me == null || me.isBlank()) return "❌ 无法确定你是谁（角色头未配置）。";
             String act = action == null ? "" : action.trim().toLowerCase(java.util.Locale.ROOT);
             com.exphub.service.DispatchService.Outcome out = switch (act) {
                 case "need_confirm" -> dispatchService.needConfirm(orderNo, me, question, proposal, callerApiKey());
-                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion, text, callerApiKey());
+                case "submit_accept" -> dispatchService.submitAccept(orderNo, me, conclusion, text,
+                        targetFlag, evidence, callerApiKey());
                 case "terminate" -> dispatchService.terminate(orderNo, me, text, callerApiKey());
                 case "reply" -> dispatchService.reply(orderNo, me, text, callerApiKey());
-                case "mark_release" -> dispatchService.markReleaseFlagAi(orderNo, targetFlag, reason, me, callerApiKey());
+                case "mark_release" -> dispatchService.markReleaseFlagAi(orderNo, targetFlag, reason, evidence, me, callerApiKey());
                 default -> null;
             };
             if (out == null) {
                 return "❌ 不支持的动作「" + action + "」。可用：need_confirm / submit_accept / terminate / reply / mark_release。\n"
-                     + "审核、验收、取消整单、标记已发版 RELEASED 请走后台网页 —— 那不是 MCP 能做的事。";
+                     + "审核、验收通过/驳回、取消整单请走后台网页 —— 那不是 MCP 能做的事。";
             }
             if (!out.ok()) return "❌ " + out.message();
             StringBuilder sb = new StringBuilder();

@@ -94,12 +94,28 @@
                 </form>
 
                 <hr>
-                <!-- 发版标记（W-20261121-000014）：与九态状态机正交。RELEASED 只有这里（后台）能写 -->
+                <!-- 发版标记（W-20261121-000014 立 / 000017 证据门槛 / 000018 核对展示+打回）：与九态状态机正交 -->
                 <div class="mb-1" style="font-size:0.88rem;color:var(--text-mute)">
-                    <b>发版标记</b>　当前：<span class="rf" th:classappend="'rf-' + ${order.releaseFlag != null and order.releaseFlag != '' ? order.releaseFlag : 'NONE_MARK'}"
+                    <b>发版状态</b>　当前：<span class="rf" th:classappend="'rf-' + ${order.releaseFlag != null and order.releaseFlag != '' ? order.releaseFlag : 'NONE_MARK'}"
                                                 th:text="${releaseFlagLabel}">未标记</span>
-                    <span class="text-muted" style="font-size:0.8rem">—— 已发版只能你在后台点，AI 侧只能标需发版/无需发版</span>
+                    <span class="text-muted" style="font-size:0.8rem">—— 提交验收时哨兵带出结论；AI 带证据可标已发版，空证据明拒</span>
                 </div>
+                <!-- 发版证据：提交验收 / mark_release 时申报，供核对 commit sha + 线上版本回读（W-20261121-000018） -->
+                <div th:if="${releaseEvidence != null and releaseEvidence != ''}" class="alert alert-light mb-2 py-2" style="font-size:0.85rem">
+                    <b>发版证据</b>（哨兵申报，核对下方 commit / 线上版本回读是否一致）：
+                    <span th:text="${releaseEvidence}" style="white-space:pre-wrap"></span>
+                </div>
+                <div th:if="${releaseEvidence == null or releaseEvidence == ''}" class="text-muted mb-2" style="font-size:0.82rem">
+                    该单没有发版证据流水（历史单或仅元数据标记），按发版状态与改动本身核对。
+                </div>
+                <!-- 发版证据核对打回：发现证据与 commit / 线上回读不一致 → 置回进行中并写原因，不改四态、留独立事件 -->
+                <form th:if="${order.status == 'VERIFYING'}" th:action="@{/dispatch/release-recheck}" method="post" class="mb-2"
+                      onsubmit="return confirm('打回 = 发版证据不符，单子退回进行中让哨兵重交。确认？')">
+                    <input type="hidden" name="orderNo" th:value="${order.orderNo}">
+                    <input type="text" name="reason" class="form-control form-control-sm d-inline-block" style="width:340px"
+                           placeholder="打回原因：证据哪里与 commit / 线上回读不一致（必填）">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">证据不符 · 打回</button>
+                </form>
                 <div class="d-flex flex-wrap" style="gap:6px;align-items:center">
                     <form th:action="@{/dispatch/release-flag}" method="post" th:if="${order.releaseFlag == null or order.releaseFlag != 'RELEASED'}"
                           onsubmit="return confirm('点「已发布」= 标记 RELEASED（已发版）。确认这一版确实上线了？')">

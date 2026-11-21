@@ -143,7 +143,13 @@ exphub:
   #          AI 侧 MCP dispatch_act(mark_release) 只能写 NEED/NONE、RELEASED 只能后台按钮写（Service 双写入口硬隔离），
   #          后台/手机列表加发版列+下拉筛选、详情加「已发布」按钮，dispatch_event 增 RELEASE_FLAG 事件，
   #          orders/events 只读接口与 dispatch_list 文本回执带发版态；历史仅 W-20261121-000010 有线上实证回填 RELEASED。
-  version: 2.5.19
+  # 2.5.20 = 派单源头强制发版判断（W-20261121-000018）：submit_accept 强制三选一发版结论 + 按态证据校验
+  #          （RELEASED 需 commit+线上版本回读 / NEED 需版本号+步骤 / NONE 需理由，缺项零写入拒收），
+  #          提交时把 release_flag 同事务落库（待验收列表不再靠事后补标）；后台 PC/手机列表加「发版状态
+  #          （未标记·待补）+怎么验」两列；详情页展示发版证据 + 「证据不符·打回」（VERIFYING→RUNNING，
+  #          独立 RELEASE_RECHECK 事件留痕，不动四态）；events 只读接口输出 evidence；带上 000017 的
+  #          dispatch_event.evidence 迁移。工具数 50 / 参数 217 不变（复用 targetFlag + evidence）。
+  version: 2.5.20
   # 工具统计口径（2026-11-19 加）
   tool-stats:
     # 不写逐次埋点的工具（逗号分隔）。改这里就同时影响「是否写 call_logs」与「零调用清单」，

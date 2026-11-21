@@ -132,6 +132,7 @@ public class DispatchController extends BaseController {
         model.addAttribute("versionHint", dispatchService.suggestVersionInfo(h.getProjectId()));
         model.addAttribute("ballOwner", DispatchService.statusLabel(h.getStatus()));
         model.addAttribute("releaseFlagLabel", DispatchService.releaseFlagLabel(h.getReleaseFlag()));
+        model.addAttribute("releaseEvidence", dispatchService.latestReleaseEvidence(orderNo));
         model.addAttribute("active", "dispatch");
         return "dispatch/detail";
     }
@@ -322,6 +323,14 @@ public class DispatchController extends BaseController {
         return "redirect:/dispatch/" + orderNo;
     }
 
+    @PostMapping("/release-recheck")
+    public String releaseRecheck(@RequestParam String orderNo,
+                                 @RequestParam(required = false) String reason,
+                                 RedirectAttributes ra) {
+        flash(ra, dispatchService.rejectReleaseEvidence(orderNo, reason));
+        return "redirect:/dispatch/" + orderNo;
+    }
+
     // ==================== 操作流水 / 燃尽图（W-20261120-000028 后台页）====================
 
     /**
@@ -502,6 +511,7 @@ public class DispatchController extends BaseController {
         m.put(DispatchEvent.EV_CANCEL, "取消");
         m.put(DispatchEvent.EV_TERMINATE, "终止本轮");
         m.put(DispatchEvent.EV_RELEASE_FLAG, "发版标记");
+        m.put(DispatchEvent.EV_RELEASE_RECHECK, "发版证据打回");
         return m;
     }
 

@@ -802,7 +802,8 @@ public class DispatchService {
      * 不是 AI 抄，是程序把同一个值写了两栏。
      */
     @Transactional
-    public Outcome submitAccept(String orderNo, String role, String conclusion, String content, String apiKey) {
+    public Outcome submitAccept(String orderNo, String role, String conclusion, String content,
+                                String targetFlag, String evidence, String apiKey) {
         role = canonicalRole(role);
         DispatchHeader h = getForApi(orderNo, apiKey);
         Outcome guard = guardAssigneeAndStatus(h, role, DispatchHeader.ST_RUNNING, "提交验收");
@@ -818,6 +819,14 @@ public class DispatchService {
                     + "内容写详细过程（改了什么、怎么验证的），长一点没问题。请分开写再提交。");
         }
 
+        // 【W-20261121-000018】提交验收必须从源头带出发版结论（三选一 + 按态证据）。
+        // 校验在任何写库之前：缺项直接拒收、数据一行不动（验收标准第 1 条）。
+        // 落库时把 release_flag 一并写入，越哥打开待验收列表那一刻标记就已存在，不再靠事后补标。
+        String flag = normalizeReleaseFlag(targetFlag);
+        String bad = validateReleaseConclusion(flag, evidence);
+        if (bad != null) return Outcome.fail(bad + " 已拒收，数据未改动。");
+        String oldFlag = normalizeReleaseFlag(h.getReleaseFlag());
+
         // 关闭当前工作轮时不回填结论（传 null）：那一刻的结论属于下面新建的「提交验收」item，
         // 工作轮自己只有「认领开工」这一条流水。不回填，页面上两条 item 才不会顶着一模一样的结论。
         // 注意：needConfirm / terminate 那两处照旧回填 —— 那两轮是真的结束了，得有结论。
@@ -827,17 +836,74 @@ public class DispatchService {
                 .eq("order_no", h.getOrderNo())
                 .eq("status", DispatchHeader.ST_RUNNING)
                 .set("status", DispatchHeader.ST_VERIFYING)
+                .set("release_flag", flag)
                 .set("updated_at", now));
         if (rows == 0) return Outcome.fail("状态已变化，提交验收未生效，请重新查一次。");
         recordEvent(h.getOrderNo(), DispatchEvent.EV_SUBMIT_ACCEPT, DispatchHeader.ST_RUNNING,
                 DispatchHeader.ST_VERIFYING, role.trim(), DispatchEvent.ACTOR_AI, concl, now);
+        // 发版结论随提交验收同事务落到发版流水（证据随事件原文保留，供后台核对）。
+        // 这里不重复做权限改造 —— RELEASED 的证据硬门槛已在 markReleaseFlagAi 放开并校验，
+        // 本处按三态分别校验「提交时该给什么」，两者用同一张 dispatch_event 同一套四态语义。
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_RELEASE_FLAG,
+                oldFlag.isEmpty() ? null : oldFlag, flag,
+                role.trim(), DispatchEvent.ACTOR_AI, "提交验收时申报的发版结论", evidence, now);
 
         DispatchItem it = newItem(h, role.trim(), DispatchItem.CMD_EXEC, true, concl, body,
                 DispatchItem.ST_DONE);
         // 2026-11-19：进入待验收时给越哥发邮件。事务内只发事件，监听器 AFTER_COMMIT 才真发信
         // （回滚了不该发「待验收」邮件）；通知失败也不许影响这次状态转移。
         publishVerifying(h, concl, body, it, now);
-        return Outcome.success("已提交验收，等越哥判断。item " + it.getItemNo(), get(orderNo), it);
+        return Outcome.success("已提交验收（发版结论：" + releaseFlagLabel(flag) + "），等越哥判断。item "
+                + it.getItemNo(), get(orderNo), it);
+    }
+
+    /**
+     * 提交验收的发版结论校验（W-20261121-000018）：三选一 + 每态必须给的证据。
+     *
+     * <p>{@code flag} 已由调用方 {@link #normalizeReleaseFlag} 归一。返回 {@code null}=通过；
+     * 否则返回<b>写明缺哪一项</b>的错误文案（调用方拼「已拒收，数据未改动」）。信号检测是宽松的
+     * 关键词/版本号/hex-sha 匹配，只判断「有没有给」，不判断证据真伪 —— 真伪由后台核对（单子第 3 条）。
+     */
+    static String validateReleaseConclusion(String flag, String evidence) {
+        boolean released = DispatchHeader.RF_RELEASED.equals(flag);
+        boolean need = DispatchHeader.RF_NEED.equals(flag);
+        boolean none = DispatchHeader.RF_NONE.equals(flag);
+        if (!released && !need && !none) {
+            String got = flag == null || flag.isEmpty() ? "(未填)" : flag;
+            return "提交验收必须带发版结论（targetFlag）：三选一 RELEASED（已发版）/ NEED（需发版）"
+                    + " / NONE（无需发版），收到「" + got + "」";
+        }
+        String ev = evidence == null ? "" : evidence.trim();
+        String low = ev.toLowerCase(java.util.Locale.ROOT);
+        if (released) {
+            boolean commit = low.contains("commit") || ev.matches("(?s).*\\b[0-9a-fA-F]{7,40}\\b.*");
+            boolean echo = low.contains("health") || low.contains("ping") || low.contains("线上")
+                    || low.contains("回读") || low.contains("version") || ev.matches("(?s).*\\d+\\.\\d+.*");
+            if (!commit || !echo) {
+                return "发版结论=已发版（RELEASED）必须给两项证据：① commit sha ② 线上版本回读结果。缺："
+                        + (!commit ? "① commit sha" : "") + (!commit && !echo ? "、" : "")
+                        + (!echo ? "② 线上版本回读结果" : "");
+            }
+        } else if (need) {
+            boolean version = ev.matches("(?s).*\\d+\\.\\d+.*");
+            boolean step = containsAny(low, "发版", "部署", "发布", "上线", "步骤", "deploy",
+                    "release", "mvn", "jar", "脚本", "先");
+            if (!version || !step) {
+                return "发版结论=需发版（NEED）必须给两项：① 目标版本号 ② 发版步骤。缺："
+                        + (!version ? "① 目标版本号" : "") + (!version && !step ? "、" : "")
+                        + (!step ? "② 发版步骤" : "");
+            }
+        } else {
+            if (ev.length() < 4) {
+                return "发版结论=无需发版（NONE）必须给理由（如：纯文档 / 纯配置 / 纯前端无版本号）";
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsAny(String low, String... tokens) {
+        for (String t : tokens) if (low.contains(t)) return true;
+        return false;
     }
 
     /**
@@ -909,27 +975,58 @@ public class DispatchService {
     }
 
     /**
-     * AI 侧写发版标记：只有 NEED / NONE 两个目标态能过，RELEASED 与清空一律拒绝。
+     * 后台列表发版单元格文案（W-20261121-000018）：未标记显式标「未标记 · 待补」，不留空白。
+     * 与 {@link #releaseFlagLabel} 分开 —— 详情/回执仍用短标签，只有列表要提醒补标。
+     */
+    public static String releaseFlagCellLabel(String raw) {
+        String label = releaseFlagLabel(raw);
+        return "未标记".equals(label) ? "未标记 · 待补" : label;
+    }
+
+    /**
+     * 后台待验收列表「怎么验」文案（W-20261121-000018）：按发版态告诉越哥下一步怎么核对，
+     * 与 {@link #releaseFlagLabel} 同源同参，PC / 手机两端模板都调这一个方法。
+     */
+    public static String releaseVerifyHint(String raw) {
+        return switch (normalizeReleaseFlag(raw)) {
+            case DispatchHeader.RF_RELEASED -> "核对线上版本号是否等于标记版本";
+            case DispatchHeader.RF_NEED -> "先发版再验";
+            case DispatchHeader.RF_NONE -> "验改动本身（代码 / 配置 / 文档）";
+            default -> "未标记 · 先补发版结论再验";
+        };
+    }
+
+    /**
+     * AI 侧写发版标记：NEED / NONE 照旧；RELEASED 必须带发版证据（evidence）。
      *
-     * <p><b>权限分离硬闸门</b>（W-20261121-000014 红线）：MCP 的 dispatch_act(mark_release)
-     * 只能走到这里，物理上没有任何路径能让 AI 写 RELEASED —— 发版是越哥点头的事，
-     * 状态不能由 AI 自己宣布完成。目标态白名单在 Service 层强制，不靠调用方自觉，
-     * 也不接受枚举外的值（静默修正会把上游错误伪装成正常）。
+     * <p><b>权限分离硬闸门</b>（W-20261121-000014 立，W-20261121-000017 修正）：红线从
+     * 「AI 一律不许记录已发版」调整为「AI 不许<em>没证据</em>地宣布发版完成」——哨兵已发版、
+     * 阁主验收时握着 commit sha 和线上版本回读，就该能标 RELEASED。所以白名单放开 RELEASED，
+     * 但 evidence 空/纯空白一律明拒（错误里回显收到什么，不静默修正），证据原文随事件落库供后台核对。
+     * 目标态白名单 + 证据门槛都在 Service 层强制，不靠调用方自觉，也不接受枚举外的值。
      */
     @Transactional
-    public Outcome markReleaseFlagAi(String orderNo, String targetFlag, String reason, String role, String apiKey) {
+    public Outcome markReleaseFlagAi(String orderNo, String targetFlag, String reason,
+                                     String evidence, String role, String apiKey) {
         String flag = normalizeReleaseFlag(targetFlag);
-        boolean allowed = DispatchHeader.RF_NEED.equals(flag) || DispatchHeader.RF_NONE.equals(flag);
+        boolean allowed = DispatchHeader.RF_NEED.equals(flag)
+                || DispatchHeader.RF_NONE.equals(flag)
+                || DispatchHeader.RF_RELEASED.equals(flag);
         if (!allowed) {
             String got = targetFlag == null ? "(null)" : targetFlag;
-            return Outcome.fail("AI 只能标记「需发版 NEED」或「无需发版 NONE」，收到「" + got
-                    + "」已拒绝。已发版 RELEASED 只能由越哥在后台点「已发布」按钮写，AI 不能自己宣布发版完成。");
+            return Outcome.fail("发版标记只能是 NEED（需发版）/ NONE（无需发版）/ RELEASED（已发版），收到「"
+                    + got + "」已拒绝。");
+        }
+        // RELEASED 是硬门槛：证据空/纯空白一律拒，不许空口宣布发版完成（数据一行不动）
+        if (DispatchHeader.RF_RELEASED.equals(flag) && (evidence == null || evidence.isBlank())) {
+            return Outcome.fail("标已发版（RELEASED）必须提供发版证据（evidence）："
+                    + "如 commit sha / 线上版本回读 / health UP。空证据已拒绝，数据未改动。");
         }
         role = canonicalRole(role);
         if (role == null || role.isBlank()) return Outcome.fail("无法确定你是谁（角色头未配置？）。");
         DispatchHeader h = getForApi(orderNo, apiKey);
         if (h == null) return Outcome.fail("未找到单号 " + orderNo + "（或不属于你）。");
-        return applyReleaseFlag(h, flag, reason, role.trim(), DispatchEvent.ACTOR_AI);
+        return applyReleaseFlag(h, flag, reason, evidence, role.trim(), DispatchEvent.ACTOR_AI);
     }
 
     /**
@@ -940,6 +1037,12 @@ public class DispatchService {
      */
     @Transactional
     public Outcome markReleaseFlagHuman(String orderNo, String targetFlag, String reason) {
+        return markReleaseFlagHuman(orderNo, targetFlag, reason, null);
+    }
+
+    /** 后台写入口带证据版（W-20261121-000017）：越哥手工标 RELEASED 可填证据，救回 NONE / 未标记一般不需要。 */
+    @Transactional
+    public Outcome markReleaseFlagHuman(String orderNo, String targetFlag, String reason, String evidence) {
         String flag = normalizeReleaseFlag(targetFlag);
         boolean allowed = flag.isEmpty()
                 || DispatchHeader.RF_NEED.equals(flag)
@@ -951,11 +1054,11 @@ public class DispatchService {
         }
         DispatchHeader h = get(orderNo);
         if (h == null) return Outcome.fail("未找到单号 " + orderNo + "。");
-        return applyReleaseFlag(h, flag, reason, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN);
+        return applyReleaseFlag(h, flag, reason, evidence, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN);
     }
 
-    /** 两个写入口共用的落地：同事务写 header + 一条 RELEASE_FLAG 事件。 */
-    private Outcome applyReleaseFlag(DispatchHeader h, String flag, String reason,
+    /** 两个写入口共用的落地：同事务写 header + 一条 RELEASE_FLAG 事件（含证据原文）。 */
+    private Outcome applyReleaseFlag(DispatchHeader h, String flag, String reason, String evidence,
                                      String actor, String actorType) {
         String old = normalizeReleaseFlag(h.getReleaseFlag());
         LocalDateTime now = LocalDateTime.now();
@@ -969,11 +1072,62 @@ public class DispatchService {
                 : "发版标记 " + (old.isEmpty() ? "未标记" : old) + " → " + (flag.isEmpty() ? "未标记" : flag) + "；" + reason.trim();
         recordEvent(h.getOrderNo(), DispatchEvent.EV_RELEASE_FLAG,
                 old.isEmpty() ? null : old, flag.isEmpty() ? null : flag,
-                actor, actorType, note, now);
-        log.info("DispatchService.releaseFlag: order={} {}→{} by {} ({})",
-                h.getOrderNo(), old, flag, actor, actorType);
+                actor, actorType, note, evidence, now);
+        log.info("DispatchService.releaseFlag: order={} {}→{} by {} ({}) evidence={}",
+                h.getOrderNo(), old, flag, actor, actorType, evidence == null ? "-" : "yes");
         return Outcome.success("发版标记已由「" + releaseFlagLabel(old) + "」改为「" + releaseFlagLabel(flag)
                 + "」。", get(h.getOrderNo()), null);
+    }
+
+    /**
+     * 发版证据核对打回（W-20261121-000018 第 3 条）：核对方发现哨兵申报的 evidence 与
+     * commit / 线上版本回读不一致时，把单子 VERIFYING → RUNNING 并写原因，球回哨兵重做。
+     *
+     * <p>与验收驳回 {@link #verifyReject} 的区别：这是针对「发版结论」的核对动作，走独立事件
+     * {@link DispatchEvent#EV_RELEASE_RECHECK} 留痕，且<b>不静默改 release_flag 四态</b>（单子明确要求），
+     * 标记本身保持原样，由哨兵重新提交验收时带正确证据覆盖。只由后台 Controller 调，没有 MCP 入口。
+     */
+    @Transactional
+    public Outcome rejectReleaseEvidence(String orderNo, String reason) {
+        DispatchHeader h = get(orderNo);
+        if (h == null) return Outcome.fail("未找到单号 " + orderNo + "。");
+        if (reason == null || reason.isBlank()) {
+            return Outcome.fail("打回必须写原因：说明 evidence 哪里与 commit / 线上回读不一致，哨兵才知道怎么改。");
+        }
+        if (!DispatchHeader.ST_VERIFYING.equals(h.getStatus())) {
+            return Outcome.fail("当前状态是「" + statusLabel(h.getStatus())
+                    + "」，只有「待验收」的单能打回发版证据。");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = headerMapper.update(null, new UpdateWrapper<DispatchHeader>()
+                .eq("order_no", h.getOrderNo())
+                .eq("status", DispatchHeader.ST_VERIFYING)
+                .set("status", DispatchHeader.ST_RUNNING)
+                .set("verify_note", "发版证据核对打回：" + reason.trim())
+                .set("verifier", HUMAN_OPERATOR)
+                .set("verified_at", now)
+                .set("updated_at", now));
+        if (rows == 0) return Outcome.fail("状态已变化，打回未生效，请刷新重试。");
+        recordEvent(h.getOrderNo(), DispatchEvent.EV_RELEASE_RECHECK, DispatchHeader.ST_VERIFYING,
+                DispatchHeader.ST_RUNNING, HUMAN_OPERATOR, DispatchEvent.ACTOR_HUMAN, reason, now);
+        DispatchItem it = newItem(h, HUMAN_OPERATOR, DispatchItem.CMD_EXEC, false,
+                "发版证据核对打回", reason, DispatchItem.ST_RUNNING);
+        return Outcome.success("已打回发版证据，球回到「" + h.getAssignee() + "」。item " + it.getItemNo(),
+                get(orderNo), it);
+    }
+
+    /**
+     * 只读：取该单最近一条发版证据原文（供后台详情页核对展示）。没有 RELEASE_FLAG 事件返回 null。
+     * 事件表为 null（手工构造的单测）时安静返回 null。
+     */
+    public String latestReleaseEvidence(String orderNo) {
+        if (eventMapper == null || orderNo == null) return null;
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DispatchEvent> q =
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        q.eq("order_no", orderNo).eq("event_type", DispatchEvent.EV_RELEASE_FLAG)
+                .isNotNull("evidence").orderByDesc("created_at").orderByDesc("id").last("LIMIT 1");
+        DispatchEvent e = eventMapper.selectOne(q);
+        return e == null ? null : e.getEvidence();
     }
 
     // ==================== 内部工具 ====================
@@ -1057,6 +1211,12 @@ public class DispatchService {
      */
     private void recordEvent(String orderNo, String eventType, String fromStatus, String toStatus,
                              String actor, String actorType, String note, LocalDateTime at) {
+        recordEvent(orderNo, eventType, fromStatus, toStatus, actor, actorType, note, null, at);
+    }
+
+    /** 带发版证据的事件写入（W-20261121-000017）：只有 RELEASE_FLAG 事件传非 null 的 evidence。 */
+    private void recordEvent(String orderNo, String eventType, String fromStatus, String toStatus,
+                             String actor, String actorType, String note, String evidence, LocalDateTime at) {
         if (eventMapper == null) return;
         DispatchEvent e = new DispatchEvent();
         e.setOrderNo(orderNo);
@@ -1066,6 +1226,7 @@ public class DispatchService {
         e.setActor(actor);
         e.setActorType(actorType);
         e.setNote(note == null || note.isBlank() ? null : note);
+        e.setEvidence(evidence == null || evidence.isBlank() ? null : evidence.trim());
         e.setCreatedAt(at == null ? LocalDateTime.now() : at);
         eventMapper.insert(e);
     }
